@@ -6,9 +6,11 @@ import path from 'path'
 export default defineConfig({
   plugins: [react(), tailwindcss()],
   resolve: {
-    alias: {
-      '@': path.resolve(__dirname, './'),
-    },
+    alias: [
+      // Allow imports like "pkg@1.2.3" by stripping the version suffix
+      { find: /^(.*)@\d+\.\d+\.\d+$/, replacement: '$1' },
+      { find: '@', replacement: path.resolve(__dirname, './') },
+    ],
   },
   build: {
     outDir: 'dist',

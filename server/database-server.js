@@ -4,9 +4,9 @@
 import express from 'express';
 import { Pool } from 'pg';
 import cors from 'cors';
-import dotenv from 'dotenv';
+import loadEnv from './env.js';
 
-dotenv.config();
+loadEnv();
 
 const app = express();
 const port = process.env.DATABASE_SERVER_PORT || 3001;

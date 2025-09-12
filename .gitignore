@@ -1,3 +1,4 @@
 .env
 .env.local
 .direnv/
+node_modules/
