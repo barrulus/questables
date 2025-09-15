@@ -15,19 +15,18 @@
           default = pkgs.mkShell {
             name = "questables-dev";
             packages = with pkgs; [
-              nodejs_20
+              nodejs_24
               # Useful Node tooling; project uses npm but these can help
               corepack
 
               # Database tooling
-              postgresql_16
+              postgresql_17
               postgis
 
               # Optional helpers
               git
               python3
               jq
-              supabase-cli
             ];
 
             # Tips and light DX setup when entering the shell
@@ -47,7 +46,7 @@
           frontend = pkgs.mkShell {
             name = "questables-frontend";
             packages = with pkgs; [
-              nodejs_20
+              nodejs_24
               corepack
               git
               jq
@@ -60,7 +59,7 @@
           db = pkgs.mkShell {
             name = "questables-db";
             packages = with pkgs; [
-              postgresql_16
+              postgresql_17
               postgis
             ];
             shellHook = ''
