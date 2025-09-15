@@ -2,3 +2,5 @@
 .env.local
 .direnv/
 node_modules/
+.crt
+.key

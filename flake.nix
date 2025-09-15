@@ -2,7 +2,7 @@
   description = "Questables development flake (Node + Postgres/PostGIS)";
 
   inputs = {
-    nixpkgs.url = "github:NixOS/nixpkgs/nixos-24.05";
+    nixpkgs.url = "github:NixOS/nixpkgs/nixos-24.11";
     flake-utils.url = "github:numtide/flake-utils";
   };
 
@@ -15,7 +15,6 @@
           default = pkgs.mkShell {
             name = "questables-dev";
             packages = with pkgs; [
-              nodejs_24
               # Useful Node tooling; project uses npm but these can help
               corepack
 
