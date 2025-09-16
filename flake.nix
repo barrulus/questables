@@ -26,6 +26,8 @@
               git
               python3
               jq
+              bc
+              inkscape
             ];
 
             # Tips and light DX setup when entering the shell

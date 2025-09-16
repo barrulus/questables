@@ -1,0 +1,23 @@
+{
+  "name": "dnd-app-database-server",
+  "version": "1.0.0",
+  "description": "Local PostgreSQL database server for D&D web app",
+  "main": "database-server.js",
+  "type": "module",
+  "scripts": {
+    "start": "node database-server.js",
+    "dev": "nodemon database-server.js",
+    "setup": "node setup-database.js"
+  },
+  "dependencies": {
+    "@types/multer": "^2.0.0",
+    "cors": "^2.8.5",
+    "dotenv": "^16.4.7",
+    "express": "^5.1.0",
+    "multer": "^2.0.2",
+    "pg": "^8.16.3"
+  },
+  "devDependencies": {
+    "nodemon": "^3.1.10"
+  }
+}
