@@ -150,7 +150,7 @@ setInterval(() => {
 // Rate limiting middleware
 const limiter = rateLimit({
   windowMs: 15 * 60 * 1000, // 15 minutes
-  max: 100, // Limit each IP to 100 requests per windowMs
+  max: 1000, // Increased limit for development
   message: {
     error: 'Too many requests from this IP, please try again later.',
     retryAfter: 15 * 60 // seconds
@@ -593,6 +593,88 @@ app.post('/api/database/spatial/:function', async (req, res) => {
         sql = 'SELECT * FROM get_rivers_in_bounds($1, $2, $3, $4, $5)';
         queryParams = [params.world_map_id, params.north, params.south, params.east, params.west];
         break;
+
+      case 'get_burgs_in_bounds': {
+        const worldId = params.world_map_id;
+        const north = Number(params.north);
+        const south = Number(params.south);
+        const east = Number(params.east);
+        const west = Number(params.west);
+
+        if (!worldId || Number.isNaN(north) || Number.isNaN(south) || Number.isNaN(east) || Number.isNaN(west)) {
+          client.release();
+          return res.status(400).json({ error: 'Invalid parameters for get_burgs_in_bounds' });
+        }
+
+        sql = `
+          SELECT 
+            id,
+            world_id,
+            burg_id,
+            name,
+            state,
+            statefull,
+            province,
+            provincefull,
+            culture,
+            religion,
+            population,
+            populationraw,
+            elevation,
+            temperature,
+            temperaturelikeness,
+            capital,
+            port,
+            citadel,
+            walls,
+            plaza,
+            temple,
+            shanty,
+            xworld,
+            yworld,
+            xpixel,
+            ypixel,
+            cell,
+            ST_AsGeoJSON(geom)::json AS geometry
+          FROM public.maps_burgs
+          WHERE world_id = $1
+            AND geom && ST_MakeEnvelope($2, $3, $4, $5, 4326)
+        `;
+        queryParams = [worldId, west, south, east, north];
+        break;
+      }
+
+      case 'get_routes_in_bounds': {
+        const worldId = params.world_map_id;
+        const north = Number(params.north);
+        const south = Number(params.south);
+        const east = Number(params.east);
+        const west = Number(params.west);
+
+        if (!worldId || Number.isNaN(north) || Number.isNaN(south) || Number.isNaN(east) || Number.isNaN(west)) {
+          client.release();
+          return res.status(400).json({ error: 'Invalid parameters for get_routes_in_bounds' });
+        }
+
+        sql = `
+          SELECT 
+            id,
+            world_id,
+            route_id,
+            name,
+            type,
+            feature,
+            ST_AsGeoJSON(geom)::json AS geometry
+          FROM public.maps_routes
+          WHERE world_id = $1
+            AND ST_Intersects(
+              geom,
+              ST_MakeEnvelope($2, $3, $4, $5, 4326)
+            )
+        `;
+        queryParams = [worldId, west, south, east, north];
+        break;
+      }
 
       default:
         client.release();
@@ -1418,7 +1500,19 @@ app.get('/api/maps/:worldId/rivers', async (req, res) => {
     const { bounds } = req.query;
     
     const client = await pool.connect();
-    let query = 'SELECT * FROM maps_rivers WHERE world_id = $1';
+    let query = `
+      SELECT 
+        id,
+        world_id,
+        river_id,
+        name,
+        type,
+        discharge,
+        length,
+        width,
+        ST_AsGeoJSON(geom)::json AS geometry
+      FROM maps_rivers 
+      WHERE world_id = $1`;
     let params = [worldId];
     
     if (bounds) {

@@ -5,7 +5,7 @@ import { Input } from "./ui/input";
 import { Label } from "./ui/label";
 import { toast } from "sonner";
 import { Eye, EyeOff, Mail, Lock } from "lucide-react";
-import { databaseClient } from "../utils/database/client";
+import { useUser } from "../contexts/UserContext";
 
 interface LoginModalProps {
   open: boolean;
@@ -21,27 +21,28 @@ export function LoginModal({ open, onOpenChange, onLogin, onSwitchToRegister }: 
   });
   const [showPassword, setShowPassword] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
+  const { login } = useUser();
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setIsLoading(true);
 
-    const { user, error } = await databaseClient.auth.login(formData.email, formData.password);
-    
-    if (user && !error) {
+    try {
+      const loggedInUser = await login(formData.email, formData.password);
       onLogin({
-        id: user.id,
-        username: user.username,
-        email: user.email,
-        role: user.role
+        id: loggedInUser.id,
+        username: loggedInUser.username,
+        email: loggedInUser.email,
+        role: loggedInUser.role
       });
-      toast.success(`Welcome back, ${user.username}!`);
+      toast.success(`Welcome back, ${loggedInUser.username}!`);
       onOpenChange(false);
-    } else {
-      toast.error(error?.message || "Invalid email or password");
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Invalid email or password";
+      toast.error(message);
+    } finally {
+      setIsLoading(false);
     }
-
-    setIsLoading(false);
   };
 
   return (

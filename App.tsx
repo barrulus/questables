@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { LandingPage } from "./components/landing-page";
 import { PlayerDashboard } from "./components/player-dashboard";
 import { DMDashboard } from "./components/dm-dashboard";
@@ -21,6 +21,17 @@ function AppContent() {
   const { user, logout, loading } = useUser();
   const [appState, setAppState] = useState<AppState>("landing");
   const [activePanel, setActivePanel] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (user && appState === "landing") {
+      setAppState("dashboard");
+    }
+
+    if (!user && appState !== "landing") {
+      setAppState("landing");
+      setActivePanel(null);
+    }
+  }, [user, appState]);
 
   const handleLogin = () => {
     setAppState("dashboard");

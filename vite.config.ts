@@ -43,6 +43,19 @@ export default defineConfig(({ mode }) => {
     }
   }
 
+  const publicHmrHost = env.DEV_SERVER_PUBLIC_HOST;
+  const publicHmrPort = env.DEV_SERVER_PUBLIC_PORT ? parseInt(env.DEV_SERVER_PUBLIC_PORT, 10) : undefined;
+  const publicHmrClientPort = env.DEV_SERVER_PUBLIC_CLIENT_PORT ? parseInt(env.DEV_SERVER_PUBLIC_CLIENT_PORT, 10) : undefined;
+
+  const hmrConfig = publicHmrHost
+    ? {
+        host: publicHmrHost,
+        port: publicHmrPort ?? 3000,
+        clientPort: publicHmrClientPort ?? publicHmrPort ?? 3000,
+        protocol: httpsOptions ? 'wss' : 'ws',
+      }
+    : (httpsOptions ? { protocol: 'wss' as const } : undefined);
+
   return {
     plugins: [react(), tailwindcss()],
     optimizeDeps: {
@@ -99,6 +112,7 @@ export default defineConfig(({ mode }) => {
       port: 3000,
       host: true,
       https: httpsOptions,
+      hmr: hmrConfig,
     },
     define: {
       // This helps ensure environment variables are accessible

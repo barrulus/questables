@@ -5,7 +5,6 @@ import { useState, useCallback } from 'react';
 import { db } from '../utils/database/production-helpers';
 import GeoJSON from 'ol/format/GeoJSON';
 import Feature from 'ol/Feature';
-import { fromLonLat } from 'ol/proj';
 
 export interface WorldMapBounds {
   north: number;
@@ -49,7 +48,8 @@ export interface RiverData {
   discharge: number;
   length: number;
   width: number;
-  geom: any;
+  geom?: any;
+  geometry?: any;
 }
 
 export interface CellData {
@@ -73,14 +73,31 @@ export interface MarkerData {
   type: string;
   icon: string;
   note: string;
+  x_px?: number;
+  y_px?: number;
   geom: any;
 }
 
 export class MapDataLoader {
   private geoJsonFormat = new GeoJSON({
     dataProjection: 'EPSG:4326',
-    featureProjection: 'EPSG:3857'
+    featureProjection: 'EPSG:4326'
   });
+
+  private readGeometry(geometry: any) {
+    if (!geometry) return null;
+
+    try {
+      const geometryObject = typeof geometry === 'string' ? JSON.parse(geometry) : geometry;
+      if (geometryObject && geometryObject.type && geometryObject.coordinates) {
+        return this.geoJsonFormat.readGeometry(geometryObject);
+      }
+      return null;
+    } catch (error) {
+      console.error('Failed to parse geometry from map data loader', error);
+      return null;
+    }
+  }
 
   async loadWorldMaps(): Promise<any[]> {
     const { data, error } = await db.query(`
@@ -107,24 +124,60 @@ export class MapDataLoader {
       });
     } else {
       result = await db.query(`
-        SELECT * FROM maps_burgs 
-        WHERE world_map_id = $1
+        SELECT 
+          id,
+          world_id,
+          burg_id,
+          name,
+          state,
+          statefull,
+          province,
+          provincefull,
+          culture,
+          religion,
+          population,
+          populationraw,
+          elevation,
+          temperature,
+          temperaturelikeness,
+          capital,
+          port,
+          citadel,
+          walls,
+          plaza,
+          temple,
+          shanty,
+          xworld,
+          yworld,
+          xpixel,
+          ypixel,
+          cell,
+          ST_AsGeoJSON(geom)::json AS geometry
+        FROM maps_burgs 
+        WHERE world_id = $1
       `, [worldMapId]);
     }
 
     const { data, error } = result;
     if (error) throw error;
 
-    return (data || []).map((burg: BurgData) => {
-      const feature = new Feature({
-        geometry: this.geoJsonFormat.readGeometry(burg.geometry || burg.geom),
-        id: burg.id,
-        type: 'burg',
-        name: burg.name,
-        data: burg
-      });
-      return feature;
-    });
+    return (data || [])
+      .map((burg: BurgData) => {
+        const geometry = this.readGeometry((burg as any).geometry || (burg as any).geom);
+        if (!geometry) return null;
+
+        const feature = new Feature({
+          geometry,
+          id: burg.id,
+          type: 'burg',
+          name: burg.name,
+          data: burg
+        });
+        
+        
+        return feature;
+      })
+      .filter((feature): feature is Feature => !!feature);
   }
 
   async loadRoutes(worldMapId: string, bounds?: WorldMapBounds): Promise<Feature[]> {
@@ -140,24 +193,36 @@ export class MapDataLoader {
       });
     } else {
       result = await db.query(`
-        SELECT * FROM maps_routes 
-        WHERE world_map_id = $1
+        SELECT 
+          id,
+          world_id,
+          route_id,
+          name,
+          type,
+          feature,
+          ST_AsGeoJSON(geom)::json AS geometry
+        FROM maps_routes 
+        WHERE world_id = $1
       `, [worldMapId]);
     }
 
     const { data, error } = result;
     if (error) throw error;
 
-    return (data || []).map((route: RouteData) => {
-      const feature = new Feature({
-        geometry: this.geoJsonFormat.readGeometry(route.geometry || route.geom),
-        id: route.id,
-        type: 'route',
-        name: route.name,
-        data: route
-      });
-      return feature;
-    });
+    return (data || [])
+      .map((route: RouteData) => {
+        const geometry = this.readGeometry((route as any).geometry || (route as any).geom);
+        if (!geometry) return null;
+
+        return new Feature({
+          geometry,
+          id: route.id,
+          type: 'route',
+          name: route.name,
+          data: route
+        });
+      })
+      .filter((feature): feature is Feature => !!feature);
   }
 
   async loadRivers(worldMapId: string, bounds?: WorldMapBounds): Promise<Feature[]> {
@@ -171,16 +236,20 @@ export class MapDataLoader {
 
     if (error) throw error;
 
-    return (data || []).map((river: RiverData) => {
-      const feature = new Feature({
-        geometry: this.geoJsonFormat.readGeometry(river.geometry || river.geom),
-        id: river.id,
-        type: 'river',
-        name: river.name,
-        data: river
-      });
-      return feature;
-    });
+    return (data || [])
+      .map((river: RiverData) => {
+        const geometry = this.readGeometry((river as any).geometry || (river as any).geom);
+        if (!geometry) return null;
+
+        return new Feature({
+          geometry,
+          id: river.id,
+          type: 'river',
+          name: river.name,
+          data: river
+        });
+      })
+      .filter((feature): feature is Feature => !!feature);
   }
 
   async loadCells(worldMapId: string, bounds?: WorldMapBounds): Promise<Feature[]> {
@@ -196,22 +265,38 @@ export class MapDataLoader {
     }
 
     const { data, error } = await db.query(`
-      SELECT * FROM maps_cells 
-      WHERE world_map_id = $1 
-      AND geometry && ST_MakeEnvelope($2, $3, $4, $5, 4326)
+      SELECT 
+        id,
+        world_id,
+        cell_id,
+        biome,
+        type,
+        population,
+        state,
+        culture,
+        religion,
+        height,
+        ST_AsGeoJSON(geom)::json AS geometry
+      FROM maps_cells 
+      WHERE world_id = $1 
+        AND geom && ST_MakeEnvelope($2, $3, $4, $5, 4326)
     `, [worldMapId, bounds.west, bounds.south, bounds.east, bounds.north]);
 
     if (error) throw error;
 
-    return (data || []).map((cell: CellData) => {
-      const feature = new Feature({
-        geometry: this.geoJsonFormat.readGeometry(cell.geometry || cell.geom),
-        id: cell.id,
-        type: 'cell',
-        data: cell
-      });
-      return feature;
-    });
+    return (data || [])
+      .map((cell: CellData) => {
+        const geometry = this.readGeometry((cell as any).geometry || (cell as any).geom);
+        if (!geometry) return null;
+
+        return new Feature({
+          geometry,
+          id: cell.id,
+          type: 'cell',
+          data: cell
+        });
+      })
+      .filter((feature): feature is Feature => !!feature);
   }
 
   async loadMarkers(worldMapId: string, bounds?: WorldMapBounds): Promise<Feature[]> {
@@ -219,30 +304,54 @@ export class MapDataLoader {
     
     if (bounds) {
       result = await db.query(`
-        SELECT * FROM maps_markers 
-        WHERE world_map_id = $1 
-        AND geometry && ST_MakeEnvelope($2, $3, $4, $5, 4326)
+        SELECT 
+          id,
+          world_id,
+          marker_id,
+          type,
+          icon,
+          x_px,
+          y_px,
+          note,
+          ST_AsGeoJSON(geom)::json AS geometry
+        FROM maps_markers 
+        WHERE world_id = $1 
+          AND geom && ST_MakeEnvelope($2, $3, $4, $5, 4326)
       `, [worldMapId, bounds.west, bounds.south, bounds.east, bounds.north]);
     } else {
       result = await db.query(`
-        SELECT * FROM maps_markers 
-        WHERE world_map_id = $1
+        SELECT 
+          id,
+          world_id,
+          marker_id,
+          type,
+          icon,
+          x_px,
+          y_px,
+          note,
+          ST_AsGeoJSON(geom)::json AS geometry
+        FROM maps_markers 
+        WHERE world_id = $1
       `, [worldMapId]);
     }
 
     const { data, error } = result;
     if (error) throw error;
 
-    return (data || []).map((marker: MarkerData) => {
-      const feature = new Feature({
-        geometry: this.geoJsonFormat.readGeometry(marker.geometry || marker.geom),
-        id: marker.id,
-        type: 'marker',
-        name: marker.note || `${marker.type} marker`,
-        data: marker
-      });
-      return feature;
-    });
+    return (data || [])
+      .map((marker: MarkerData) => {
+        const geometry = this.readGeometry((marker as any).geometry || (marker as any).geom);
+        if (!geometry) return null;
+
+        return new Feature({
+          geometry,
+          id: marker.id,
+          type: 'marker',
+          name: marker.note || `${marker.type} marker`,
+          data: marker
+        });
+      })
+      .filter((feature): feature is Feature => !!feature);
   }
 
   async loadCampaignLocations(campaignId: string): Promise<Feature[]> {
@@ -256,16 +365,20 @@ export class MapDataLoader {
 
     if (error) throw error;
 
-    return (data || []).map((location: any) => {
-      const feature = new Feature({
-        geometry: this.geoJsonFormat.readGeometry(location.world_position),
-        id: location.id,
-        type: 'campaign_location',
-        name: location.name,
-        data: location
-      });
-      return feature;
-    });
+    return (data || [])
+      .map((location: any) => {
+        const geometry = this.readGeometry(location.world_position);
+        if (!geometry) return null;
+
+        return new Feature({
+          geometry,
+          id: location.id,
+          type: 'campaign_location',
+          name: location.name,
+          data: location
+        });
+      })
+      .filter((feature): feature is Feature => !!feature);
   }
 
   async findNearbyBurgs(worldMapId: string, lat: number, lng: number, radiusKm: number = 50): Promise<BurgData[]> {
@@ -327,14 +440,12 @@ export class MapDataLoader {
 
   // Utility function to determine what data to load based on zoom level
   getDataTypesForZoom(zoom: number): string[] {
-    const dataTypes: string[] = [];
-    
-    if (zoom >= 3) dataTypes.push('burgs');      // Cities visible from zoom 3+
-    if (zoom >= 5) dataTypes.push('routes');     // Roads visible from zoom 5+
-    if (zoom >= 4) dataTypes.push('rivers');     // Rivers visible from zoom 4+
-    if (zoom >= 7) dataTypes.push('markers');    // Markers visible from zoom 7+
+    // Load key layers at every zoom so we can validate alignment visually.
+    const dataTypes: string[] = ['burgs', 'routes', 'rivers', 'markers'];
+
+    // Cells remain opt-in at high zoom to avoid overwhelming the client.
     if (zoom >= 10) dataTypes.push('cells');     // Terrain cells visible from zoom 10+ (high detail)
-    
+
     return dataTypes;
   }
 }

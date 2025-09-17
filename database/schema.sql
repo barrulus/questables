@@ -615,21 +615,27 @@ CREATE OR REPLACE FUNCTION get_rivers_in_bounds(
 )
 RETURNS TABLE (
     id UUID,
+    world_id UUID,
+    river_id INTEGER,
     name TEXT,
+    type TEXT,
     discharge DOUBLE PRECISION,
     length DOUBLE PRECISION,
     width DOUBLE PRECISION,
-    geom geometry
+    geometry JSON
 ) AS $$
 BEGIN
     RETURN QUERY
     SELECT
         r.id,
+        r.world_id,
+        r.river_id,
         r.name,
+        r.type,
         r.discharge,
         r.length,
         r.width,
-        r.geom
+        ST_AsGeoJSON(r.geom)::json AS geometry
     FROM public.maps_rivers r
     WHERE r.world_id = world_map_id
       AND ST_Intersects(
