@@ -7,3 +7,6 @@ node_modules/
 venv/
 tiles/
 map_data/
+public/tiles-states/6/
+public/tiles-states/7/
+public/tiles-states/8/
