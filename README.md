@@ -217,7 +217,7 @@ npm run build
 ```
 ├── components/          # React components
 │   ├── ui/             # ShadCN UI components
-│   ├── enhanced-openlayers-map.tsx
+│   ├── openlayers-map.tsx
 │   ├── player-dashboard.tsx
 │   └── ...
 ├── utils/

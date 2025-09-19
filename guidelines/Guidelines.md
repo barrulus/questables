@@ -35,7 +35,7 @@ This is a comprehensive D&D 5e web application with three main architectural lay
 
 ### Map Component Usage
 
-**Primary Component**: `EnhancedOpenLayersMap`
+**Primary Component**: `OpenLayersMap`
 - Use this component for all mapping needs in the game interface
 - Automatically handles world vs encounter map modes
 - Integrates with PostGIS spatial database
@@ -111,7 +111,7 @@ The application supports these spatial data types from Azgaar's FMG:
 App.tsx
 ├── IconSidebar (tools)
 ├── ExpandablePanel (active tool)
-├── EnhancedOpenLayersMap (main map)
+├── OpenLayersMap (main map)
 └── ChatPanel (communication)
 ```
 
@@ -259,7 +259,7 @@ npm run dev
 ## File Organization
 
 ### Map-Related Components
-- `/components/enhanced-openlayers-map.tsx` - Main map component
+- `/components/openlayers-map.tsx` - Main map component
 - `/components/map-data-loader.tsx` - PostGIS data integration
 - `/components/openlayers-map.tsx` - Basic map implementation
 - `/components/enhanced-map.tsx` - Legacy Leaflet component (deprecated)

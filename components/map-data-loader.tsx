@@ -3,6 +3,7 @@
 
 import { useState, useCallback } from 'react';
 import { db } from '../utils/database/production-helpers';
+import { PIXEL_PROJECTION_CODE } from './map-projection';
 import GeoJSON from 'ol/format/GeoJSON';
 import Feature from 'ol/Feature';
 
@@ -80,8 +81,8 @@ export interface MarkerData {
 
 export class MapDataLoader {
   private geoJsonFormat = new GeoJSON({
-    dataProjection: 'EPSG:4326',
-    featureProjection: 'EPSG:4326'
+    dataProjection: PIXEL_PROJECTION_CODE,
+    featureProjection: PIXEL_PROJECTION_CODE
   });
 
   private readGeometry(geometry: any) {
@@ -260,7 +261,7 @@ export class MapDataLoader {
 
     // Calculate area to determine if it's safe to load cells
     const area = (bounds.east - bounds.west) * (bounds.north - bounds.south);
-    if (area > 100) { // Arbitrary threshold
+    if (area > 200000) { // Arbitrary threshold tuned for pixel coordinates
       throw new Error('Area too large for cell loading');
     }
 
@@ -279,7 +280,7 @@ export class MapDataLoader {
         ST_AsGeoJSON(geom)::json AS geometry
       FROM maps_cells 
       WHERE world_id = $1 
-        AND geom && ST_MakeEnvelope($2, $3, $4, $5, 4326)
+        AND geom && ST_MakeEnvelope($2, $3, $4, $5, 0)
     `, [worldMapId, bounds.west, bounds.south, bounds.east, bounds.north]);
 
     if (error) throw error;
@@ -316,7 +317,7 @@ export class MapDataLoader {
           ST_AsGeoJSON(geom)::json AS geometry
         FROM maps_markers 
         WHERE world_id = $1 
-          AND geom && ST_MakeEnvelope($2, $3, $4, $5, 4326)
+          AND geom && ST_MakeEnvelope($2, $3, $4, $5, 0)
       `, [worldMapId, bounds.west, bounds.south, bounds.east, bounds.north]);
     } else {
       result = await db.query(`

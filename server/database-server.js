@@ -638,7 +638,7 @@ app.post('/api/database/spatial/:function', async (req, res) => {
             ST_AsGeoJSON(geom)::json AS geometry
           FROM public.maps_burgs
           WHERE world_id = $1
-            AND geom && ST_MakeEnvelope($2, $3, $4, $5, 4326)
+            AND geom && ST_MakeEnvelope($2, $3, $4, $5, 0)
         `;
         queryParams = [worldId, west, south, east, north];
         break;
@@ -669,7 +669,7 @@ app.post('/api/database/spatial/:function', async (req, res) => {
           WHERE world_id = $1
             AND ST_Intersects(
               geom,
-              ST_MakeEnvelope($2, $3, $4, $5, 4326)
+              ST_MakeEnvelope($2, $3, $4, $5, 0)
             )
         `;
         queryParams = [worldId, west, south, east, north];
@@ -1475,7 +1475,7 @@ app.get('/api/maps/:worldId/burgs', async (req, res) => {
     if (bounds) {
       try {
         const { north, south, east, west } = JSON.parse(bounds);
-        query += ` AND ST_Within(geom, ST_MakeEnvelope($2, $3, $4, $5, 4326))`;
+        query += ` AND ST_Within(geom, ST_MakeEnvelope($2, $3, $4, $5, 0))`;
         params.push(west, south, east, north);
       } catch (parseError) {
         client.release();
@@ -1518,7 +1518,7 @@ app.get('/api/maps/:worldId/rivers', async (req, res) => {
     if (bounds) {
       try {
         const { north, south, east, west } = JSON.parse(bounds);
-        query += ` AND ST_Intersects(geom, ST_MakeEnvelope($2, $3, $4, $5, 4326))`;
+        query += ` AND ST_Intersects(geom, ST_MakeEnvelope($2, $3, $4, $5, 0))`;
         params.push(west, south, east, north);
       } catch (parseError) {
         client.release();
@@ -1549,7 +1549,7 @@ app.get('/api/maps/:worldId/routes', async (req, res) => {
     if (bounds) {
       try {
         const { north, south, east, west } = JSON.parse(bounds);
-        query += ` AND ST_Intersects(route_path, ST_MakeEnvelope($2, $3, $4, $5, 4326))`;
+        query += ` AND ST_Intersects(route_path, ST_MakeEnvelope($2, $3, $4, $5, 0))`;
         params.push(west, south, east, north);
       } catch (parseError) {
         client.release();
@@ -1585,7 +1585,7 @@ app.post('/api/campaigns/:campaignId/locations', async (req, res) => {
     let paramCount = 6;
     
     if (world_position && world_position.lng && world_position.lat) {
-      query += `, world_position) VALUES ($1, $2, $3, $4, $5, $6, $7, ST_SetSRID(ST_MakePoint($8, $9), 4326))`;
+      query += `, world_position) VALUES ($1, $2, $3, $4, $5, $6, $7, ST_SetSRID(ST_MakePoint($8, $9), 0))`;
       values.push(world_position.lng, world_position.lat);
     } else {
       query += `) VALUES ($1, $2, $3, $4, $5, $6, $7)`;

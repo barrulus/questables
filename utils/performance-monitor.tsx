@@ -1,5 +1,5 @@
 // Performance monitoring and tracking utilities
-import { logPerformance, logInfo, logWarn, logError } from './logger';
+import { logPerformance, logInfo, logWarn, logError } from "./logger";
 
 // Performance measurement utilities
 export class PerformanceMonitor {
@@ -29,18 +29,18 @@ export class PerformanceMonitor {
 
     const endTime = performance.now();
     const duration = Math.round(endTime - startTime);
-    
+
     this.measurements.delete(operationId);
-    
+
     const name = operationName || operationId;
     logPerformance(name, duration);
-    
+
     // Store metric for analysis
     if (!this.metrics.has(name)) {
       this.metrics.set(name, []);
     }
     this.metrics.get(name)!.push(duration);
-    
+
     return duration;
   }
 
@@ -70,14 +70,15 @@ export class PerformanceMonitor {
   }
 
   // Clear old metrics to prevent memory leaks
-  clearOldMetrics(maxAge: number = 300000): void { // 5 minutes default
+  clearOldMetrics(_maxAge: number = 300000): void {
+    // 5 minutes default
     this.metrics.clear();
-    logInfo('Performance metrics cleared');
+    logInfo("Performance metrics cleared");
   }
 
   // Get all performance statistics
-  getAllStats(): Record<string, any> {
-    const stats: Record<string, any> = {};
+  getAllStats(): Record<string, unknown> {
+    const stats: Record<string, unknown> = {};
     for (const [name] of this.metrics) {
       stats[name] = this.getStats(name);
     }
@@ -100,7 +101,7 @@ export const usePerformanceMonitor = () => {
   const measureRender = (componentName: string) => {
     const operationId = `render-${componentName}-${Date.now()}`;
     monitor.startTiming(operationId);
-    
+
     return () => {
       monitor.endTiming(operationId, `${componentName} render`);
     };
@@ -111,29 +112,29 @@ export const usePerformanceMonitor = () => {
     endTiming,
     measureRender,
     getStats: (name: string) => monitor.getStats(name),
-    getAllStats: () => monitor.getAllStats()
+    getAllStats: () => monitor.getAllStats(),
   };
 };
 
 // Database query performance monitoring
-export const monitorDatabaseQuery = async <T>(
+export const monitorDatabaseQuery = async <T,>(
   queryName: string,
   queryFn: () => Promise<T>
 ): Promise<T> => {
   const monitor = PerformanceMonitor.getInstance();
   const operationId = `db-${queryName}-${Date.now()}`;
-  
+
   monitor.startTiming(operationId);
-  
+
   try {
     const result = await queryFn();
     const duration = monitor.endTiming(operationId, `Database: ${queryName}`);
-    
+
     // Log slow queries
     if (duration > 1000) {
       logWarn(`Slow database query detected: ${queryName}`, { duration });
     }
-    
+
     return result;
   } catch (error) {
     monitor.endTiming(operationId, `Database: ${queryName} (ERROR)`);
@@ -144,56 +145,60 @@ export const monitorDatabaseQuery = async <T>(
 
 // API endpoint performance monitoring
 export const monitorAPIEndpoint = (endpointName: string) => {
-  return (req: any, res: any, next: any) => {
+  return (req: unknown, res: unknown, next: unknown) => {
     const monitor = PerformanceMonitor.getInstance();
     const operationId = `api-${endpointName}-${Date.now()}`;
-    
+
     monitor.startTiming(operationId);
-    
+
     const originalEnd = res.end;
-    res.end = function(...args: any[]) {
+    res.end = function (...args: any[]) {
       const duration = monitor.endTiming(operationId, `API: ${endpointName}`);
-      
+
       // Log slow endpoints
       if (duration > 2000) {
         logWarn(`Slow API endpoint: ${endpointName}`, {
           duration,
           statusCode: res.statusCode,
-          method: req.method
+          method: req.method,
         });
       }
-      
+
       originalEnd.apply(this, args);
     };
-    
+
     next();
   };
 };
 
 // Memory usage monitoring
 export const monitorMemoryUsage = () => {
-  if (typeof window !== 'undefined' && 'performance' in window && 'memory' in window.performance) {
+  if (
+    typeof window !== "undefined" &&
+    "performance" in window &&
+    "memory" in window.performance
+  ) {
     const memory = (window.performance as any).memory;
-    
-    logInfo('Memory usage', {
+
+    logInfo("Memory usage", {
       usedJSMemory: `${Math.round(memory.usedJSMemory / 1024 / 1024)} MB`,
       totalJSMemory: `${Math.round(memory.totalJSMemory / 1024 / 1024)} MB`,
-      jsMemoryLimit: `${Math.round(memory.jsMemoryLimit / 1024 / 1024)} MB`
+      jsMemoryLimit: `${Math.round(memory.jsMemoryLimit / 1024 / 1024)} MB`,
     });
-    
+
     // Warning for high memory usage
     const usagePercent = (memory.usedJSMemory / memory.jsMemoryLimit) * 100;
     if (usagePercent > 80) {
       logWarn(`High memory usage detected: ${usagePercent.toFixed(1)}%`);
     }
-  } else if (typeof process !== 'undefined') {
+  } else if (typeof process !== "undefined") {
     const usage = process.memoryUsage();
-    
-    logInfo('Memory usage', {
+
+    logInfo("Memory usage", {
       rss: `${Math.round(usage.rss / 1024 / 1024)} MB`,
       heapTotal: `${Math.round(usage.heapTotal / 1024 / 1024)} MB`,
       heapUsed: `${Math.round(usage.heapUsed / 1024 / 1024)} MB`,
-      external: `${Math.round(usage.external / 1024 / 1024)} MB`
+      external: `${Math.round(usage.external / 1024 / 1024)} MB`,
     });
   }
 };
@@ -201,13 +206,13 @@ export const monitorMemoryUsage = () => {
 // WebSocket latency monitoring
 export const monitorWebSocketLatency = (socket: any) => {
   const startTime = Date.now();
-  
-  socket.emit('ping', startTime);
-  
-  socket.on('pong', (timestamp: number) => {
+
+  socket.emit("ping", startTime);
+
+  socket.on("pong", (timestamp: number) => {
     const latency = Date.now() - timestamp;
-    logPerformance('WebSocket latency', latency);
-    
+    logPerformance("WebSocket latency", latency);
+
     if (latency > 500) {
       logWarn(`High WebSocket latency detected: ${latency}ms`);
     }
@@ -216,14 +221,17 @@ export const monitorWebSocketLatency = (socket: any) => {
 
 // Resource loading performance
 export const monitorResourceLoading = () => {
-  if (typeof window !== 'undefined' && 'performance' in window) {
-    const entries = performance.getEntriesByType('resource');
-    
+  if (typeof window !== "undefined" && "performance" in window) {
+    const entries = performance.getEntriesByType("resource");
+
     entries.forEach((entry: any) => {
-      if (entry.duration > 2000) { // Resources taking more than 2 seconds
+      if (entry.duration > 2000) {
+        // Resources taking more than 2 seconds
         logWarn(`Slow resource loading: ${entry.name}`, {
           duration: `${Math.round(entry.duration)}ms`,
-          size: entry.transferSize ? `${Math.round(entry.transferSize / 1024)}KB` : undefined
+          size: entry.transferSize
+            ? `${Math.round(entry.transferSize / 1024)}KB`
+            : undefined,
         });
       }
     });
@@ -232,15 +240,19 @@ export const monitorResourceLoading = () => {
 
 // Bundle size analysis (development only)
 export const analyzeBundleSize = () => {
-  if (process.env.NODE_ENV === 'development' && typeof window !== 'undefined') {
-    const scripts = document.querySelectorAll('script[src]');
+  if (process.env.NODE_ENV === "development" && typeof window !== "undefined") {
+    const scripts = document.querySelectorAll("script[src]");
     const stylesheets = document.querySelectorAll('link[rel="stylesheet"]');
-    
-    logInfo('Bundle analysis', {
+
+    logInfo("Bundle analysis", {
       scriptCount: scripts.length,
       stylesheetCount: stylesheets.length,
-      scripts: Array.from(scripts).map(script => (script as HTMLScriptElement).src),
-      stylesheets: Array.from(stylesheets).map(link => (link as HTMLLinkElement).href)
+      scripts: Array.from(scripts).map(
+        (script) => (script as HTMLScriptElement).src
+      ),
+      stylesheets: Array.from(stylesheets).map(
+        (link) => (link as HTMLLinkElement).href
+      ),
     });
   }
 };
@@ -249,24 +261,29 @@ export const analyzeBundleSize = () => {
 export const generatePerformanceReport = () => {
   const monitor = PerformanceMonitor.getInstance();
   const stats = monitor.getAllStats();
-  
+
   const report = {
     timestamp: new Date().toISOString(),
     environment: process.env.NODE_ENV,
     metrics: stats,
     summary: {
-      totalOperations: Object.values(stats).reduce((sum, stat) => sum + (stat?.count || 0), 0),
-      averageResponseTime: Object.entries(stats)
-        .filter(([name]) => name.startsWith('API:'))
-        .reduce((sum, [, stat]) => sum + (stat?.average || 0), 0) / 
-        Object.keys(stats).filter(name => name.startsWith('API:')).length || 0,
+      totalOperations: Object.values(stats).reduce(
+        (sum, stat) => sum + (stat?.count || 0),
+        0
+      ),
+      averageResponseTime:
+        Object.entries(stats)
+          .filter(([name]) => name.startsWith("API:"))
+          .reduce((sum, [, stat]) => sum + (stat?.average || 0), 0) /
+          Object.keys(stats).filter((name) => name.startsWith("API:")).length ||
+        0,
       slowOperations: Object.entries(stats)
         .filter(([, stat]) => stat && stat.p95 > 1000)
-        .map(([name, stat]) => ({ name, p95: stat.p95 }))
-    }
+        .map(([name, stat]) => ({ name, p95: stat.p95 })),
+    },
   };
-  
-  logInfo('Performance Report Generated', report);
+
+  logInfo("Performance Report Generated", report);
   return report;
 };
 
@@ -274,7 +291,7 @@ export const generatePerformanceReport = () => {
 export const performanceMonitor = PerformanceMonitor.getInstance();
 
 // Auto-cleanup timer (runs every 5 minutes)
-if (typeof setInterval !== 'undefined') {
+if (typeof setInterval !== "undefined") {
   setInterval(() => {
     performanceMonitor.clearOldMetrics();
     monitorMemoryUsage();

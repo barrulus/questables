@@ -49,6 +49,9 @@ CREATE TABLE IF NOT EXISTS public.maps_world (
 
     -- Metadata
     bounds JSONB NOT NULL, -- {"north": 0, "south": 0, "east": 0, "west": 0}
+    width_pixels INTEGER,
+    height_pixels INTEGER,
+    meters_per_pixel DOUBLE PRECISION,
     layers JSONB DEFAULT '{"political": true, "terrain": true, "climate": false, "cultures": true, "religions": false, "provinces": true}'::jsonb,
 
     -- File info
@@ -74,7 +77,7 @@ CREATE TABLE IF NOT EXISTS public.maps_cells (
     culture INTEGER,
     religion INTEGER,
     height INTEGER,
-    geom geometry(GEOMETRY, 4326),
+    geom geometry(GEOMETRY, 0),
 
     UNIQUE(world_id, cell_id)
 );
@@ -111,7 +114,7 @@ CREATE TABLE IF NOT EXISTS public.maps_burgs (
     ypixel DOUBLE PRECISION,
     cell INTEGER,
     emblem JSONB,
-    geom geometry(Point, 4326),
+    geom geometry(Point, 0),
 
     UNIQUE(world_id, burg_id)
 );
@@ -127,7 +130,7 @@ CREATE TABLE IF NOT EXISTS public.maps_routes (
     name TEXT,
     type TEXT,
     feature INTEGER,
-    geom geometry(MultiLineString, 4326),
+    geom geometry(MultiLineString, 0),
 
     UNIQUE(world_id, route_id)
 );
@@ -144,7 +147,7 @@ CREATE TABLE IF NOT EXISTS public.maps_rivers (
     discharge DOUBLE PRECISION,
     length DOUBLE PRECISION,
     width DOUBLE PRECISION,
-    geom geometry(MultiLineString, 4326),
+    geom geometry(MultiLineString, 0),
 
     UNIQUE(world_id, river_id)
 );
@@ -161,7 +164,7 @@ CREATE TABLE IF NOT EXISTS public.maps_markers (
     x_px DOUBLE PRECISION,
     y_px DOUBLE PRECISION,
     note TEXT,
-    geom geometry(Point, 4326),
+    geom geometry(Point, 0),
 
     UNIQUE(world_id, marker_id)
 );
@@ -340,7 +343,7 @@ CREATE TABLE IF NOT EXISTS public.locations (
 
     -- World map positioning (for locations on the world map)
     world_map_id UUID REFERENCES public.maps_world(id) ON DELETE SET NULL,
-    world_position geometry(Point, 4326), -- Position on the world map
+    world_position geometry(Point, 0), -- Position on the world map (pixel coordinates)
     linked_burg_id UUID REFERENCES public.maps_burgs(id) ON DELETE SET NULL, -- Link to Azgaar's burg if applicable
 
     -- Relationships
@@ -536,10 +539,10 @@ BEGIN
         b.name,
         b.population,
         b.capital,
-        ST_Distance(b.geom::geography, ST_SetSRID(ST_MakePoint(longitude, latitude), 4326)::geography) / 1000 AS distance_km
+        ST_Distance(b.geom::geography, ST_SetSRID(ST_MakePoint(longitude, latitude), 0)::geography) / 1000 AS distance_km
     FROM public.maps_burgs b
     WHERE b.world_id = world_map_id
-      AND ST_DWithin(b.geom::geography, ST_SetSRID(ST_MakePoint(longitude, latitude), 4326)::geography, radius_km * 1000)
+      AND ST_DWithin(b.geom::geography, ST_SetSRID(ST_MakePoint(longitude, latitude), 0)::geography, radius_km * 1000)
     ORDER BY distance_km;
 END;
 $$ LANGUAGE plpgsql;
@@ -570,8 +573,8 @@ BEGIN
       AND ST_Intersects(
           r.geom,
           ST_MakeLine(
-              ST_SetSRID(ST_MakePoint(start_lng, start_lat), 4326),
-              ST_SetSRID(ST_MakePoint(end_lng, end_lat), 4326)
+              ST_SetSRID(ST_MakePoint(start_lng, start_lat), 0),
+              ST_SetSRID(ST_MakePoint(end_lng, end_lat), 0)
           )
       );
 END;
@@ -600,7 +603,7 @@ BEGIN
         c.height
     FROM public.maps_cells c
     WHERE c.world_id = world_map_id
-      AND ST_Contains(c.geom, ST_SetSRID(ST_MakePoint(longitude, latitude), 4326))
+      AND ST_Contains(c.geom, ST_SetSRID(ST_MakePoint(longitude, latitude), 0))
     LIMIT 1;
 END;
 $$ LANGUAGE plpgsql;
@@ -640,7 +643,7 @@ BEGIN
     WHERE r.world_id = world_map_id
       AND ST_Intersects(
           r.geom,
-          ST_MakeEnvelope(west, south, east, north, 4326)
+          ST_MakeEnvelope(west, south, east, north, 0)
       );
 END;
 $$ LANGUAGE plpgsql;

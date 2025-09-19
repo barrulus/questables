@@ -11,6 +11,25 @@ MAX_ZOOM=${MAX_ZOOM:-14}
 START_ZOOM=${START_ZOOM:-0}
 OUTPUT_DIR=${OUTPUT_DIR:-tiles-states}
 
+SVG_DIR=$(dirname "${SOURCE_SVG}")
+SVG_BASENAME=$(basename "${SOURCE_SVG}" .svg)
+# Derive world name by dropping the trailing layer suffix (e.g. _states)
+WORLD_NAME=${WORLD_NAME:-$(echo "$SVG_BASENAME" | sed -E 's/_[^_]+$//')}
+MAP_METADATA=${MAP_METADATA:-${SVG_DIR}/${WORLD_NAME}_mapinfo.json}
+
+if [ ! -f "$MAP_METADATA" ]; then
+  # Fall back to the common GeoJSON directory one level deeper
+  ALT_METADATA="${SVG_DIR}/geoJSON/${WORLD_NAME}_mapinfo.json"
+  if [ -f "$ALT_METADATA" ]; then
+    MAP_METADATA="$ALT_METADATA"
+  else
+    echo "Error: metadata file not found for world '$WORLD_NAME'." >&2
+    echo "Checked: $MAP_METADATA" >&2
+    [ "$MAP_METADATA" = "$ALT_METADATA" ] || echo "           $ALT_METADATA" >&2
+    exit 1
+  fi
+fi
+
 echo "Direct SVG tile rendering for OpenLayers"
 echo "Source: $SOURCE_SVG"
 echo "Zoom levels: $START_ZOOM to $MAX_ZOOM"
@@ -33,19 +52,59 @@ check_deps() {
     echo "Warning: ImageMagick convert not found. Install with: sudo apt install imagemagick" >&2
   fi
 
+  if ! command -v jq >/dev/null 2>&1; then
+    echo "Error: jq not found. Install with: sudo apt install jq" >&2
+    missing=1
+  fi
+
   return $missing
 }
 
 check_deps || exit 1
+
+echo "Loading map metadata from $MAP_METADATA"
+WIDTH_PIXELS=$(jq -r '.width_pixels' "$MAP_METADATA")
+HEIGHT_PIXELS=$(jq -r '.height_pixels' "$MAP_METADATA")
+METERS_PER_PIXEL=$(jq -r '.meters_per_pixel' "$MAP_METADATA")
+BOUND_WEST=$(jq -r '.bounds.west' "$MAP_METADATA")
+BOUND_EAST=$(jq -r '.bounds.east' "$MAP_METADATA")
+BOUND_NORTH=$(jq -r '.bounds.north' "$MAP_METADATA")
+BOUND_SOUTH=$(jq -r '.bounds.south' "$MAP_METADATA")
+
+if [ "$WIDTH_PIXELS" = "null" ] || [ -z "$WIDTH_PIXELS" ]; then
+  echo "Error: width_pixels missing from metadata" >&2
+  exit 1
+fi
+
+if [ "$HEIGHT_PIXELS" = "null" ] || [ -z "$HEIGHT_PIXELS" ]; then
+  echo "Error: height_pixels missing from metadata" >&2
+  exit 1
+fi
+
+if [ "$METERS_PER_PIXEL" = "null" ] || [ -z "$METERS_PER_PIXEL" ]; then
+  echo "Error: meters_per_pixel missing from metadata" >&2
+  exit 1
+fi
+
+MAP_WIDTH_METERS=$(echo "scale=6; $BOUND_EAST - $BOUND_WEST" | bc)
+MAP_HEIGHT_METERS=$(echo "scale=6; $BOUND_NORTH - $BOUND_SOUTH" | bc)
+
+echo "World: $WORLD_NAME"
+echo "Pixels: ${WIDTH_PIXELS}x${HEIGHT_PIXELS}" \
+  " | Extent (m): $(printf '%.2f' "$MAP_WIDTH_METERS") x $(printf '%.2f' "${MAP_HEIGHT_METERS#-}")" \
+  " | Scale: ${METERS_PER_PIXEL}m/px"
 
 # Get SVG dimensions and aspect ratio
 echo "Getting SVG dimensions..."
 # Primary: parse viewBox or width/height from the SVG file itself (no external tools)
 extract_viewbox_dims() {
   local file="$1"
-  local vb=$(grep -oE 'viewBox="[^"]+"' "$file" | head -n1 | sed -E 's/.*viewBox="([^"]+)"/\1/')
+  local svg_tag=$(grep -oE '<svg[^>]*>' "$file" | head -n1)
+  if [ -z "$svg_tag" ]; then
+    return 1
+  fi
+  local vb=$(echo "$svg_tag" | sed -nE 's/.*viewBox="([^"]+)".*/\1/p')
   if [ -n "$vb" ]; then
-    # viewBox: minX minY width height
     echo "$vb" | awk '{print $3, $4}'
     return 0
   fi
@@ -54,10 +113,13 @@ extract_viewbox_dims() {
 
 extract_wh_attrs() {
   local file="$1"
-  local w=$(grep -oE 'width="[^"]+"' "$file" | head -n1 | sed -E 's/.*width="([^"]+)"/\1/')
-  local h=$(grep -oE 'height="[^"]+"' "$file" | head -n1 | sed -E 's/.*height="([^"]+)"/\1/')
+  local svg_tag=$(grep -oE '<svg[^>]*>' "$file" | head -n1)
+  if [ -z "$svg_tag" ]; then
+    return 1
+  fi
+  local w=$(echo "$svg_tag" | sed -nE 's/.*width="([^"]+)".*/\1/p')
+  local h=$(echo "$svg_tag" | sed -nE 's/.*height="([^"]+)".*/\1/p')
   if [ -n "$w" ] && [ -n "$h" ]; then
-    # strip non-numeric except dot (assumes same units)
     w=${w//[^0-9.]/}
     h=${h//[^0-9.]/}
     if [ -n "$w" ] && [ -n "$h" ]; then
@@ -77,11 +139,16 @@ if [ -z "${SVG_WIDTH:-}" ] || [ -z "${SVG_HEIGHT:-}" ]; then
 fi
 
 echo "SVG size: ${SVG_WIDTH}x${SVG_HEIGHT}"
+SVG_ASPECT_RATIO=$(echo "scale=6; $SVG_WIDTH / $SVG_HEIGHT" | bc -l)
 
-# Compute aspect ratio (width/height)
-# This aspect ratio now directly determines the mapping from tile coordinates to SVG coordinates
-ASPECT_RATIO=$(echo "scale=6; $SVG_WIDTH / $SVG_HEIGHT" | bc -l)
-echo "Aspect ratio detected from SVG: ~$ASPECT_RATIO"
+# Ensure SVG matches metadata expectations to avoid drift
+if [ "$(printf '%.0f' "$SVG_WIDTH")" -ne "$WIDTH_PIXELS" ] || [ "$(printf '%.0f' "$SVG_HEIGHT")" -ne "$HEIGHT_PIXELS" ]; then
+  echo "Error: SVG dimensions (${SVG_WIDTH}x${SVG_HEIGHT}) do not match metadata (${WIDTH_PIXELS}x${HEIGHT_PIXELS})." >&2
+  exit 1
+fi
+
+ASPECT_RATIO=$(echo "scale=6; $WIDTH_PIXELS / $HEIGHT_PIXELS" | bc -l)
+echo "Aspect ratio detected: SVG=$SVG_ASPECT_RATIO, metadata=$ASPECT_RATIO"
 
 mkdir -p "$OUTPUT_DIR"
 
@@ -194,6 +261,34 @@ for z in $(seq $START_ZOOM $MAX_ZOOM); do
   echo "  Created $actual_tiles non-empty tiles for zoom $z"
   echo ""
 done
+
+GENERATED_AT=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
+cat > "$OUTPUT_DIR/tileset.json" <<EOF
+{
+  "world": "$WORLD_NAME",
+  "generated_at": "$GENERATED_AT",
+  "tile_size": $TILE_SIZE,
+  "min_zoom": $START_ZOOM,
+  "max_zoom": $MAX_ZOOM,
+  "map": {
+    "width_pixels": $WIDTH_PIXELS,
+    "height_pixels": $HEIGHT_PIXELS,
+    "meters_per_pixel": $METERS_PER_PIXEL,
+    "bounds": {
+      "west": $BOUND_WEST,
+      "south": $BOUND_SOUTH,
+      "east": $BOUND_EAST,
+      "north": $BOUND_NORTH
+    },
+    "width_meters": $MAP_WIDTH_METERS,
+    "height_meters": $MAP_HEIGHT_METERS
+  },
+  "source": {
+    "svg": "$SOURCE_SVG",
+    "metadata": "$MAP_METADATA"
+  }
+}
+EOF
 
 # Create OpenLayers viewer
 cat > viewer.html << EOF

@@ -22,7 +22,7 @@ This document outlines the complete migration from Supabase to PostgreSQL 17 wit
 ### ✅ Updated Components
 
 **Map Components:**
-- `enhanced-openlayers-map.tsx` - Uses new database client
+- `openlayers-map.tsx` - Uses new database client
 - `map-data-loader.tsx` - PostgreSQL spatial queries only
 
 **Authentication:**

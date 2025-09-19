@@ -296,7 +296,7 @@ This multi-coordinate approach ensures AFMG exports can serve diverse applicatio
 
 With the migration of AFMG data into the Questable platform we now render all spatial content directly in **WGS84 (EPSG:4326)** to avoid mismatches between azgaar-derived GeoJSON and the OpenLayers basemap. Key adjustments implemented in March 2025:
 
-- **Front-end projection alignment** (`components/enhanced-openlayers-map.tsx`)
+- **Front-end projection alignment** (`components/openlayers-map.tsx`)
   - OpenLayers `View` now runs in EPSG:4326 with rotation disabled so geographic lon/lat coordinates line up 1:1 with imported features.
   - Custom `createGeographicTileSource` builds an OpenLayers `XYZ` source backed by a geographic `TileGrid` (origin `[-180, 90]`, resolutions derived from the fantasy tiles). This replaces the previous Web Mercator assumption and keeps pre-rendered AFMG tiles perfectly registered.
   - All interaction helpers (pin placement, fit-to-extent) operate on raw `[lon, lat]` values—no intermediate `fromLonLat`/`toLonLat` conversions remain, eliminating rounding drift.

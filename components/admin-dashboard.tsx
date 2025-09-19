@@ -9,7 +9,6 @@ import { ScrollArea } from "./ui/scroll-area";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "./ui/tabs";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "./ui/select";
 import { CampaignManager } from "./campaign-manager";
-import { MapManager } from "./map-manager";
 import { toast } from "sonner";
 import { 
   Crown, 
@@ -452,7 +451,6 @@ export function AdminDashboard({ user, onEnterGame, onLogout }: AdminDashboardPr
             <TabsTrigger value="overview">Overview</TabsTrigger>
             <TabsTrigger value="users">User Management</TabsTrigger>
             <TabsTrigger value="campaigns">Campaign Manager</TabsTrigger>
-            <TabsTrigger value="maps">Map Manager</TabsTrigger>
             <TabsTrigger value="analytics">Analytics</TabsTrigger>
             <TabsTrigger value="system">System Health</TabsTrigger>
             <TabsTrigger value="player-tools">Player Tools</TabsTrigger>
@@ -705,10 +703,6 @@ export function AdminDashboard({ user, onEnterGame, onLogout }: AdminDashboardPr
 
           <TabsContent value="campaigns" className="space-y-6">
             <CampaignManager />
-          </TabsContent>
-
-          <TabsContent value="maps" className="space-y-6">
-            <MapManager />
           </TabsContent>
 
           <TabsContent value="analytics" className="space-y-6">
