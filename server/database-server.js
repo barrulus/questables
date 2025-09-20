@@ -42,6 +42,7 @@ import {
   logApplicationStart,
   logApplicationShutdown
 } from './utils/logger.js';
+import { initializeLLMServiceFromEnv } from './llm/index.js';
 
 // Load env from multiple locations to support repo-root .env.local
 const __filename = fileURLToPath(import.meta.url);
@@ -114,6 +115,23 @@ app.use(express.json());
 
 // Request logging middleware
 app.use(createRequestLogger());
+
+// Enhanced LLM service bootstrap
+try {
+  const { service: enhancedLLMService, registry: llmRegistry } = initializeLLMServiceFromEnv(process.env);
+  app.locals.llmService = enhancedLLMService;
+  app.locals.llmRegistry = llmRegistry;
+  logInfo('Enhanced LLM service initialized', {
+    providers: llmRegistry.list(),
+    defaultProvider: process.env.LLM_PROVIDER || 'ollama',
+  });
+} catch (error) {
+  logError('Failed to initialize Enhanced LLM service', error, {
+    provider: process.env.LLM_PROVIDER || 'ollama',
+  });
+  app.locals.llmService = null;
+  app.locals.llmRegistry = null;
+}
 
 // In-memory cache for frequently accessed data
 const cache = new Map();

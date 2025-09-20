@@ -376,10 +376,26 @@ export function PlayerDashboard({ user, onEnterGame, onLogout }: PlayerDashboard
     }
   }, [activeCampaignId, activeCampaigns, loading, selectCampaign]);
 
+  const handleSelectCampaign = useCallback(
+    async (campaignId: string, { silent = false } = {}) => {
+      try {
+        await selectCampaign(campaignId);
+        if (!silent) {
+          toast.success("Campaign selected. You're ready to play.");
+        }
+      } catch (launchError) {
+        const message = launchError instanceof Error ? launchError.message : "Failed to open campaign";
+        toast.error(message);
+        console.error("[PlayerDashboard] selectCampaign error", launchError);
+      }
+    },
+    [selectCampaign]
+  );
+
   const launchCampaign = useCallback(
     async (campaignId: string) => {
       try {
-        await selectCampaign(campaignId);
+        await handleSelectCampaign(campaignId, { silent: true });
         onEnterGame();
       } catch (launchError) {
         const message = launchError instanceof Error ? launchError.message : "Failed to open campaign";
@@ -387,7 +403,7 @@ export function PlayerDashboard({ user, onEnterGame, onLogout }: PlayerDashboard
         console.error("[PlayerDashboard] launchCampaign error", launchError);
       }
     },
-    [onEnterGame, selectCampaign]
+    [handleSelectCampaign, onEnterGame]
   );
 
   const totalCharacterLevels = useMemo(
@@ -668,24 +684,14 @@ export function PlayerDashboard({ user, onEnterGame, onLogout }: PlayerDashboard
                             <Edit className="w-4 h-4 mr-1" />
                             Edit
                           </Button>
-                          {campaignsForCharacter.length > 0 && (
-                            <Button
-                              size="sm"
-                              className="flex-1"
-                              onClick={() => {
-                                const campaignToLaunch =
-                                  campaignsForCharacter.find((campaign) => campaign.id === activeCampaignId) ??
-                                  campaignsForCharacter[0];
-
-                                if (campaignToLaunch) {
-                                  void launchCampaign(campaignToLaunch.id);
-                                }
-                              }}
-                            >
-                              <Play className="w-4 h-4 mr-1" />
-                              Play
-                            </Button>
-                          )}
+                          <Button
+                            size="sm"
+                            className="flex-1"
+                            onClick={() => setActiveTab("campaigns")}
+                          >
+                            <Users className="w-4 h-4 mr-1" />
+                            View Campaigns
+                          </Button>
                         </div>
                       </CardContent>
                     </Card>
@@ -774,12 +780,24 @@ export function PlayerDashboard({ user, onEnterGame, onLogout }: PlayerDashboard
                             <Eye className="w-4 h-4 mr-1" />
                             View
                           </Button>
-                          {campaign.status === "active" && (
-                            <Button size="sm" onClick={() => void launchCampaign(campaign.id)}>
-                              <Play className="w-4 h-4 mr-1" />
-                              Join Session
-                            </Button>
-                          )}
+                          {campaign.characterId && campaign.characterName ? (
+                            campaign.id === activeCampaignId ? (
+                              <button
+                                type="button"
+                                data-slot="button"
+                                onClick={() => void launchCampaign(campaign.id)}
+                                className="inline-flex items-center justify-center whitespace-nowrap text-sm font-medium transition-all disabled:pointer-events-none disabled:opacity-50 [&_svg]:pointer-events-none [&_svg:not([class*='size-'])]:size-4 [&_svg]:shrink-0 outline-none focus-visible:border-ring focus-visible:ring-ring/50 focus-visible:ring-[3px] aria-invalid:ring-destructive/20 dark:aria-invalid:ring-destructive/40 aria-invalid:border-destructive bg-primary text-primary-foreground hover:bg-primary/90 h-8 rounded-md gap-1.5 px-3 has-[>svg]:px-2.5"
+                              >
+                                <Play className="w-4 h-4 mr-1" />
+                                Play
+                              </button>
+                            ) : (
+                              <Button size="sm" onClick={() => void handleSelectCampaign(campaign.id)}>
+                                <Play className="w-4 h-4 mr-1" />
+                                Set Active
+                              </Button>
+                            )
+                          ) : null}
                         </div>
                       </div>
                     </CardContent>
@@ -883,11 +901,23 @@ export function PlayerDashboard({ user, onEnterGame, onLogout }: PlayerDashboard
                                 Request to Join
                               </Button>
                             )}
-                            {isJoined && campaign.status === "active" && (
-                              <Button size="sm" onClick={() => void launchCampaign(campaign.id)}>
-                                <Play className="w-4 h-4 mr-1" />
-                                Join Session
-                              </Button>
+                            {isJoined && campaign.characterId && campaign.characterName && (
+                              campaign.id === activeCampaignId ? (
+                                <button
+                                  type="button"
+                                  data-slot="button"
+                                  onClick={() => void launchCampaign(campaign.id)}
+                                  className="inline-flex items-center justify-center whitespace-nowrap text-sm font-medium transition-all disabled:pointer-events-none disabled:opacity-50 [&_svg]:pointer-events-none [&_svg:not([class*='size-'])]:size-4 [&_svg]:shrink-0 outline-none focus-visible:border-ring focus-visible:ring-ring/50 focus-visible:ring-[3px] aria-invalid:ring-destructive/20 dark:aria-invalid:ring-destructive/40 aria-invalid:border-destructive bg-primary text-primary-foreground hover:bg-primary/90 h-8 rounded-md gap-1.5 px-3 has-[>svg]:px-2.5"
+                                >
+                                  <Play className="w-4 h-4 mr-1" />
+                                  Play
+                                </button>
+                              ) : (
+                                <Button size="sm" onClick={() => void handleSelectCampaign(campaign.id)}>
+                                  <Play className="w-4 h-4 mr-1" />
+                                  Set Active
+                                </Button>
+                              )
                             )}
                           </div>
                         </div>

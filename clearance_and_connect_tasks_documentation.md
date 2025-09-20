@@ -252,9 +252,27 @@ Always append new entries; do not erase or rewrite previous log items except to 
   - Simplified Jest configuration to drop the unused `ts-jest` transform, convert the setup harness to plain JS, and align ESM handling (`jest.config.js:1`, `src/setupTests.js:1`).
   - Added `tests/live-api.integration.test.js` as a live smoke suite that hits `/api/health`, `/api/campaigns/public`, and `/api/maps/world`, removing legacy mock-based suites in `tests/integration.test.js`, `components/__tests__/character-sheet.test.tsx`, and `utils/database/__tests__/data-helpers.test.tsx`.
   - Introduced authenticated coverage for `/api/admin/metrics` by logging in with seeded admin credentials supplied via `LIVE_API_ADMIN_EMAIL`/`LIVE_API_ADMIN_PASSWORD` in the smoke suite.
+  - Moved the in-character `Play` control into the campaign listings so players launch sessions from active campaigns instead of from their character cards, preserving the original button styling and adding a "Set Active" helper for non-selected campaigns (`components/player-dashboard.tsx:620`).
 - **Cleanups:** Deleted obsolete mock-driven tests (`tests/integration.test.js`, `components/__tests__/character-sheet.test.tsx`, `utils/database/__tests__/data-helpers.test.tsx`) and migrated shared setup to `src/setupTests.js`.
 - **Documentation Updates:** data_mismatch.md:1; docs/PHASE_3_COMPLETE.md:1; README.md:5,98; .env.example:11; lint_report.md:17 (recorded ESLint run for the new tooling and smoke suite).
 - **Tests & Verification:**
   - `LIVE_API_BASE_URL=https://quixote.tail3f19fe.ts.net:3001 LIVE_API_ADMIN_EMAIL=b@rry.im LIVE_API_ADMIN_PASSWORD=barrulus npm test -- --runTestsByPath tests/live-api.integration.test.js` (pass)
   - `npx eslint tests/live-api.integration.test.js src/setupTests.js --ext js` (pass)
+  - `npx eslint components/player-dashboard.tsx --ext ts,tsx` (pass)
 - **Remaining Gaps / Blockers:** Automated coverage still relies on public endpoints only; authenticated routes (admin metrics, campaign mutations) need fixture credentials before they can join the smoke suite.
+
+## Task 1 – Establish Provider-Abstraction Layer for Enhanced LLM Service
+- **Date:** 2025-09-20
+- **Engineer(s):** Codex Agent
+- **Work Done:**
+  - Implemented `server/llm` provider abstraction with cache-aware `EnhancedLLMService`, provider registry, and explicit error types.
+  - Added Ollama adapter targeting `http://192.168.1.34` with default `qwen3:8b` model selection plus latency/token instrumentation.
+  - Bootstrapped provider registration inside `server/database-server.js` so downstream routes can access `app.locals.llmService` without mock fallbacks.
+  - Created guarded integration suite `tests/ollama-provider.integration.test.js` to exercise live generation and cache behaviour.
+- **Cleanups:** None (new functionality only).
+- **Documentation Updates:** README.md:189 (LLM provider env guidance); .env.example:79 (provider variables); API_DOCUMENTATION.md:60 (provider interface description); llm_tasks_that_will_work.md:16 (progress log).
+- **Tests & Verification:**
+  - `npx eslint server/llm tests/ollama-provider.integration.test.js --ext js` (pass).
+  - `npm test -- --runTestsByPath tests/ollama-provider.integration.test.js --runInBand` (skip: guard stops execution when `LLM_OLLAMA_MODEL` is unset).
+  - `LLM_OLLAMA_MODEL=qwen3:8b npm test -- --runTestsByPath tests/ollama-provider.integration.test.js --runInBand` (pass with warnings: Ollama health check logs `fetch failed`, guard exits early, no narratives generated).
+- **Remaining Gaps / Blockers:** The Ollama host at `http://192.168.1.34` still returns `fetch failed`, so no live generation has been validated yet despite the Jest suite now loading under `--experimental-vm-modules`.

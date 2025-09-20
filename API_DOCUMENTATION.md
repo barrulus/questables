@@ -80,6 +80,29 @@ Retrieve aggregate platform metrics from the live database. Requires an authenti
 - `403`: Authenticated user is not an admin
 - `500`: Unexpected database failure while aggregating metrics
 
+## Enhanced LLM Service (Provider Abstraction)
+
+The backend now boots an Enhanced LLM Service that routes narrative generation through provider-specific adapters. The default configuration registers the Ollama-backed provider (`qwen3:8b` hosted at `http://192.168.1.34`). While public HTTP endpoints are not yet exposed, internal services can call the provider layer with the following operations:
+
+| Operation | Description |
+|-----------|-------------|
+| `generateDMNarration` | Produces dungeon master narration responses for general player actions. |
+| `generateSceneDescription` | Generates atmospheric environment descriptions using live context payloads. |
+| `generateNPCDialogue` | Returns NPC dialogue grounded in stored personality/memory state. |
+| `generateActionNarrative` | Narrates the outcomes of discrete player or NPC actions. |
+| `generateQuest` | Creates structured quest prompts with objectives and rewards. |
+
+### Provider Metadata & Instrumentation
+
+- Every call records provider name, host, model, and a unique request ID for traceability.
+- Metrics include request latency, prompt/completion token counts (when provided by the model), and provider durations (load, prompt evaluation, generation).
+- Responses are cached by provider/model/prompt/metadata hash with a configurable TTL (default 5 minutes). Cache hits are surfaced in the response payload.
+- Failures raise explicit `LLMProviderError`/`LLMServiceError` exceptions; the service never falls back to canned content.
+
+### Configuration
+
+Environment variables documented in `.env.example`/`README.md` (prefixed with `LLM_`) control provider host, model, credentials, and cache limits. Bootstrap failures are logged and block narrative generation until resolved.
+
 ## Characters API
 
 ### GET /api/characters

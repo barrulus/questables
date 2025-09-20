@@ -1,9 +1,7 @@
 /* eslint-env node */
-/* global require, jest, afterEach */
-/* eslint-disable @typescript-eslint/no-require-imports */
 
-// Jest setup file for React Testing Library
-require('@testing-library/jest-dom');
+import '@testing-library/jest-dom';
+import { afterEach, jest } from '@jest/globals';
 
 const win = typeof globalThis.window !== 'undefined' ? globalThis.window : undefined;
 

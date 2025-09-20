@@ -184,7 +184,35 @@ FRONTEND_URL=http://localhost:3000
 # DEV_SERVER_USE_TLS=true
 # DEV_SERVER_TLS_CERT=./quixote.tail3f19fe.ts.net.crt
 # DEV_SERVER_TLS_KEY=./quixote.tail3f19fe.ts.net.key
+
+### LLM Provider Configuration
+
+The Enhanced LLM Service runs via a provider abstraction layer. Production and development environments currently target the on-prem Ollama instance at `http://192.168.1.34` using the `qwen3:8b` model. Configure the following variables in `.env.local`:
+
+```env
+LLM_PROVIDER=ollama
+LLM_OLLAMA_HOST=http://<your-ollama-host>
+LLM_OLLAMA_MODEL=qwen3:8b
+# Optional overrides
+# LLM_OLLAMA_API_KEY= # set only if the Ollama host requires bearer auth
+# LLM_OLLAMA_TIMEOUT_MS=60000
+# LLM_OLLAMA_TEMPERATURE=0.7
+# LLM_OLLAMA_TOP_P=0.9
 ```
+
+The backend refuses to serve narrative requests when the provider bootstrap fails. Use the health helper below to verify connectivity before running integration tests:
+
+```bash
+LLM_OLLAMA_MODEL=qwen3:8b node --input-type=module <<'NODE'
+import { initializeLLMServiceFromEnv } from './server/llm/index.js';
+
+const { registry } = initializeLLMServiceFromEnv(process.env);
+const health = await registry.get('ollama').checkHealth();
+console.log(health);
+NODE
+```
+
+If the host is unreachable, the script surfaces the error instead of silently returning demo content—resolve connectivity before depending on narrative flows.
 
 **The application will fail to start if `VITE_DATABASE_SERVER_URL` is not set.** Player and DM dashboards now surface an explicit configuration error rather than falling back to dummy data when this variable is missing.
 
@@ -213,12 +241,12 @@ npm run build
 
   ```bash
   LIVE_API_BASE_URL=https://quixote.tail3f19fe.ts.net:3001 \
-  LIVE_API_ADMIN_EMAIL=admin@questables.example\
-  LIVE_API_ADMIN_PASSWORD=thepassword \
+  LIVE_API_ADMIN_EMAIL="${DEFAULT_ADMIN_EMAIL:-admin@questables.example}" \
+  LIVE_API_ADMIN_PASSWORD="${DEFAULT_ADMIN_PASSWORD:-changeme}" \
   npm test -- --runTestsByPath tests/live-api.integration.test.js
   ```
 
-- If you seed different admin credentials, set `LIVE_API_ADMIN_EMAIL` and `LIVE_API_ADMIN_PASSWORD` to match (the suite also respects the `DEFAULT_ADMIN_*` values used by `npm run db:setup`).
+- If you seed different admin credentials, set `LIVE_API_ADMIN_EMAIL` and `LIVE_API_ADMIN_PASSWORD` to match (the suite also respects the `DEFAULT_ADMIN_*` values produced by `npm run db:setup`).
 
 ## Project Structure
 
