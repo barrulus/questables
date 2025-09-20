@@ -71,24 +71,36 @@ class WebSocketServer {
       });
 
       // Handle chat messages
-      socket.on('chat-message', async (data) => {
+      socket.on('chat-message', (payload) => {
         try {
-          const { campaignId, message, characterId } = data;
-          
-          // Broadcast to all users in the campaign room
+          const { campaignId } = payload;
+          if (!campaignId) {
+            throw new Error('Campaign ID missing for chat message');
+          }
+
+          const incoming = payload?.message || {};
+          const now = new Date().toISOString();
+
           const messageData = {
-            id: Date.now().toString(), // Temporary ID, would be replaced with DB ID
-            userId: socket.user.id,
-            username: socket.user.username,
-            characterId,
-            message,
-            timestamp: new Date().toISOString(),
-            campaignId
+            type: 'new_message',
+            data: {
+              id: incoming.messageId || incoming.id || Date.now().toString(),
+              campaign_id: campaignId,
+              content: incoming.content || incoming.message || '',
+              message_type: incoming.messageType || 'text',
+              sender_id: incoming.senderId || socket.user.id,
+              sender_name: incoming.senderName || socket.user.username,
+              username: incoming.senderName || socket.user.username,
+              character_id: incoming.characterId ?? null,
+              dice_roll: incoming.diceRoll ?? null,
+              created_at: incoming.createdAt || now,
+            }
           };
 
           this.io.to(`campaign-${campaignId}`).emit('new-message', messageData);
-          console.log(`Chat message from ${socket.user.username} in campaign ${campaignId}`);
+          console.log(`Chat message from ${messageData.data.sender_name} in campaign ${campaignId}`);
         } catch (error) {
+          console.error('[Socket.io] Failed to broadcast chat message:', error);
           socket.emit('error', { type: 'chat-error', message: 'Failed to send message' });
         }
       });

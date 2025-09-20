@@ -102,7 +102,7 @@ export const requireAuth = async (req, res, next) => {
       const decoded = verifyToken(token);
       
       // Verify user still exists in database
-      const userQuery = 'SELECT id, username, email, role, created_at FROM user_profiles WHERE id = $1';
+      const userQuery = 'SELECT id, username, email, roles, created_at FROM user_profiles WHERE id = $1';
       const userResult = await dbPool.query(userQuery, [decoded.userId]);
       
       if (userResult.rows.length === 0) {
@@ -112,7 +112,16 @@ export const requireAuth = async (req, res, next) => {
         });
       }
       
-      req.user = userResult.rows[0];
+      const userRow = userResult.rows[0];
+      const allowedRoles = ['player', 'dm', 'admin'];
+      const roles = Array.isArray(userRow.roles)
+        ? [...new Set(userRow.roles.filter((role) => allowedRoles.includes(role)))]
+        : [allowedRoles.includes(userRow.roles) ? userRow.roles : 'player'];
+      req.user = {
+        ...userRow,
+        roles,
+        role: roles[0]
+      };
       req.token = decoded;
       next();
       
@@ -154,7 +163,7 @@ export const requireCampaignOwnership = async (req, res, next) => {
     }
     
     // Check if user is the DM of this campaign
-    const campaignQuery = 'SELECT dm_id FROM campaigns WHERE id = $1';
+    const campaignQuery = 'SELECT dm_user_id FROM campaigns WHERE id = $1';
     const campaignResult = await dbPool.query(campaignQuery, [checkId]);
     
     if (campaignResult.rows.length === 0) {
@@ -164,8 +173,8 @@ export const requireCampaignOwnership = async (req, res, next) => {
       });
     }
     
-    const dmId = campaignResult.rows[0].dm_id;
-    if (dmId !== userId) {
+    const dmUserId = campaignResult.rows[0].dm_user_id;
+    if (dmUserId !== userId) {
       return res.status(403).json({ 
         error: 'Access denied',
         message: 'Only the campaign DM can perform this action'
@@ -207,9 +216,9 @@ export const requireCampaignParticipation = async (req, res, next) => {
     // Check if user is DM or player in this campaign
     const participationQuery = `
       SELECT 
-        c.dm_id,
+        c.dm_user_id,
         CASE 
-          WHEN c.dm_id = $2 THEN 'dm'
+          WHEN c.dm_user_id = $2 THEN 'dm'
           WHEN cp.user_id = $2 THEN 'player'
           ELSE NULL
         END as role
@@ -302,16 +311,18 @@ export const requireCharacterOwnership = async (req, res, next) => {
 export const requireRole = (allowedRoles) => {
   return (req, res, next) => {
     try {
-      const userRole = req.user?.role || 'player';
-      
-      if (typeof allowedRoles === 'string') {
-        allowedRoles = [allowedRoles];
-      }
-      
-      if (!allowedRoles.includes(userRole)) {
+      const userRoles = Array.isArray(req.user?.roles) && req.user.roles.length > 0
+        ? req.user.roles
+        : [req.user?.role || 'player'];
+
+      const allowed = Array.isArray(allowedRoles) ? allowedRoles : [allowedRoles];
+
+      const hasRole = userRoles.some((role) => allowed.includes(role));
+
+      if (!hasRole) {
         return res.status(403).json({ 
           error: 'Insufficient permissions',
-          message: `This action requires one of the following roles: ${allowedRoles.join(', ')}`
+          message: `This action requires one of the following roles: ${allowed.join(', ')}`
         });
       }
       

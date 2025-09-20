@@ -1,34 +1,27 @@
-import { useState, useEffect, useContext } from 'react';
+import { useState, useEffect } from 'react';
 import { Card, CardContent, CardHeader, CardTitle } from './ui/card';
 import { Button } from './ui/button';
 import { Badge } from './ui/badge';
 import { Input } from './ui/input';
 import { Label } from './ui/label';
-import { Textarea } from './ui/textarea';
 import { ScrollArea } from './ui/scroll-area';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from './ui/dialog';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from './ui/select';
-import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle, AlertDialogTrigger } from './ui/alert-dialog';
 import { toast } from 'sonner';
-import { useUser } from "../contexts/UserContext";
+import { fetchJson } from "../utils/api-client";
+import { Alert, AlertDescription, AlertTitle } from './ui/alert';
 import { 
   ScrollText,
-  Plus,
-  Edit,
-  Trash2,
   Search,
   Calendar,
-  Tag,
-  User,
   MapPin,
   Star,
   Clock,
   FileText,
-  Download,
-  Filter,
   Loader2,
   Users,
-  Coins
+  Coins,
+  AlertCircle
 } from 'lucide-react';
 
 interface JournalEntry {
@@ -43,13 +36,7 @@ interface JournalEntry {
   participants: string[];
   locations_visited: string[];
   npcs_encountered: string[];
-  treasure_found: any[];
-  personal_notes?: string;
-  favorite_moments?: string;
-  character_thoughts?: string;
-}
-
-interface PersonalJournalData {
+  treasure_found: Array<{ name: string; description?: string }>;
   personal_notes?: string;
   favorite_moments?: string;
   character_thoughts?: string;
@@ -59,14 +46,25 @@ interface JournalsProps {
   campaignId?: string;
 }
 
+interface ApiSession {
+  id: string;
+  session_number: number;
+  title: string;
+  summary?: string;
+  status: string;
+  ended_at?: string;
+  started_at?: string;
+  created_at: string;
+  duration?: number;
+  experience_awarded?: number;
+  treasure_awarded?: Array<{ name: string; description?: string }>;
+}
+
 export default function Journals({ campaignId }: JournalsProps) {
-  const { user } = useUser();
   const [journalEntries, setJournalEntries] = useState<JournalEntry[]>([]);
   const [loading, setLoading] = useState(true);
-  const [selectedEntry, setSelectedEntry] = useState<JournalEntry | null>(null);
   const [searchTerm, setSearchTerm] = useState('');
   const [filterCategory, setFilterCategory] = useState<string>('all');
-  const [editingPersonalNotes, setEditingPersonalNotes] = useState<PersonalJournalData>({});
 
   // Load journal entries from completed sessions
   const loadJournalEntries = async () => {
@@ -76,56 +74,42 @@ export default function Journals({ campaignId }: JournalsProps) {
         return;
       }
       // Load completed sessions as journal entries
-      const response = await fetch(`/api/campaigns/${campaignId}/sessions`);
-      if (response.ok) {
-        const sessions = await response.json();
-        
+      const sessions = await fetchJson<ApiSession[]>(
+        `/api/campaigns/${campaignId}/sessions`,
+        undefined,
+        'Failed to load sessions',
+      );
+
+      if (sessions) {
         const completedSessions = sessions
-          .filter((s: any) => s.status === 'completed')
-          .map((s: any) => ({
-            id: s.id,
-            session_id: s.id,
-            session_number: s.session_number,
-            session_title: s.title,
-            summary: s.summary,
-            date: s.ended_at || s.started_at || s.created_at,
-            duration: s.duration,
-            experience_awarded: s.experience_awarded,
+          .filter((session) => session.status === 'completed')
+          .map((session) => ({
+            id: session.id,
+            session_id: session.id,
+            session_number: session.session_number,
+            session_title: session.title,
+            summary: session.summary,
+            date: session.ended_at || session.started_at || session.created_at,
+            duration: session.duration,
+            experience_awarded: session.experience_awarded,
             participants: [], // Would need to join with session_participants
             locations_visited: [], // Would need session-location tracking
             npcs_encountered: [], // Would need session-npc tracking
-            treasure_found: s.treasure_awarded || [],
+            treasure_found: session.treasure_awarded || [],
             personal_notes: '',
             favorite_moments: '',
             character_thoughts: ''
           }));
 
         setJournalEntries(completedSessions);
+      } else {
+        setJournalEntries([]);
       }
     } catch (error) {
       console.error('Failed to load journal entries:', error);
-      toast.error('Failed to load journal entries');
+      toast.error(error instanceof Error ? error.message : 'Failed to load journal entries');
     } finally {
       setLoading(false);
-    }
-  };
-
-  // Create or update personal journal entry
-  const updatePersonalJournal = async (sessionId: string, journalData: PersonalJournalData) => {
-    try {
-      // In a full implementation, this would call a personal journal API endpoint
-      // For now, we'll update the local state
-      setJournalEntries(prev => prev.map(entry =>
-        entry.session_id === sessionId
-          ? { ...entry, ...journalData }
-          : entry
-      ));
-      
-      toast.success('Personal notes updated');
-      setEditingPersonalNotes({});
-    } catch (error) {
-      console.error('Failed to update personal journal:', error);
-      toast.error('Failed to update personal notes');
     }
   };
 
@@ -373,147 +357,42 @@ export default function Journals({ campaignId }: JournalsProps) {
                                     <FileText className="w-4 h-4" />
                                     Personal Notes
                                   </h4>
-                                  
+                                  <Alert className="mb-4">
+                                    <AlertCircle className="w-4 h-4" />
+                                    <AlertTitle>Personal journaling pending backend support</AlertTitle>
+                                    <AlertDescription>
+                                      Editing and persisting personal notes is blocked until the journaling API
+                                      is delivered. Existing entries are read-only snapshots from completed
+                                      sessions.
+                                    </AlertDescription>
+                                  </Alert>
+
                                   <div className="space-y-4">
                                     <div>
                                       <Label className="text-sm font-medium">Personal Reflections</Label>
-                                      {editingPersonalNotes.personal_notes !== undefined ? (
-                                        <div className="space-y-2">
-                                          <Textarea
-                                            value={editingPersonalNotes.personal_notes}
-                                            onChange={(e) => setEditingPersonalNotes(prev => ({
-                                              ...prev,
-                                              personal_notes: e.target.value
-                                            }))}
-                                            placeholder="Write your personal thoughts about this session..."
-                                            rows={3}
-                                          />
-                                          <div className="flex gap-2">
-                                            <Button
-                                              size="sm"
-                                              onClick={() => updatePersonalJournal(entry.session_id, editingPersonalNotes)}
-                                            >
-                                              Save
-                                            </Button>
-                                            <Button
-                                              size="sm"
-                                              variant="outline"
-                                              onClick={() => setEditingPersonalNotes({})}
-                                            >
-                                              Cancel
-                                            </Button>
-                                          </div>
-                                        </div>
-                                      ) : (
-                                        <div className="bg-muted p-3 rounded-lg">
-                                          <p className="text-sm text-muted-foreground">
-                                            {entry.personal_notes || 'No personal notes yet.'}
-                                          </p>
-                                          <Button
-                                            size="sm"
-                                            variant="ghost"
-                                            className="mt-2"
-                                            onClick={() => setEditingPersonalNotes({ personal_notes: entry.personal_notes || '' })}
-                                          >
-                                            <Edit className="w-4 h-4 mr-1" />
-                                            Edit
-                                          </Button>
-                                        </div>
-                                      )}
+                                      <div className="bg-muted p-3 rounded-lg">
+                                        <p className="text-sm text-muted-foreground whitespace-pre-line">
+                                          {entry.personal_notes || 'No personal reflections recorded.'}
+                                        </p>
+                                      </div>
                                     </div>
 
                                     <div>
                                       <Label className="text-sm font-medium">Favorite Moments</Label>
-                                      {editingPersonalNotes.favorite_moments !== undefined ? (
-                                        <div className="space-y-2">
-                                          <Textarea
-                                            value={editingPersonalNotes.favorite_moments}
-                                            onChange={(e) => setEditingPersonalNotes(prev => ({
-                                              ...prev,
-                                              favorite_moments: e.target.value
-                                            }))}
-                                            placeholder="What were your favorite moments from this session?"
-                                            rows={3}
-                                          />
-                                          <div className="flex gap-2">
-                                            <Button
-                                              size="sm"
-                                              onClick={() => updatePersonalJournal(entry.session_id, editingPersonalNotes)}
-                                            >
-                                              Save
-                                            </Button>
-                                            <Button
-                                              size="sm"
-                                              variant="outline"
-                                              onClick={() => setEditingPersonalNotes({})}
-                                            >
-                                              Cancel
-                                            </Button>
-                                          </div>
-                                        </div>
-                                      ) : (
-                                        <div className="bg-muted p-3 rounded-lg">
-                                          <p className="text-sm text-muted-foreground">
-                                            {entry.favorite_moments || 'No favorite moments recorded.'}
-                                          </p>
-                                          <Button
-                                            size="sm"
-                                            variant="ghost"
-                                            className="mt-2"
-                                            onClick={() => setEditingPersonalNotes({ favorite_moments: entry.favorite_moments || '' })}
-                                          >
-                                            <Edit className="w-4 h-4 mr-1" />
-                                            Edit
-                                          </Button>
-                                        </div>
-                                      )}
+                                      <div className="bg-muted p-3 rounded-lg">
+                                        <p className="text-sm text-muted-foreground whitespace-pre-line">
+                                          {entry.favorite_moments || 'No favorite moments recorded.'}
+                                        </p>
+                                      </div>
                                     </div>
 
                                     <div>
                                       <Label className="text-sm font-medium">Character Thoughts</Label>
-                                      {editingPersonalNotes.character_thoughts !== undefined ? (
-                                        <div className="space-y-2">
-                                          <Textarea
-                                            value={editingPersonalNotes.character_thoughts}
-                                            onChange={(e) => setEditingPersonalNotes(prev => ({
-                                              ...prev,
-                                              character_thoughts: e.target.value
-                                            }))}
-                                            placeholder="How did your character feel about the events?"
-                                            rows={3}
-                                          />
-                                          <div className="flex gap-2">
-                                            <Button
-                                              size="sm"
-                                              onClick={() => updatePersonalJournal(entry.session_id, editingPersonalNotes)}
-                                            >
-                                              Save
-                                            </Button>
-                                            <Button
-                                              size="sm"
-                                              variant="outline"
-                                              onClick={() => setEditingPersonalNotes({})}
-                                            >
-                                              Cancel
-                                            </Button>
-                                          </div>
-                                        </div>
-                                      ) : (
-                                        <div className="bg-muted p-3 rounded-lg">
-                                          <p className="text-sm text-muted-foreground">
-                                            {entry.character_thoughts || 'No character thoughts recorded.'}
-                                          </p>
-                                          <Button
-                                            size="sm"
-                                            variant="ghost"
-                                            className="mt-2"
-                                            onClick={() => setEditingPersonalNotes({ character_thoughts: entry.character_thoughts || '' })}
-                                          >
-                                            <Edit className="w-4 h-4 mr-1" />
-                                            Edit
-                                          </Button>
-                                        </div>
-                                      )}
+                                      <div className="bg-muted p-3 rounded-lg">
+                                        <p className="text-sm text-muted-foreground whitespace-pre-line">
+                                          {entry.character_thoughts || 'No character thoughts recorded.'}
+                                        </p>
+                                      </div>
                                     </div>
                                   </div>
                                 </div>

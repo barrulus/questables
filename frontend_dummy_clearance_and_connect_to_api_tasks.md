@@ -90,6 +90,13 @@ All tasks below are required to eliminate dummy data from the Questables fronten
 - Add automated tests (unit/integration/e2e) that cover the newly wired flows; remove obsolete mock-based tests that no longer apply.
 - Log documentation updates, tests added/removed, and remaining doc debt in the central log.
 
+## Task 13 – Role-Aware Dashboard Landing & Navigation
+- When a user logs in, always land them on the player dashboard regardless of elevated roles so personal play sessions are immediately accessible.
+- Introduce clear navigation (button or menu) that lets DMs jump into DM tooling and admins open the system dashboard without logging out.
+- Ensure admin dashboard lives on a secondary page; remove any assumptions that admin role replaces the player view entirely.
+- Surface the navigation changes in documentation (`README.md`, onboarding guides) and update contexts/App shell accordingly.
+- Log implementation details and navigation decisions in the central log once verified.
+
 ---
 
 ## Working Agreement

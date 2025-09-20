@@ -7,7 +7,7 @@ import { RegisterModal } from "./register-modal";
 import { Dice6, Shield, Users, Sword, BookOpen, MapIcon, Sparkles } from "lucide-react";
 
 interface LandingPageProps {
-  onLogin: (user: { id: string; username: string; email: string; role: "player" | "dm" | "admin" }) => void;
+  onLogin: () => void;
 }
 
 export function LandingPage({ onLogin }: LandingPageProps) {

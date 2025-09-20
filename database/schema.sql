@@ -16,7 +16,10 @@ CREATE TABLE IF NOT EXISTS public.user_profiles (
     username TEXT UNIQUE NOT NULL,
     email TEXT UNIQUE NOT NULL,
     password_hash TEXT,
-    role TEXT NOT NULL DEFAULT 'player' CHECK (role IN ('player', 'dm', 'admin')),
+    roles TEXT[] NOT NULL DEFAULT ARRAY['player']::TEXT[] CHECK (
+        array_length(roles, 1) >= 1
+        AND roles <@ ARRAY['player','dm','admin']::TEXT[]
+    ),
     status TEXT NOT NULL DEFAULT 'active' CHECK (status IN ('active', 'inactive', 'banned')),
     avatar_url TEXT,
     timezone TEXT DEFAULT 'UTC',
@@ -655,7 +658,7 @@ $$ LANGUAGE plpgsql;
 -- User profiles
 CREATE INDEX IF NOT EXISTS idx_user_profiles_username ON public.user_profiles(username);
 CREATE INDEX IF NOT EXISTS idx_user_profiles_email ON public.user_profiles(email);
-CREATE INDEX IF NOT EXISTS idx_user_profiles_role ON public.user_profiles(role);
+CREATE INDEX IF NOT EXISTS idx_user_profiles_roles ON public.user_profiles USING GIN (roles);
 
 -- Characters
 CREATE INDEX IF NOT EXISTS idx_characters_user_id ON public.characters(user_id);

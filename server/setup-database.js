@@ -75,8 +75,8 @@ async function setupDatabase() {
       );
 
       const insertResult = await client.query(
-        `INSERT INTO user_profiles (username, email, password_hash, role)
-         VALUES ($1, $2, $3, 'admin')
+        `INSERT INTO user_profiles (username, email, password_hash, roles)
+         VALUES ($1, $2, $3, ARRAY['admin','dm','player']::TEXT[])
          ON CONFLICT (email) DO NOTHING`,
         [
           defaultAdminUsername,

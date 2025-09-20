@@ -18,11 +18,40 @@ import type {
   River,
   Route,
   Marker,
+  UserRole,
 } from './data-structures';
 import { mapDatabaseFields, mapToDatabase } from './data-structures';
 
 // Export the database client for backward compatibility
 export { databaseClient as db };
+
+const USER_ROLE_PRIORITY: UserRole[] = ['admin', 'dm', 'player'];
+
+const normalizeUserRoles = (roles?: unknown, fallback?: unknown): UserRole[] => {
+  const collected = new Set<UserRole>();
+
+  const register = (value: unknown) => {
+    if (!value) return;
+
+    if (Array.isArray(value)) {
+      value.forEach(register);
+      return;
+    }
+
+    if (typeof value === 'string') {
+      const normalized = value.toLowerCase();
+      if (normalized === 'player' || normalized === 'dm' || normalized === 'admin') {
+        collected.add(normalized as UserRole);
+      }
+    }
+  };
+
+  register(roles);
+  register(fallback);
+  collected.add('player');
+
+  return USER_ROLE_PRIORITY.filter((role) => collected.has(role));
+};
 
 // =============================================================================
 // USER HELPERS
@@ -32,7 +61,7 @@ export const userHelpers = {
   async getCurrentUser(userId: string): Promise<User | null> {
     try {
       const { data, error } = await databaseClient.query(
-        'SELECT id, username, email, role, status, avatar_url, timezone, created_at, updated_at, last_login FROM user_profiles WHERE id = $1',
+        'SELECT id, username, email, roles, status, avatar_url, timezone, created_at, updated_at, last_login FROM user_profiles WHERE id = $1',
         [userId]
       );
       if (error) throw error;
@@ -97,11 +126,19 @@ export const userHelpers = {
 
   async createUser(userData: Omit<User, 'id' | 'created_at' | 'updated_at' | 'last_login'>): Promise<User | null> {
     try {
+      const roles = normalizeUserRoles(userData.roles, userData.role);
       const { data, error } = await databaseClient.query(`
-        INSERT INTO user_profiles (username, email, role, status, avatar_url, timezone) 
+        INSERT INTO user_profiles (username, email, roles, status, avatar_url, timezone) 
         VALUES ($1, $2, $3, $4, $5, $6) 
         RETURNING *
-      `, [userData.username, userData.email, userData.role || 'player', userData.status || 'active', userData.avatar_url, userData.timezone]);
+      `, [
+        userData.username,
+        userData.email,
+        roles,
+        userData.status || 'active',
+        userData.avatar_url,
+        userData.timezone
+      ]);
       
       if (error) throw error;
       if (!data || data.length === 0) return null;

@@ -1,5 +1,4 @@
 import { Button } from "./ui/button";
-import { Badge } from "./ui/badge";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "./ui/tooltip";
 import { 
   User, 
@@ -9,12 +8,9 @@ import {
   Sword,
   Compass,
   Settings,
-  Users,
   ScrollText,
   Book,
-  Library,
-  MapIcon,
-  Cog
+  Library
 } from "lucide-react";
 
 interface IconSidebarProps {
@@ -27,20 +23,17 @@ export function IconSidebar({ activePanel, onPanelChange }: IconSidebarProps) {
     { 
       id: "character", 
       icon: <User className="w-5 h-5" />, 
-      label: "Active Character",
-      badge: "8" // Level
+      label: "Active Character"
     },
     { 
       id: "inventory", 
       icon: <Package className="w-5 h-5" />, 
-      label: "Inventory",
-      badge: "247g" // Gold amount
+      label: "Inventory"
     },
     { 
       id: "spells", 
       icon: <BookOpen className="w-5 h-5" />, 
-      label: "Spells",
-      badge: "6" // Available spell slots
+      label: "Spells"
     },
     { 
       id: "dice", 
@@ -50,8 +43,7 @@ export function IconSidebar({ activePanel, onPanelChange }: IconSidebarProps) {
     { 
       id: "combat", 
       icon: <Sword className="w-5 h-5" />, 
-      label: "Combat",
-      badge: "R3" // Round 3
+      label: "Combat"
     },
     { 
       id: "exploration", 
@@ -61,14 +53,12 @@ export function IconSidebar({ activePanel, onPanelChange }: IconSidebarProps) {
     { 
       id: "rulebooks", 
       icon: <Book className="w-5 h-5" />, 
-      label: "Rule Books",
-      badge: "PHB" // Player's Handbook
+      label: "Rule Books"
     },
     { 
       id: "journals", 
       icon: <ScrollText className="w-5 h-5" />, 
-      label: "Session Notes",
-      badge: "12" // Number of journal entries
+      label: "Session Notes"
     },
     { 
       id: "compendium", 
@@ -105,19 +95,11 @@ export function IconSidebar({ activePanel, onPanelChange }: IconSidebarProps) {
                     <Button
                       variant={activePanel === tool.id ? "default" : "ghost"}
                       size="sm"
-                      className="w-full h-12 p-0 relative"
+                      className="w-full h-12 p-0"
                       onClick={() => handleToolClick(tool.id)}
                     >
                       <div className="flex flex-col items-center gap-1">
                         {tool.icon}
-                        {tool.badge && (
-                          <Badge 
-                            variant="secondary" 
-                            className="absolute -top-1 -right-1 text-xs px-1 h-4 min-w-4"
-                          >
-                            {tool.badge}
-                          </Badge>
-                        )}
                       </div>
                     </Button>
                   </TooltipTrigger>

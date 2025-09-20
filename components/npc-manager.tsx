@@ -1,4 +1,4 @@
-import { useState, useEffect, useContext } from 'react';
+import { useState, useEffect } from 'react';
 import { Card, CardContent, CardHeader, CardTitle } from './ui/card';
 import { Button } from './ui/button';
 import { Input } from './ui/input';
@@ -12,7 +12,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '.
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle, AlertDialogTrigger } from './ui/alert-dialog';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from './ui/tabs';
 import { toast } from 'sonner';
-import { useUser } from "../contexts/UserContext";
+import { fetchJson } from "../utils/api-client";
 import { 
   Users,
   Plus,
@@ -20,13 +20,8 @@ import {
   Trash2,
   Search,
   MapPin,
-  User,
-  Heart,
-  Shield,
-  Zap,
   Loader2,
-  UserPlus,
-  Link
+  UserPlus
 } from 'lucide-react';
 
 interface NPC {
@@ -82,11 +77,36 @@ interface NPCRelationship {
   strength: number;
 }
 
+type NpcApiRecord = Omit<NPC, 'stats'> & {
+  stats?: NPCStats | string | null;
+};
+
+interface LocationSummary {
+  id: string;
+  name: string;
+}
+
+const parseNpcRecord = (npc: NpcApiRecord): NPC => {
+  let stats = npc?.stats ?? undefined;
+  if (typeof stats === 'string') {
+    try {
+      stats = JSON.parse(stats);
+    } catch (error) {
+      console.warn('Failed to parse NPC stats payload', error);
+      stats = undefined;
+    }
+  }
+
+  return {
+    ...npc,
+    stats,
+  } as NPC;
+};
+
 export default function NPCManager({ campaignId, isDM }: { campaignId: string; isDM: boolean }) {
-  const { user } = useUser();
   const [npcs, setNpcs] = useState<NPC[]>([]);
   const [selectedNPC, setSelectedNPC] = useState<NPC | null>(null);
-  const [locations, setLocations] = useState<any[]>([]);
+  const [locations, setLocations] = useState<LocationSummary[]>([]);
   const [loading, setLoading] = useState(true);
   const [searchTerm, setSearchTerm] = useState('');
   const [filterLocation, setFilterLocation] = useState<string>('all');
@@ -108,107 +128,80 @@ export default function NPCManager({ campaignId, isDM }: { campaignId: string; i
   // Load NPCs and locations
   const loadNPCs = async () => {
     try {
-      const response = await fetch(`/api/campaigns/${campaignId}/npcs`);
-      if (response.ok) {
-        const data = await response.json();
-        setNpcs(data);
-      }
+      const data = await fetchJson<NpcApiRecord[]>(
+        `/api/campaigns/${campaignId}/npcs`,
+        undefined,
+        'Failed to load NPCs',
+      );
+      setNpcs((data ?? []).map(parseNpcRecord));
     } catch (error) {
       console.error('Failed to load NPCs:', error);
-      toast.error('Failed to load NPCs');
+      toast.error(error instanceof Error ? error.message : 'Failed to load NPCs');
     }
   };
 
   const loadLocations = async () => {
     try {
-      const response = await fetch(`/api/campaigns/${campaignId}/locations`);
-      if (response.ok) {
-        const data = await response.json();
-        setLocations(data);
-      }
+      const data = await fetchJson<LocationSummary[]>(
+        `/api/campaigns/${campaignId}/locations`,
+        undefined,
+        'Failed to load locations',
+      );
+      setLocations(data ?? []);
     } catch (error) {
       console.error('Failed to load locations:', error);
+      toast.error(error instanceof Error ? error.message : 'Failed to load locations');
     }
   };
 
   const loadRelationships = async (npcId: string) => {
     try {
-      const response = await fetch(`/api/npcs/${npcId}/relationships`);
-      if (response.ok) {
-        const data = await response.json();
-        setRelationships(data);
-      }
+      const data = await fetchJson<NPCRelationship[]>(
+        `/api/npcs/${npcId}/relationships`,
+        undefined,
+        'Failed to load relationships',
+      );
+      setRelationships(data ?? []);
     } catch (error) {
       console.error('Failed to load relationships:', error);
+      toast.error(error instanceof Error ? error.message : 'Failed to load relationships');
     }
   };
 
   // Create NPC
-  const createNPC = async (npcData: Omit<NPC, 'id' | 'campaign_id' | 'created_at' | 'updated_at'>) => {
+  const createNPC = async (npcData: Partial<NPC>) => {
     if (!isDM) {
       toast.error('Only DMs can create NPCs');
       return;
     }
 
     try {
-      const response = await fetch(`/api/campaigns/${campaignId}/npcs`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(npcData)
-      });
+      await fetchJson<NpcApiRecord>(
+        `/api/campaigns/${campaignId}/npcs`,
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(npcData),
+        },
+        'Failed to create NPC',
+      );
 
-      if (response.ok) {
-        await loadNPCs();
-        setShowCreateForm(false);
-        setNewNPC({
-          name: '',
-          description: '',
-          race: '',
-          occupation: '',
-          personality: '',
-          appearance: '',
-          motivations: '',
-          secrets: ''
-        });
-        toast.success('NPC created successfully');
-      } else {
-        const error = await response.json();
-        toast.error(error.error || 'Failed to create NPC');
-      }
+      await loadNPCs();
+      setShowCreateForm(false);
+      setNewNPC({
+        name: '',
+        description: '',
+        race: '',
+        occupation: '',
+        personality: '',
+        appearance: '',
+        motivations: '',
+        secrets: ''
+      });
+      toast.success('NPC created successfully');
     } catch (error) {
       console.error('Failed to create NPC:', error);
-      toast.error('Failed to create NPC');
-    }
-  };
-
-  // Update NPC
-  const updateNPC = async (npcId: string, updates: Partial<NPC>) => {
-    if (!isDM) {
-      toast.error('Only DMs can edit NPCs');
-      return;
-    }
-
-    try {
-      const response = await fetch(`/api/npcs/${npcId}`, {
-        method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(updates)
-      });
-
-      if (response.ok) {
-        await loadNPCs();
-        if (selectedNPC?.id === npcId) {
-          const updatedNPC = await response.json();
-          setSelectedNPC(updatedNPC);
-        }
-        toast.success('NPC updated successfully');
-      } else {
-        const error = await response.json();
-        toast.error(error.error || 'Failed to update NPC');
-      }
-    } catch (error) {
-      console.error('Failed to update NPC:', error);
-      toast.error('Failed to update NPC');
+      toast.error(error instanceof Error ? error.message : 'Failed to create NPC');
     }
   };
 
@@ -220,56 +213,20 @@ export default function NPCManager({ campaignId, isDM }: { campaignId: string; i
     }
 
     try {
-      const response = await fetch(`/api/npcs/${npcId}`, {
-        method: 'DELETE'
-      });
+      await fetchJson<{ success: boolean }>(
+        `/api/npcs/${npcId}`,
+        { method: 'DELETE' },
+        'Failed to delete NPC',
+      );
 
-      if (response.ok) {
-        await loadNPCs();
-        if (selectedNPC?.id === npcId) {
-          setSelectedNPC(null);
-        }
-        toast.success('NPC deleted successfully');
-      } else {
-        const error = await response.json();
-        toast.error(error.error || 'Failed to delete NPC');
+      await loadNPCs();
+      if (selectedNPC?.id === npcId) {
+        setSelectedNPC(null);
       }
+      toast.success('NPC deleted successfully');
     } catch (error) {
       console.error('Failed to delete NPC:', error);
-      toast.error('Failed to delete NPC');
-    }
-  };
-
-  // Add relationship
-  const addRelationship = async (npcId: string, relationshipData: {
-    target_id: string;
-    target_type: 'npc' | 'character';
-    relationship_type: 'ally' | 'enemy' | 'neutral' | 'romantic' | 'family' | 'business';
-    description: string;
-    strength: number;
-  }) => {
-    if (!isDM) {
-      toast.error('Only DMs can manage relationships');
-      return;
-    }
-
-    try {
-      const response = await fetch(`/api/npcs/${npcId}/relationships`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(relationshipData)
-      });
-
-      if (response.ok) {
-        await loadRelationships(npcId);
-        toast.success('Relationship added successfully');
-      } else {
-        const error = await response.json();
-        toast.error(error.error || 'Failed to add relationship');
-      }
-    } catch (error) {
-      console.error('Failed to add relationship:', error);
-      toast.error('Failed to add relationship');
+      toast.error(error instanceof Error ? error.message : 'Failed to delete NPC');
     }
   };
 
@@ -414,7 +371,11 @@ export default function NPCManager({ campaignId, isDM }: { campaignId: string; i
                       </p>
                       
                       <div className="flex gap-2">
-                        <Dialog>
+                  <Dialog onOpenChange={(open) => {
+                    if (open) {
+                      loadRelationships(npc.id);
+                    }
+                  }}>
                           <DialogTrigger asChild>
                             <Button variant="ghost" size="sm" className="flex-1">
                               View Details
@@ -565,7 +526,11 @@ export default function NPCManager({ campaignId, isDM }: { campaignId: string; i
                                 <div className="flex justify-between items-center">
                                   <Label className="text-sm font-medium">Relationships</Label>
                                   {isDM && (
-                                    <Button size="sm" variant="outline">
+                                    <Button
+                                      size="sm"
+                                      variant="outline"
+                                      onClick={() => toast.info('Relationship management is disabled until live endpoints ship')}
+                                    >
                                       <UserPlus className="w-4 h-4 mr-1" />
                                       Add Relationship
                                     </Button>
@@ -606,7 +571,12 @@ export default function NPCManager({ campaignId, isDM }: { campaignId: string; i
 
                             {isDM && (
                               <div className="flex gap-2 pt-4 border-t">
-                                <Button size="sm" variant="outline" className="flex-1">
+                                <Button
+                                  size="sm"
+                                  variant="outline"
+                                  className="flex-1"
+                                  onClick={() => toast.info('NPC editing will return once the form is wired to the live API')}
+                                >
                                   <Edit className="w-4 h-4 mr-1" />
                                   Edit NPC
                                 </Button>
@@ -759,7 +729,7 @@ export default function NPCManager({ campaignId, isDM }: { campaignId: string; i
 
               <div className="flex gap-2 pt-4 border-t">
                 <Button
-                  onClick={() => createNPC(newNPC as any)}
+                  onClick={() => createNPC(newNPC)}
                   disabled={!newNPC.name?.trim() || !newNPC.race?.trim() || !newNPC.description?.trim() || !newNPC.personality?.trim()}
                   className="flex-1"
                 >

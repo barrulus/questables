@@ -7,11 +7,14 @@
 // USER DATA STRUCTURES
 // =============================================================================
 
+export type UserRole = "player" | "dm" | "admin";
+
 export interface User {
   id: string;
   username: string;
   email: string;
-  role: "player" | "dm" | "admin";
+  roles: UserRole[];
+  role?: UserRole;
   status: "active" | "inactive" | "banned";
   avatar_url?: string;
   timezone?: string;
@@ -22,6 +25,9 @@ export interface User {
   createdAt?: string;
   lastLogin?: string;
 }
+
+const USER_ROLE_PRIORITY: UserRole[] = ['admin', 'dm', 'player'];
+const USER_ROLE_SET = new Set<UserRole>(USER_ROLE_PRIORITY);
 
 export interface UserPreferences {
   theme: "light" | "dark" | "system";
@@ -89,6 +95,9 @@ export interface Character {
   
   // Spellcasting (if applicable)
   spellcasting?: SpellcastingInfo;
+  
+  // Related campaign membership (denormalised for quick lookup)
+  campaigns?: string[];
   
   // Timestamps (database fields)
   created_at: string;
@@ -627,17 +636,44 @@ export interface RouteEncounter {
 // =============================================================================
 
 // Convert database snake_case fields to camelCase for UI components
-export function mapDatabaseFields<T>(dbObject: any): T {
-  if (!dbObject) return dbObject;
-  
-  const mapped = { ...dbObject };
-  
+export function mapDatabaseFields<T>(dbObject: unknown): T {
+  if (!dbObject || typeof dbObject !== 'object') return dbObject as T;
+
+  const mapped: Record<string, unknown> = { ...(dbObject as Record<string, unknown>) };
+
   // User field mappings
   if (mapped.created_at) mapped.createdAt = mapped.created_at;
   if (mapped.updated_at) mapped.updatedAt = mapped.updated_at;
   if (mapped.last_login) mapped.lastLogin = mapped.last_login;
   if (mapped.avatar_url) mapped.avatar = mapped.avatar_url;
-  
+
+  const collectedRoles = new Set<UserRole>();
+
+  const registerRole = (value: unknown) => {
+    if (!value) return;
+
+    if (Array.isArray(value)) {
+      value.forEach(registerRole);
+      return;
+    }
+
+    if (typeof value === 'string') {
+      const normalized = value.toLowerCase();
+      if (USER_ROLE_SET.has(normalized as UserRole)) {
+        collectedRoles.add(normalized as UserRole);
+      }
+    }
+  };
+
+  registerRole(mapped.roles);
+  registerRole(mapped.role);
+  collectedRoles.add('player');
+
+  const normalizedRoles = USER_ROLE_PRIORITY.filter((role) => collectedRoles.has(role));
+  mapped.roles = normalizedRoles.length > 0 ? normalizedRoles : ['player'];
+  const primaryRole = mapped.roles.find((role) => role !== 'player') ?? 'player';
+  mapped.role = primaryRole;
+
   // Character field mappings
   if (mapped.user_id) mapped.userId = mapped.user_id;
   if (mapped.hit_points) mapped.hitPoints = mapped.hit_points;
@@ -662,17 +698,41 @@ export function mapDatabaseFields<T>(dbObject: any): T {
 }
 
 // Convert UI camelCase fields to database snake_case
-export function mapToDatabase(frontendObject: any): any {
-  if (!frontendObject) return frontendObject;
-  
-  const mapped = { ...frontendObject };
-  
+export function mapToDatabase(frontendObject: unknown): Record<string, unknown> {
+  if (!frontendObject || typeof frontendObject !== 'object') return frontendObject as Record<string, unknown>;
+
+  const mapped: Record<string, unknown> = { ...(frontendObject as Record<string, unknown>) };
+
   // User field mappings
   if (mapped.createdAt && !mapped.created_at) mapped.created_at = mapped.createdAt;
   if (mapped.updatedAt && !mapped.updated_at) mapped.updated_at = mapped.updatedAt;
   if (mapped.lastLogin && !mapped.last_login) mapped.last_login = mapped.lastLogin;
   if (mapped.avatar && !mapped.avatar_url) mapped.avatar_url = mapped.avatar;
-  
+  if (mapped.roles && Array.isArray(mapped.roles)) {
+    const candidate = new Set<UserRole>();
+    mapped.roles.forEach((role) => {
+      if (typeof role === 'string') {
+        const normalized = role.toLowerCase();
+        if (USER_ROLE_SET.has(normalized as UserRole)) {
+          candidate.add(normalized as UserRole);
+        }
+      }
+    });
+    if (typeof mapped.role === 'string') {
+      const normalized = mapped.role.toLowerCase();
+      if (USER_ROLE_SET.has(normalized as UserRole)) {
+        candidate.add(normalized as UserRole);
+      }
+    }
+    candidate.add('player');
+    mapped.roles = USER_ROLE_PRIORITY.filter((role) => candidate.has(role));
+  } else if (typeof mapped.role === 'string' && USER_ROLE_SET.has(mapped.role.toLowerCase() as UserRole)) {
+    const normalized = mapped.role.toLowerCase() as UserRole;
+    mapped.roles = USER_ROLE_PRIORITY.filter((role) => role === normalized || role === 'player');
+  } else {
+    mapped.roles = ['player'];
+  }
+
   // Character field mappings
   if (mapped.userId && !mapped.user_id) mapped.user_id = mapped.userId;
   if (mapped.hitPoints && !mapped.hit_points) mapped.hit_points = mapped.hitPoints;
@@ -700,6 +760,7 @@ export function mapToDatabase(frontendObject: any): any {
   delete mapped.savingThrows;
   delete mapped.lastPlayed;
   delete mapped.avatar;
-  
+  delete mapped.role;
+
   return mapped;
 }

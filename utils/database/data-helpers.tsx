@@ -1,5 +1,6 @@
 // Helper functions for working with D&D app data in PostgreSQL database
 import { databaseClient } from './client';
+import { mapDatabaseFields } from './data-structures';
 import type {
   User,
   Character,
@@ -15,8 +16,94 @@ import type {
   Cell,
   River,
   Route,
-  Marker
+  Marker,
+  UserRole
 } from './data-structures';
+
+type JsonColumnOptions = {
+  required?: boolean;
+};
+
+const parseJsonColumn = <T,>(value: unknown, column: string, options: JsonColumnOptions = {}): T | undefined => {
+  const { required = true } = options;
+
+  if (value === null || value === undefined) {
+    if (required) {
+      throw new Error(`[DataHelpers] ${column} returned null/undefined from the database.`);
+    }
+    return undefined;
+  }
+
+  if (typeof value === 'object') {
+    return value as T;
+  }
+
+  if (typeof value === 'string') {
+    try {
+      return JSON.parse(value) as T;
+    } catch (error) {
+      throw new Error(`[DataHelpers] ${column} contains invalid JSON: ${(error as Error).message}`);
+    }
+  }
+
+  throw new Error(`[DataHelpers] ${column} returned unsupported type ${typeof value}.`);
+};
+
+const USER_ROLE_PRIORITY: UserRole[] = ['admin', 'dm', 'player'];
+
+const normalizeUserRoles = (roles?: unknown, fallback?: unknown): UserRole[] => {
+  const collected = new Set<UserRole>();
+
+  const register = (value: unknown) => {
+    if (!value) return;
+
+    if (Array.isArray(value)) {
+      value.forEach(register);
+      return;
+    }
+
+    if (typeof value === 'string') {
+      const normalized = value.toLowerCase();
+      if (normalized === 'player' || normalized === 'dm' || normalized === 'admin') {
+        collected.add(normalized as UserRole);
+      }
+    }
+  };
+
+  register(roles);
+  register(fallback);
+  collected.add('player');
+
+  return USER_ROLE_PRIORITY.filter((role) => collected.has(role));
+};
+
+const normalizeCharacterRow = (row: any): Character => {
+  const abilities = parseJsonColumn<Character['abilities']>(row.abilities, 'characters.abilities');
+  const savingThrows = parseJsonColumn<Record<string, number>>(row.saving_throws ?? row.savingThrows, 'characters.saving_throws');
+  const skills = parseJsonColumn<Record<string, number>>(row.skills, 'characters.skills');
+  const inventory = parseJsonColumn<Character['inventory']>(row.inventory, 'characters.inventory');
+  const equipment = parseJsonColumn<Character['equipment']>(row.equipment, 'characters.equipment');
+  const hitPoints = parseJsonColumn<Character['hit_points']>(row.hit_points ?? row.hitPoints, 'characters.hit_points');
+  const spellcasting = parseJsonColumn<Character['spellcasting']>(row.spellcasting, 'characters.spellcasting', { required: false });
+  const campaigns = parseJsonColumn<string[]>(row.campaigns, 'characters.campaigns', { required: false });
+
+  return {
+    ...row,
+    userId: row.user_id,
+    abilities: abilities!,
+    saving_throws: savingThrows!,
+    savingThrows: savingThrows!,
+    skills: skills!,
+    inventory: inventory!,
+    equipment: equipment!,
+    hit_points: hitPoints!,
+    hitPoints: hitPoints!,
+    armorClass: row.armor_class,
+    proficiencyBonus: row.proficiency_bonus,
+    spellcasting: spellcasting,
+    campaigns
+  };
+};
 
 // =============================================================================
 // USER HELPERS
@@ -34,22 +121,23 @@ export const userHelpers = {
 
   async getUserByEmail(email: string): Promise<User | null> {
     const { data, error } = await databaseClient.query(
-      'SELECT id, username, email, role, status, created_at as "createdAt", last_login as "lastLogin" FROM user_profiles WHERE email = $1',
+      'SELECT id, username, email, roles, status, created_at as "createdAt", last_login as "lastLogin" FROM user_profiles WHERE email = $1',
       [email]
     );
     if (error || !data || data.length === 0) return null;
-    return data[0];
+    return mapDatabaseFields<User>(data[0]);
   },
 
   async createUser(userData: Omit<User, 'id' | 'createdAt' | 'lastLogin'>): Promise<User | null> {
+    const roles = normalizeUserRoles(userData.roles, userData.role);
     const { data, error } = await databaseClient.query(`
-      INSERT INTO user_profiles (username, email, role, status) 
+      INSERT INTO user_profiles (username, email, roles, status) 
       VALUES ($1, $2, $3, $4) 
-      RETURNING id, username, email, role, status, created_at as "createdAt", last_login as "lastLogin"
-    `, [userData.username, userData.email, userData.role, userData.status]);
-    
+      RETURNING id, username, email, roles, status, created_at as "createdAt", last_login as "lastLogin"
+    `, [userData.username, userData.email, roles, userData.status ?? 'active']);
+
     if (error || !data || data.length === 0) return null;
-    return data[0];
+    return mapDatabaseFields<User>(data[0]);
   },
 
   async updateLastLogin(userId: string): Promise<void> {
@@ -71,20 +159,8 @@ export const characterHelpers = {
       [characterId]
     );
     if (error || !data || data.length === 0) return null;
-    
-    // Parse JSON fields
-    const character = data[0];
-    return {
-      ...character,
-      abilities: JSON.parse(character.abilities),
-      savingThrows: JSON.parse(character.saving_throws),
-      skills: JSON.parse(character.skills),
-      inventory: JSON.parse(character.inventory),
-      equipment: JSON.parse(character.equipment),
-      spellcasting: character.spellcasting ? JSON.parse(character.spellcasting) : undefined,
-      campaigns: JSON.parse(character.campaigns || '[]'),
-      hitPoints: JSON.parse(character.hit_points)
-    };
+
+    return normalizeCharacterRow(data[0]);
   },
 
   async getCharactersByUser(userId: string): Promise<Character[]> {
@@ -94,17 +170,7 @@ export const characterHelpers = {
     );
     if (error || !data) return [];
     
-    return data.map(character => ({
-      ...character,
-      abilities: JSON.parse(character.abilities),
-      savingThrows: JSON.parse(character.saving_throws),
-      skills: JSON.parse(character.skills),
-      inventory: JSON.parse(character.inventory),
-      equipment: JSON.parse(character.equipment),
-      spellcasting: character.spellcasting ? JSON.parse(character.spellcasting) : undefined,
-      campaigns: JSON.parse(character.campaigns || '[]'),
-      hitPoints: JSON.parse(character.hit_points)
-    }));
+    return data.map(normalizeCharacterRow);
   },
 
   async createCharacter(character: Omit<Character, 'id' | 'createdAt' | 'updatedAt'>): Promise<Character | null> {

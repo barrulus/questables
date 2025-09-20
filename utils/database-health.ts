@@ -1,5 +1,5 @@
 // Database health monitoring utilities
-
+import { apiFetch } from './api-client';
 export interface DatabaseHealth {
   isConnected: boolean;
   status: 'connected' | 'connecting' | 'disconnected' | 'error';
@@ -61,9 +61,8 @@ export class DatabaseHealthMonitor {
       });
 
       // Test database connection with a simple query
-      const response = await fetch('/api/health', {
+      const response = await apiFetch('/api/health', {
         method: 'GET',
-        headers: { 'Content-Type': 'application/json' },
         signal: AbortSignal.timeout(this.options.timeout)
       });
 

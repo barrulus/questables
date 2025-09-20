@@ -7,7 +7,7 @@ export interface DatabaseClient {
   spatial: (functionName: string, params: any) => Promise<{ data: any[] | null; error: any }>;
   auth: {
     login: (email: string, password?: string) => Promise<{ data?: { user: any }; error?: any }>;
-    register: (username: string, email: string, password?: string, role?: string) => Promise<{ data?: { user: any }; error?: any }>;
+    register: (username: string, email: string, password?: string, roles?: string[]) => Promise<{ data?: { user: any }; error?: any }>;
   };
 }
 
@@ -213,13 +213,13 @@ class PostgreSQLClient implements DatabaseClient {
         }
 
         const result = await response.json();
-        return { data: { user: result.user } };
+        return { data: { user: result.user, token: result.token } };
       } catch (error) {
         return { error };
       }
     },
 
-    register: async (username: string, email: string, password?: string, role: string = 'player'): Promise<{ data?: { user: any }; error?: any }> => {
+    register: async (username: string, email: string, password?: string, roles: string[] = ['player']): Promise<{ data?: { user: any }; error?: any }> => {
       try {
         this.ensureInitialized();
         
@@ -228,7 +228,7 @@ class PostgreSQLClient implements DatabaseClient {
           headers: {
             'Content-Type': 'application/json',
           },
-          body: JSON.stringify({ username, email, password, role })
+          body: JSON.stringify({ username, email, password, roles })
         });
 
         if (!response.ok) {
@@ -237,7 +237,7 @@ class PostgreSQLClient implements DatabaseClient {
         }
 
         const result = await response.json();
-        return { data: { user: result.user } };
+        return { data: { user: result.user, token: result.token } };
       } catch (error) {
         return { error };
       }

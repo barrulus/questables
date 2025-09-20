@@ -4,32 +4,27 @@ A comprehensive web application for managing D&D 5e campaigns, characters, and g
 
 ## Features
 
-### ✨ **Phase 2 Complete - Full Database Integration** ✨
+### Connected Dashboards
+- Player dashboard loads the signed-in user's characters and campaign membership from `/api/users/:id/*` and `/api/campaigns/public`, failing visibly if the backend is unreachable.
+- DM dashboard consumes the same live data sources for campaign administration.
+- Admin dashboard calls `/api/admin/metrics`; a valid admin session is required and the UI now reflects errors when metrics are unavailable.
 
-- **Role-based Dashboards**: Player, Dungeon Master, and Admin interfaces
-- **Database-Connected Character Management**: Complete character sheets with live data synchronization
-  - Real-time inventory management with currency tracking
-  - Interactive spellbook with spell slot management and long rest mechanics
-  - Live character sheet updates across all components
-- **Campaign Management System**: Full campaign lifecycle with database persistence
-  - Create, join, and manage campaigns
-  - Player management and campaign status tracking
-  - Database-backed campaign data with real-time updates
-- **Real-time Chat System**: In-game communication with database persistence
-  - Character-based messaging with out-of-character support
-  - Dice rolling integration with result persistence
-  - Message history and real-time polling
-- **Database Health Monitoring**: Enterprise-grade connection monitoring
-  - Real-time connection status indicators
-  - Automatic retry with exponential backoff
-  - Graceful offline mode degradation
-  - Performance metrics and latency monitoring
-- **Comprehensive Error Handling**: User-friendly error management
-  - Standardized error boundaries and recovery mechanisms
-  - Loading states and user feedback across all components
-  - Retry functionality for failed operations
-- **Interactive Mapping**: OpenLayers integration with PostGIS spatial data
-- **World Map Integration**: Support for Azgaar's Fantasy Map Generator imports
+### Character & Campaign Management
+- Character sheets, spellbooks, and inventory panels read and write directly to the PostgreSQL backend via the shared database helpers.
+- Campaign join/leave actions call the live Express endpoints and refresh UI state from server responses.
+- Session manager uses `/api/campaigns/:id/sessions` for lifecycle operations and surfaces backend validation errors.
+
+### Messaging & Real-Time Hooks
+- Chat components persist party messages and dice rolls through `/api/campaigns/:id/messages` and respect the configured WebSocket host.
+- Standalone dice and exploration utilities are intentionally disabled with `FeatureUnavailable` notices until backed services ship, preventing dummy data from reappearing.
+
+### Mapping & Spatial Data
+- OpenLayers map viewer loads world metadata and spatial layers from `/api/maps/world` and related PostGIS-powered routes.
+- Campaign location overlays rely on live responses; failures present actionable error states instead of silent fallbacks.
+
+### Operational Transparency
+- `/api/health` exposes basic pool statistics for the database server and is covered by automated smoke tests (`tests/live-api.integration.test.js`).
+- UI-level error boundaries and toasts communicate authentication issues, missing configuration, and backend outages without fabricating success states.
 
 ## Technology Stack
 
@@ -191,7 +186,7 @@ FRONTEND_URL=http://localhost:3000
 # DEV_SERVER_TLS_KEY=./quixote.tail3f19fe.ts.net.key
 ```
 
-**The application will fail to start if `VITE_DATABASE_SERVER_URL` is not set.**
+**The application will fail to start if `VITE_DATABASE_SERVER_URL` is not set.** Player and DM dashboards now surface an explicit configuration error rather than falling back to dummy data when this variable is missing.
 
 ## Development Scripts
 
@@ -211,6 +206,19 @@ npm run db:setup
 # Build for production
 npm run build
 ```
+
+## Testing
+
+- Run the live smoke suite once the backend is accessible:
+
+  ```bash
+  LIVE_API_BASE_URL=https://quixote.tail3f19fe.ts.net:3001 \
+  LIVE_API_ADMIN_EMAIL=admin@questables.example\
+  LIVE_API_ADMIN_PASSWORD=thepassword \
+  npm test -- --runTestsByPath tests/live-api.integration.test.js
+  ```
+
+- If you seed different admin credentials, set `LIVE_API_ADMIN_EMAIL` and `LIVE_API_ADMIN_PASSWORD` to match (the suite also respects the `DEFAULT_ADMIN_*` values used by `npm run db:setup`).
 
 ## Project Structure
 
@@ -242,8 +250,8 @@ The application supports:
 
 ## Authentication
 
-- **Demo Mode**: Use provided demo accounts for testing
-- **Database Auth**: Register new accounts (stored in PostgreSQL)
+- **Database Auth**: Accounts are created through the live API and stored in PostgreSQL.
+- **No Demo Accounts**: The app does not provide fallback users; resolve backend issues instead of fabricating access.
 - **Role-based Access**: Player, DM, and Admin permission levels
 
 ## Contributing

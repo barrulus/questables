@@ -10,7 +10,7 @@ import { useUser } from "../contexts/UserContext";
 interface LoginModalProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
-  onLogin: (user: { id: string; username: string; email: string; role: "player" | "dm" | "admin" }) => void;
+  onLogin: () => void;
   onSwitchToRegister: () => void;
 }
 
@@ -29,12 +29,7 @@ export function LoginModal({ open, onOpenChange, onLogin, onSwitchToRegister }: 
 
     try {
       const loggedInUser = await login(formData.email, formData.password);
-      onLogin({
-        id: loggedInUser.id,
-        username: loggedInUser.username,
-        email: loggedInUser.email,
-        role: loggedInUser.role
-      });
+      onLogin();
       toast.success(`Welcome back, ${loggedInUser.username}!`);
       onOpenChange(false);
     } catch (error) {

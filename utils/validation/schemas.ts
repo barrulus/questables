@@ -40,7 +40,8 @@ export const userSchema = z.object({
   id: uuidSchema.optional(),
   username: usernameSchema,
   email: emailSchema,
-  role: z.enum(['player', 'dm', 'admin']).default('player'),
+  roles: z.array(z.enum(['player', 'dm', 'admin'])).nonempty().default(['player']),
+  role: z.enum(['player', 'dm', 'admin']).optional(),
   avatar_url: z.string().url().optional().or(z.literal('')),
   timezone: z.string().optional(),
   created_at: z.string().datetime().optional(),
@@ -50,11 +51,20 @@ export const userSchema = z.object({
 export const userRegistrationSchema = userSchema.pick({
   username: true,
   email: true,
+  roles: true,
   role: true
 }).extend({
   password: z.string()
     .min(8, 'Password must be at least 8 characters')
     .regex(/^(?=.*[a-z])(?=.*[A-Z])(?=.*\d)/, 'Password must contain at least one lowercase letter, one uppercase letter, and one number')
+}).superRefine((data, ctx) => {
+  if (!data.roles?.length && !data.role) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ['roles'],
+      message: 'At least one role must be specified'
+    });
+  }
 });
 
 export const userLoginSchema = z.object({
@@ -151,7 +161,7 @@ export const campaignSchema = z.object({
   description: z.string()
     .max(2000, 'Campaign description too long')
     .optional(),
-  dm_id: uuidSchema,
+  dm_user_id: uuidSchema,
   max_players: z.number()
     .int('Max players must be a whole number')
     .min(1, 'Must allow at least 1 player')

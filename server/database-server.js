@@ -237,7 +237,7 @@ const validateCampaign = [
     .optional()
     .isLength({ max: 2000 })
     .withMessage('Description cannot exceed 2000 characters'),
-  body('max_players')
+  body('maxPlayers')
     .isInt({ min: 1, max: 20 })
     .withMessage('Max players must be between 1 and 20'),
   body('system')
@@ -343,6 +343,90 @@ app.get('/api/health', async (req, res) => {
       database: 'disconnected',
       error: error.message,
       timestamp: new Date().toISOString()
+    });
+  }
+});
+
+// Administrative analytics endpoints
+app.get('/api/admin/metrics', requireAuth, requireRole('admin'), async (req, res) => {
+  try {
+    const client = await pool.connect();
+
+    try {
+      const [userStatsResult, campaignStatsResult, sessionStatsResult] = await Promise.all([
+        client.query(`
+          SELECT
+            COUNT(*)::int AS total,
+            COUNT(*) FILTER (WHERE status = 'active')::int AS active,
+            COUNT(*) FILTER (WHERE status = 'inactive')::int AS inactive,
+            COUNT(*) FILTER (WHERE status = 'banned')::int AS banned,
+            COUNT(*) FILTER (WHERE created_at >= NOW() - INTERVAL '7 days')::int AS new_last_seven_days
+          FROM user_profiles
+        `),
+        client.query(`
+          SELECT
+            COUNT(*)::int AS total,
+            COUNT(*) FILTER (WHERE status = 'active')::int AS active,
+            COUNT(*) FILTER (WHERE status = 'recruiting')::int AS recruiting,
+            COUNT(*) FILTER (WHERE status = 'paused')::int AS paused,
+            COUNT(*) FILTER (WHERE status = 'completed')::int AS completed,
+            COUNT(*) FILTER (WHERE created_at >= NOW() - INTERVAL '7 days')::int AS new_last_seven_days
+          FROM campaigns
+        `),
+        client.query(`
+          SELECT
+            COUNT(*)::int AS total,
+            COUNT(*) FILTER (WHERE status = 'completed')::int AS completed,
+            COUNT(*) FILTER (WHERE status = 'scheduled')::int AS scheduled,
+            COUNT(*) FILTER (WHERE status = 'active')::int AS active,
+            COUNT(*) FILTER (WHERE status = 'cancelled')::int AS cancelled,
+            AVG(duration)::numeric AS average_duration_minutes
+          FROM sessions
+        `)
+      ]);
+
+      const userRow = userStatsResult.rows[0] ?? {};
+      const campaignRow = campaignStatsResult.rows[0] ?? {};
+      const sessionRow = sessionStatsResult.rows[0] ?? {};
+
+      res.json({
+        generatedAt: new Date().toISOString(),
+        users: {
+          total: Number(userRow.total) || 0,
+          active: Number(userRow.active) || 0,
+          inactive: Number(userRow.inactive) || 0,
+          banned: Number(userRow.banned) || 0,
+          newLastSevenDays: Number(userRow.new_last_seven_days) || 0,
+        },
+        campaigns: {
+          total: Number(campaignRow.total) || 0,
+          active: Number(campaignRow.active) || 0,
+          recruiting: Number(campaignRow.recruiting) || 0,
+          paused: Number(campaignRow.paused) || 0,
+          completed: Number(campaignRow.completed) || 0,
+          newLastSevenDays: Number(campaignRow.new_last_seven_days) || 0,
+        },
+        sessions: {
+          total: Number(sessionRow.total) || 0,
+          completed: Number(sessionRow.completed) || 0,
+          scheduled: Number(sessionRow.scheduled) || 0,
+          active: Number(sessionRow.active) || 0,
+          cancelled: Number(sessionRow.cancelled) || 0,
+          averageDurationMinutes: sessionRow.average_duration_minutes === null || sessionRow.average_duration_minutes === undefined
+            ? null
+            : Number(sessionRow.average_duration_minutes),
+        }
+      });
+    } finally {
+      client.release();
+    }
+  } catch (error) {
+    logError('Admin metrics fetch failed', {
+      error: error instanceof Error ? error.message : String(error)
+    });
+    res.status(500).json({
+      error: 'Failed to load admin metrics',
+      message: error instanceof Error ? error.message : String(error)
     });
   }
 });
@@ -507,7 +591,10 @@ pool.connect(async (err, client, release) => {
             username TEXT UNIQUE NOT NULL,
             email TEXT UNIQUE NOT NULL,
             password_hash TEXT,
-            role TEXT NOT NULL DEFAULT 'player',
+            roles TEXT[] NOT NULL DEFAULT ARRAY['player']::TEXT[] CHECK (
+                array_length(roles, 1) >= 1
+                AND roles <@ ARRAY['player','dm','admin']::TEXT[]
+            ),
             status TEXT NOT NULL DEFAULT 'active',
             avatar_url TEXT,
             timezone TEXT DEFAULT 'UTC',
@@ -522,6 +609,41 @@ pool.connect(async (err, client, release) => {
       console.error('Error loading database schema:', schemaError);
       console.log('Continuing with existing schema...');
     }
+
+    // Ensure roles column exists and contains valid entries
+    await client.query(`
+      DO $$
+      DECLARE
+        allowed_roles CONSTANT TEXT[] := ARRAY['player', 'dm', 'admin'];
+      BEGIN
+        IF NOT EXISTS (
+          SELECT 1 FROM information_schema.columns 
+          WHERE table_name = 'user_profiles' AND column_name = 'roles'
+        ) THEN
+          ALTER TABLE user_profiles 
+            ADD COLUMN roles TEXT[] NOT NULL DEFAULT ARRAY['player']::TEXT[];
+        END IF;
+
+        UPDATE user_profiles
+        SET roles = (
+          SELECT ARRAY(
+            SELECT DISTINCT role_value
+            FROM unnest(COALESCE(user_profiles.roles, ARRAY[]::TEXT[]) || ARRAY['player']) AS role_value
+            WHERE role_value = ANY(allowed_roles)
+            ORDER BY CASE role_value
+              WHEN 'admin' THEN 1
+              WHEN 'dm' THEN 2
+              ELSE 3
+            END
+          )
+        )
+        WHERE roles IS NULL
+          OR array_length(roles, 1) = 0
+          OR NOT roles <@ allowed_roles
+          OR NOT ('player' = ANY(roles));
+      END
+      $$;
+    `);
     release();
   }
 });
@@ -718,7 +840,7 @@ app.post('/api/auth/login', validateLogin, handleValidationErrors, async (req, r
 
     // Get user with password hash
     const result = await client.query(
-      'SELECT id, username, email, password_hash, role, avatar_url, timezone, status FROM user_profiles WHERE email = $1',
+      'SELECT id, username, email, password_hash, roles, avatar_url, timezone, status FROM user_profiles WHERE email = $1',
       [email]
     );
     client.release();
@@ -730,7 +852,22 @@ app.post('/api/auth/login', validateLogin, handleValidationErrors, async (req, r
       });
     }
 
-    const user = result.rows[0];
+    const normalizeRoles = (input) => {
+      const allowedRoles = ['player', 'dm', 'admin'];
+      const raw = Array.isArray(input) ? [...input] : input ? [input] : [];
+      raw.push('player');
+      const cleaned = [...new Set(raw.filter((role) => allowedRoles.includes(role)))];
+      return cleaned.length > 0 ? cleaned : ['player'];
+    };
+
+    const userRow = result.rows[0];
+    const roles = normalizeRoles(userRow.roles);
+    const primaryRole = roles.find((role) => role !== 'player') ?? roles[0];
+    const user = {
+      ...userRow,
+      roles,
+      role: primaryRole
+    };
     
     // Check if user account is active
     if (user.status !== 'active') {
@@ -757,14 +894,15 @@ app.post('/api/auth/login', validateLogin, handleValidationErrors, async (req, r
     const token = generateToken({
       userId: user.id,
       username: user.username,
+      roles: user.roles,
       role: user.role
     });
     
     // Update last_login
     const updateClient = await pool.connect();
     await updateClient.query(
-      'UPDATE user_profiles SET last_login = NOW() WHERE id = $1',
-      [user.id]
+      'UPDATE user_profiles SET last_login = NOW(), roles = $2 WHERE id = $1',
+      [user.id, user.roles]
     );
     updateClient.release();
 
@@ -785,6 +923,8 @@ app.post('/api/auth/login', validateLogin, handleValidationErrors, async (req, r
 
 
 // Registration validation
+const allowedRoles = ['player', 'dm', 'admin'];
+
 const validateRegistration = [
   body('username')
     .isLength({ min: 3, max: 50 })
@@ -799,14 +939,33 @@ const validateRegistration = [
     .withMessage('Password must be at least 8 characters')
     .matches(/^(?=.*[a-z])(?=.*[A-Z])(?=.*\d)/)
     .withMessage('Password must contain at least one lowercase letter, one uppercase letter, and one number'),
+  body('roles')
+    .optional()
+    .isArray({ min: 1 })
+    .withMessage('Roles must be an array with at least one entry')
+    .custom((roles) => roles.every((role) => allowedRoles.includes(role)))
+    .withMessage('Roles must be one of player, dm, or admin'),
   body('role')
     .optional()
-    .isIn(['player', 'dm'])
-    .withMessage('Role must be player or dm')
+    .isIn(allowedRoles)
+    .withMessage('Role must be player, dm, or admin')
 ];
 
 app.post('/api/auth/register', validateRegistration, handleValidationErrors, async (req, res) => {
-  const { username, email, password, role = 'player' } = req.body;
+  const { username, email, password } = req.body;
+
+  const normalizeRoles = (inputRoles, singleRole) => {
+    const rawRoles = Array.isArray(inputRoles) ? [...inputRoles] : [];
+    if (singleRole) {
+      rawRoles.push(singleRole);
+    }
+    rawRoles.push('player');
+    const cleaned = [...new Set(rawRoles.filter((role) => allowedRoles.includes(role)))];
+    return cleaned.length > 0 ? cleaned : ['player'];
+  };
+
+  const roles = normalizeRoles(req.body.roles, req.body.role);
+  const primaryRole = roles.find((role) => role !== 'player') ?? roles[0];
 
   try {
     // Hash password securely
@@ -816,19 +975,25 @@ app.post('/api/auth/register', validateRegistration, handleValidationErrors, asy
 
     // Insert new user with hashed password
     const result = await client.query(`
-      INSERT INTO user_profiles (username, email, password_hash, role, status)
+      INSERT INTO user_profiles (username, email, password_hash, roles, status)
       VALUES ($1, $2, $3, $4, 'active')
-      RETURNING id, username, email, role, avatar_url, timezone, created_at
-    `, [username, email, passwordHash, role]);
+      RETURNING id, username, email, roles, avatar_url, timezone, created_at
+    `, [username, email, passwordHash, roles]);
     
     client.release();
 
-    const user = result.rows[0];
-    
+    const userRow = result.rows[0];
+    const user = {
+      ...userRow,
+      roles,
+      role: primaryRole
+    };
+
     // Generate JWT token
     const token = generateToken({
       userId: user.id,
       username: user.username,
+      roles: user.roles,
       role: user.role
     });
 
@@ -1014,30 +1179,6 @@ app.post('/api/campaigns', requireAuth, validateCampaign, handleValidationErrors
   }
 });
 
-app.get('/api/campaigns/:id', async (req, res) => {
-  const { id } = req.params;
-
-  try {
-    const client = await pool.connect();
-    const result = await client.query(`
-      SELECT c.*, u.username as dm_username
-      FROM campaigns c
-      JOIN user_profiles u ON c.dm_user_id = u.id
-      WHERE c.id = $1
-    `, [id]);
-    client.release();
-
-    if (result.rows.length === 0) {
-      return res.status(404).json({ error: 'Campaign not found' });
-    }
-
-    res.json({ campaign: result.rows[0] });
-  } catch (error) {
-    console.error('[Campaigns] Get error:', error);
-    res.status(500).json({ error: 'Failed to fetch campaign' });
-  }
-});
-
 app.get('/api/users/:userId/campaigns', async (req, res) => {
   const { userId } = req.params;
 
@@ -1099,6 +1240,30 @@ app.get('/api/campaigns/public', async (req, res) => {
   }
 });
 
+app.get('/api/campaigns/:id', async (req, res) => {
+  const { id } = req.params;
+
+  try {
+    const client = await pool.connect();
+    const result = await client.query(`
+      SELECT c.*, u.username as dm_username
+      FROM campaigns c
+      JOIN user_profiles u ON c.dm_user_id = u.id
+      WHERE c.id = $1
+    `, [id]);
+    client.release();
+
+    if (result.rows.length === 0) {
+      return res.status(404).json({ error: 'Campaign not found' });
+    }
+
+    res.json({ campaign: result.rows[0] });
+  } catch (error) {
+    console.error('[Campaigns] Get error:', error);
+    res.status(500).json({ error: 'Failed to fetch campaign' });
+  }
+});
+
 app.post('/api/campaigns/:campaignId/players', async (req, res) => {
   const { campaignId } = req.params;
   const { userId, characterId } = req.body;
@@ -1152,6 +1317,30 @@ app.post('/api/campaigns/:campaignId/players', async (req, res) => {
   } catch (error) {
     console.error('[Campaigns] Join campaign error:', error);
     res.status(500).json({ error: 'Failed to join campaign' });
+  }
+});
+
+app.get('/api/campaigns/:campaignId/characters', async (req, res) => {
+  const { campaignId } = req.params;
+
+  try {
+    const client = await pool.connect();
+    const result = await client.query(`
+      SELECT
+        c.*,
+        cp.role,
+        cp.status
+      FROM campaign_players cp
+      JOIN characters c ON cp.character_id = c.id
+      WHERE cp.campaign_id = $1
+      ORDER BY c.name
+    `, [campaignId]);
+    client.release();
+
+    res.json(result.rows);
+  } catch (error) {
+    console.error('[Campaigns] Get characters error:', error);
+    res.status(500).json({ error: error.message });
   }
 });
 
@@ -1773,7 +1962,7 @@ app.post('/api/campaigns/:campaignId/encounters', async (req, res) => {
   try {
     const { campaignId } = req.params;
     const { name, description, type, difficulty, session_id, location_id } = req.body;
-    
+
     if (!name || !type) {
       return res.status(400).json({ error: 'Encounter name and type are required' });
     }
@@ -1789,6 +1978,25 @@ app.post('/api/campaigns/:campaignId/encounters', async (req, res) => {
     res.json(result.rows[0]);
   } catch (error) {
     console.error('[Encounters] Create error:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+app.get('/api/encounters/:encounterId', async (req, res) => {
+  const { encounterId } = req.params;
+
+  try {
+    const client = await pool.connect();
+    const result = await client.query('SELECT * FROM encounters WHERE id = $1', [encounterId]);
+    client.release();
+
+    if (result.rows.length === 0) {
+      return res.status(404).json({ error: 'Encounter not found' });
+    }
+
+    res.json(result.rows[0]);
+  } catch (error) {
+    console.error('[Encounters] Get encounter error:', error);
     res.status(500).json({ error: error.message });
   }
 });
@@ -1842,6 +2050,116 @@ app.post('/api/encounters/:encounterId/participants', async (req, res) => {
     res.json(result.rows[0]);
   } catch (error) {
     console.error('[Encounters] Add participant error:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+app.post('/api/encounters/:encounterId/initiative', async (req, res) => {
+  const { encounterId } = req.params;
+  const { overrides } = req.body || {};
+
+  const client = await pool.connect();
+
+  try {
+    await client.query('BEGIN');
+
+    const encounterResult = await client.query('SELECT * FROM encounters WHERE id = $1 FOR UPDATE', [encounterId]);
+    if (encounterResult.rows.length === 0) {
+      await client.query('ROLLBACK');
+      client.release();
+      return res.status(404).json({ error: 'Encounter not found' });
+    }
+
+    const participantsResult = await client.query(`
+      SELECT id, participant_id
+      FROM encounter_participants
+      WHERE encounter_id = $1
+    `, [encounterId]);
+
+    if (participantsResult.rows.length === 0) {
+      await client.query('ROLLBACK');
+      client.release();
+      return res.status(400).json({ error: 'Encounter has no participants to roll initiative for' });
+    }
+
+    const overrideMap = new Map();
+    if (Array.isArray(overrides)) {
+      overrides.forEach((entry) => {
+        const participantKey = entry?.participantId || entry?.participant_id || entry?.id;
+        const initiativeValue = Number(entry?.initiative);
+        if (participantKey && Number.isFinite(initiativeValue)) {
+          overrideMap.set(participantKey, Math.trunc(initiativeValue));
+        }
+      });
+    }
+
+    const rollResult = await client.query(`
+      SELECT 
+        id,
+        participant_id,
+        GREATEST(1, LEAST(40, FLOOR(random() * 20)::int + 1)) AS base_roll
+      FROM encounter_participants
+      WHERE encounter_id = $1
+    `, [encounterId]);
+
+    const initiativeAssignments = rollResult.rows.map((row) => {
+      const overrideValue = overrideMap.get(row.id) ?? overrideMap.get(row.participant_id);
+      const initiativeValue = Number.isFinite(overrideValue) ? overrideValue : row.base_roll;
+      return {
+        participantId: row.id,
+        initiative: initiativeValue,
+      };
+    });
+
+    for (const assignment of initiativeAssignments) {
+      await client.query(
+        `UPDATE encounter_participants 
+         SET initiative = $1,
+             has_acted = false
+         WHERE id = $2`,
+        [assignment.initiative, assignment.participantId]
+      );
+    }
+
+    const initiativeOrder = initiativeAssignments
+      .sort((a, b) => b.initiative - a.initiative)
+      .map((assignment) => ({
+        participantId: assignment.participantId,
+        initiative: assignment.initiative,
+        hasActed: false,
+      }));
+
+    const updatedEncounterResult = await client.query(`
+      UPDATE encounters
+      SET status = 'active',
+          current_round = CASE 
+            WHEN current_round IS NULL OR current_round < 1 THEN 1
+            ELSE current_round
+          END,
+          initiative_order = $1,
+          updated_at = NOW()
+      WHERE id = $2
+      RETURNING *
+    `, [JSON.stringify(initiativeOrder), encounterId]);
+
+    const updatedParticipantsResult = await client.query(`
+      SELECT *
+      FROM encounter_participants
+      WHERE encounter_id = $1
+      ORDER BY initiative DESC NULLS LAST, name
+    `, [encounterId]);
+
+    await client.query('COMMIT');
+    client.release();
+
+    res.json({
+      encounter: updatedEncounterResult.rows[0],
+      participants: updatedParticipantsResult.rows,
+    });
+  } catch (error) {
+    await client.query('ROLLBACK');
+    client.release();
+    console.error('[Encounters] Roll initiative error:', error);
     res.status(500).json({ error: error.message });
   }
 });

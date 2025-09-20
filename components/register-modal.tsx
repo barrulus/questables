@@ -9,11 +9,12 @@ import { Checkbox } from "./ui/checkbox";
 import { toast } from "sonner";
 import { Eye, EyeOff, Mail, Lock, User, Crown, Shield } from "lucide-react";
 import { databaseClient } from "../utils/database/client";
+import { useUser } from "../contexts/UserContext";
 
 interface RegisterModalProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
-  onRegister: (user: { id: string; username: string; email: string; role: "player" | "dm" | "admin" }) => void;
+  onRegister: () => void;
   onSwitchToLogin: () => void;
 }
 
@@ -29,6 +30,7 @@ export function RegisterModal({ open, onOpenChange, onRegister, onSwitchToLogin 
   const [showConfirmPassword, setShowConfirmPassword] = useState(false);
   const [acceptTerms, setAcceptTerms] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
+  const { login } = useUser();
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -60,51 +62,37 @@ export function RegisterModal({ open, onOpenChange, onRegister, onSwitchToLogin 
     }
 
     try {
-      // Try to register with database
-      const { user, error } = await databaseClient.auth.register(
-        formData.username, 
-        formData.email, 
-        formData.password, 
-        formData.role
+      const { data, error } = await databaseClient.auth.register(
+        formData.username,
+        formData.email,
+        formData.password,
+        [formData.role]
       );
 
-      if (user && !error) {
-        onRegister({
-          id: user.id,
-          username: user.username,
-          email: user.email,
-          role: user.role
-        });
-        toast.success(`Welcome ${formData.username}! Your account has been created.`);
-        onOpenChange(false);
-      } else {
-        toast.error("Registration failed. Please try again.");
+      if (error || !data?.user) {
+        const errorMessage = error instanceof Error ? error.message : "Registration failed. Please try again.";
+        toast.error(errorMessage);
+        return;
       }
-    } catch (dbError) {
-      console.warn('Database registration failed, creating demo account:', dbError);
-      
-      // Fallback to creating a demo user
-      const newUser = {
-        id: Date.now().toString(),
-        username: formData.username,
-        email: formData.email,
-        role: formData.role
-      };
 
-      onRegister(newUser);
-      toast.success(`Welcome ${formData.username}! Demo account created (database not available).`);
+      let authenticatedUser;
+      try {
+        authenticatedUser = await login(formData.email, formData.password);
+      } catch (authError) {
+        const message = authError instanceof Error ? authError.message : "Unable to sign in after registration.";
+        toast.error(message);
+        return;
+      }
+
+      onRegister();
+      toast.success(`Welcome ${authenticatedUser.username}! Your account has been created.`);
       onOpenChange(false);
-    }
-
-    setIsLoading(false);
-  };
-
-  const getRoleIcon = (role: string) => {
-    switch (role) {
-      case "player": return <User className="w-4 h-4" />;
-      case "dm": return <Shield className="w-4 h-4" />;
-      case "admin": return <Crown className="w-4 h-4" />;
-      default: return <User className="w-4 h-4" />;
+    } catch (dbError) {
+      const errorMessage = dbError instanceof Error ? dbError.message : "Registration failed. Please try again.";
+      console.error('Registration failed:', dbError);
+      toast.error(errorMessage);
+    } finally {
+      setIsLoading(false);
     }
   };
 
@@ -165,7 +153,7 @@ export function RegisterModal({ open, onOpenChange, onRegister, onSwitchToLogin 
               <Label htmlFor="role">Account Type *</Label>
               <Select 
                 value={formData.role} 
-                onValueChange={(value) => setFormData(prev => ({ ...prev, role: value as any }))}
+                onValueChange={(value) => setFormData(prev => ({ ...prev, role: value as "player" | "dm" | "admin" }))}
               >
                 <SelectTrigger>
                   <SelectValue />

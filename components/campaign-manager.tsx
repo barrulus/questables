@@ -1,11 +1,10 @@
-import { useState, useEffect, useContext, useCallback, useMemo, memo } from "react";
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "./ui/card";
+import { useState, useEffect, useCallback, useRef, memo } from "react";
+import { Card, CardContent, CardHeader, CardTitle } from "./ui/card";
 import { Button } from "./ui/button";
 import { Badge } from "./ui/badge";
 import { Input } from "./ui/input";
 import { Label } from "./ui/label";
 import { Textarea } from "./ui/textarea";
-import { ScrollArea } from "./ui/scroll-area";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "./ui/tabs";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from "./ui/dialog";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "./ui/select";
@@ -21,10 +20,11 @@ import {
   Loader2,
   AlertCircle,
   Settings,
-  Share
+  Share,
+  RefreshCw
 } from "lucide-react";
 import { useUser } from "../contexts/UserContext";
-import { createAsyncHandler, handleAsyncError } from '../utils/error-handling';
+import { apiFetch, readErrorMessage, readJsonBody } from "../utils/api-client";
 
 // Database-aligned interface
 interface Campaign {
@@ -44,24 +44,15 @@ interface Campaign {
   updated_at: string;
 }
 
-interface CampaignPlayer {
-  campaign_id: string;
-  user_id: string;
-  character_id?: string;
-  character_name?: string;
-  status: 'active' | 'inactive';
-  role: 'player' | 'dm';
-}
-
 export function CampaignManager() {
   const { user } = useUser();
   const [dmCampaigns, setDmCampaigns] = useState<Campaign[]>([]);
   const [playerCampaigns, setPlayerCampaigns] = useState<Campaign[]>([]);
   const [publicCampaigns, setPublicCampaigns] = useState<Campaign[]>([]);
   const [selectedCampaign, setSelectedCampaign] = useState<Campaign | null>(null);
-  const [activeTab, setActiveTab] = useState<string>("overview");
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [refreshing, setRefreshing] = useState(false);
   
   const [isCreating, setIsCreating] = useState(false);
   const [createLoading, setCreateLoading] = useState(false);
@@ -75,44 +66,106 @@ export function CampaignManager() {
     isPublic: false
   });
 
+  const lastSelectedCampaignIdRef = useRef<string | null>(null);
+
+  const handleSelectCampaign = useCallback((campaign: Campaign | null) => {
+    if (campaign) {
+      lastSelectedCampaignIdRef.current = campaign.id;
+      setSelectedCampaign(campaign);
+    } else {
+      lastSelectedCampaignIdRef.current = null;
+      setSelectedCampaign(null);
+    }
+  }, []);
+
   // Load all campaign data
-  const loadCampaignData = useCallback(async () => {
-    if (!user) return;
-    
+  const loadCampaignData = useCallback(async ({ signal, mode = "initial" }: { signal?: AbortSignal; mode?: "initial" | "refresh" } = {}) => {
+    if (!user) {
+      handleSelectCampaign(null);
+      setDmCampaigns([]);
+      setPlayerCampaigns([]);
+      setPublicCampaigns([]);
+      setLoading(false);
+      setRefreshing(false);
+      return;
+    }
+
+    const setSpinner = (value: boolean) => {
+      if (mode === "initial") {
+        setLoading(value);
+      } else {
+        setRefreshing(value);
+      }
+    };
+
     try {
-      setLoading(true);
+      setSpinner(true);
       setError(null);
-      
-      // Load user's campaigns (as DM and player)
-      const userCampaignsResponse = await fetch(`/api/users/${user.id}/campaigns`);
-      if (!userCampaignsResponse.ok) throw new Error('Failed to load user campaigns');
-      const userCampaignsData = await userCampaignsResponse.json();
-      
-      setDmCampaigns(userCampaignsData.dmCampaigns || []);
-      setPlayerCampaigns(userCampaignsData.playerCampaigns || []);
-      
-      // Load public campaigns for joining
-      const publicResponse = await fetch('/api/campaigns/public');
-      if (!publicResponse.ok) throw new Error('Failed to load public campaigns');
-      const publicData = await publicResponse.json();
-      
-      setPublicCampaigns(publicData || []);
-      
-      // Set selected campaign to first DM campaign if available
-      if (userCampaignsData.dmCampaigns?.length > 0) {
-        setSelectedCampaign(userCampaignsData.dmCampaigns[0]);
+
+      const userCampaignsResponse = await apiFetch(`/api/users/${user.id}/campaigns`, { signal });
+      if (!userCampaignsResponse.ok) {
+        throw new Error(await readErrorMessage(userCampaignsResponse, "Failed to load user campaigns"));
+      }
+      const userCampaignsData = await readJsonBody<{ dmCampaigns?: Campaign[]; playerCampaigns?: Campaign[] }>(userCampaignsResponse);
+
+      const dmCampaignList = userCampaignsData.dmCampaigns ?? [];
+      const playerCampaignList = userCampaignsData.playerCampaigns ?? [];
+
+      const publicResponse = await apiFetch('/api/campaigns/public', { signal });
+      if (!publicResponse.ok) {
+        throw new Error(await readErrorMessage(publicResponse, "Failed to load public campaigns"));
+      }
+      const publicData = await readJsonBody<Campaign[]>(publicResponse);
+
+      const filteredPublicCampaigns = (publicData ?? []).filter((campaign) => {
+        const alreadyDm = dmCampaignList.some((dmCampaign) => dmCampaign.id === campaign.id);
+        const alreadyPlayer = playerCampaignList.some((playerCampaign) => playerCampaign.id === campaign.id);
+        return !alreadyDm && !alreadyPlayer;
+      });
+
+      setDmCampaigns(dmCampaignList);
+      setPlayerCampaigns(playerCampaignList);
+      setPublicCampaigns(filteredPublicCampaigns);
+
+      const combinedCampaigns = [...dmCampaignList, ...playerCampaignList];
+      const lastSelectedId = lastSelectedCampaignIdRef.current;
+      if (lastSelectedId) {
+        const matched = combinedCampaigns.find((campaign) => campaign.id === lastSelectedId);
+        if (matched) {
+          handleSelectCampaign(matched);
+          return;
+        }
+      }
+
+      if (dmCampaignList.length > 0) {
+        handleSelectCampaign(dmCampaignList[0]);
+      } else if (playerCampaignList.length > 0) {
+        handleSelectCampaign(playerCampaignList[0]);
+      } else {
+        handleSelectCampaign(null);
       }
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to load campaigns');
+      if (err instanceof DOMException && err.name === "AbortError") {
+        return;
+      }
+      const message = err instanceof Error ? err.message : 'Failed to load campaigns';
+      setError(message);
+      if (mode === "refresh") {
+        toast.error(message);
+      }
     } finally {
-      setLoading(false);
+      setSpinner(false);
     }
-  }, [user]);
+  }, [user, handleSelectCampaign]);
 
   useEffect(() => {
-    if (user) {
-      loadCampaignData();
+    if (!user) {
+      return;
     }
+
+    const controller = new AbortController();
+    loadCampaignData({ signal: controller.signal, mode: "initial" });
+    return () => controller.abort();
   }, [user, loadCampaignData]);
 
   const handleCreateCampaign = useCallback(async () => {
@@ -123,8 +176,24 @@ export function CampaignManager() {
 
     try {
       setCreateLoading(true);
-      
-      const response = await fetch('/api/campaigns', {
+
+      const maxPlayers = Number(newCampaign.maxPlayers);
+      if (!Number.isInteger(maxPlayers) || maxPlayers < 1 || maxPlayers > 20) {
+        toast.error("Max players must be between 1 and 20.");
+        setCreateLoading(false);
+        return;
+      }
+
+      const minLevel = Number(newCampaign.levelRange.min);
+      const maxLevel = Number(newCampaign.levelRange.max);
+      const validLevels = Number.isInteger(minLevel) && Number.isInteger(maxLevel) && minLevel >= 1 && maxLevel <= 20 && minLevel <= maxLevel;
+      if (!validLevels) {
+        toast.error("Provide a level range between 1 and 20 (min cannot exceed max).");
+        setCreateLoading(false);
+        return;
+      }
+
+      const response = await apiFetch('/api/campaigns', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -134,22 +203,27 @@ export function CampaignManager() {
           system: newCampaign.system,
           setting: newCampaign.setting,
           status: 'recruiting',
-          maxPlayers: newCampaign.maxPlayers,
+          maxPlayers,
           levelRange: newCampaign.levelRange,
           isPublic: newCampaign.isPublic
         })
       });
 
-      if (!response.ok) {
-        const error = await response.json();
-        throw new Error(error.error || 'Failed to create campaign');
+      if (response.status === 401) {
+        toast.error("Your session has expired. Please sign in again to create campaigns.");
+        setCreateLoading(false);
+        return;
       }
 
-      const { campaign } = await response.json();
-      
-      // Add to DM campaigns and select it
-      setDmCampaigns(prev => [campaign, ...prev]);
-      setSelectedCampaign(campaign);
+      if (!response.ok) {
+        throw new Error(await readErrorMessage(response, 'Failed to create campaign'));
+      }
+
+      const { campaign } = await readJsonBody<{ campaign: Campaign }>(response);
+
+      // Pull fresh data to ensure local state matches backend and reselect the new campaign
+      lastSelectedCampaignIdRef.current = campaign.id;
+      await loadCampaignData({ mode: "refresh" });
       
       // Reset form
       setNewCampaign({
@@ -168,7 +242,7 @@ export function CampaignManager() {
     } finally {
       setCreateLoading(false);
     }
-  }, [user, newCampaign]);
+  }, [user, newCampaign, loadCampaignData]);
 
   const handleDeleteCampaign = async (campaign: Campaign) => {
     if (!user || campaign.dm_user_id !== user.id) {
@@ -177,24 +251,21 @@ export function CampaignManager() {
     }
 
     try {
-      const response = await fetch(`/api/campaigns/${campaign.id}`, {
+      const response = await apiFetch(`/api/campaigns/${campaign.id}`, {
         method: 'DELETE',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ dmUserId: user.id })
       });
 
       if (!response.ok) {
-        const error = await response.json();
-        throw new Error(error.error || 'Failed to delete campaign');
+        throw new Error(await readErrorMessage(response, 'Failed to delete campaign'));
       }
 
-      // Remove from local state
-      setDmCampaigns(prev => prev.filter(c => c.id !== campaign.id));
-      
-      if (selectedCampaign?.id === campaign.id) {
-        setSelectedCampaign(dmCampaigns.find(c => c.id !== campaign.id) || null);
+      if (lastSelectedCampaignIdRef.current === campaign.id) {
+        lastSelectedCampaignIdRef.current = null;
       }
-      
+
+      await loadCampaignData({ mode: "refresh" });
       toast.success("Campaign deleted successfully");
     } catch (err) {
       toast.error(err instanceof Error ? err.message : 'Failed to delete campaign');
@@ -205,19 +276,19 @@ export function CampaignManager() {
     if (!user) return;
 
     try {
-      const response = await fetch(`/api/campaigns/${campaign.id}/players`, {
+      const response = await apiFetch(`/api/campaigns/${campaign.id}/players`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ userId: user.id, characterId })
       });
 
       if (!response.ok) {
-        const error = await response.json();
-        throw new Error(error.error || 'Failed to join campaign');
+        throw new Error(await readErrorMessage(response, 'Failed to join campaign'));
       }
 
       // Refresh campaign data
-      await loadCampaignData();
+      lastSelectedCampaignIdRef.current = campaign.id;
+      await loadCampaignData({ mode: "refresh" });
       toast.success("Successfully joined campaign!");
     } catch (err) {
       toast.error(err instanceof Error ? err.message : 'Failed to join campaign');
@@ -235,24 +306,6 @@ export function CampaignManager() {
   }, []);
 
   // Memoized computed values for better performance
-  const totalCampaigns = useMemo(() => 
-    dmCampaigns.length + playerCampaigns.length, 
-    [dmCampaigns.length, playerCampaigns.length]
-  );
-
-  const activeCampaigns = useMemo(() => 
-    [...dmCampaigns, ...playerCampaigns].filter(c => c.status === 'active').length,
-    [dmCampaigns, playerCampaigns]
-  );
-
-  const filteredPublicCampaigns = useMemo(() => 
-    publicCampaigns.filter(campaign => 
-      campaign.status === 'recruiting' && 
-      (campaign.current_players || 0) < (campaign.max_players || 6)
-    ),
-    [publicCampaigns]
-  );
-
   if (!user) {
     return (
       <div className="h-full flex items-center justify-center">
@@ -281,7 +334,7 @@ export function CampaignManager() {
         <div className="text-center text-destructive">
           <AlertCircle className="w-12 h-12 mx-auto mb-4" />
           <p>Error: {error}</p>
-          <Button onClick={loadCampaignData} className="mt-2">
+          <Button onClick={() => loadCampaignData({ mode: "refresh" })} className="mt-2">
             Try Again
           </Button>
         </div>
@@ -294,18 +347,32 @@ export function CampaignManager() {
       <div className="p-4 border-b">
         <div className="flex items-center justify-between mb-4">
           <h2 className="font-semibold">Campaign Manager</h2>
-          <Dialog open={isCreating} onOpenChange={setIsCreating}>
-            <DialogTrigger asChild>
-              <Button size="sm">
-                <Plus className="w-4 h-4 mr-1" />
-                New Campaign
-              </Button>
-            </DialogTrigger>
-            <DialogContent>
-              <DialogHeader>
-                <DialogTitle>Create New Campaign</DialogTitle>
-              </DialogHeader>
-              <div className="space-y-4">
+          <div className="flex items-center gap-2">
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => loadCampaignData({ mode: "refresh" })}
+              disabled={refreshing}
+            >
+              {refreshing ? (
+                <Loader2 className="w-3 h-3 mr-2 animate-spin" />
+              ) : (
+                <RefreshCw className="w-3 h-3 mr-2" />
+              )}
+              Refresh Data
+            </Button>
+            <Dialog open={isCreating} onOpenChange={setIsCreating}>
+              <DialogTrigger asChild>
+                <Button size="sm">
+                  <Plus className="w-4 h-4 mr-1" />
+                  New Campaign
+                </Button>
+              </DialogTrigger>
+              <DialogContent>
+                <DialogHeader>
+                  <DialogTitle>Create New Campaign</DialogTitle>
+                </DialogHeader>
+                <div className="space-y-4">
                 <div>
                   <Label htmlFor="name">Campaign Name *</Label>
                   <Input
@@ -356,14 +423,20 @@ export function CampaignManager() {
                 </div>
                 <div className="grid grid-cols-3 gap-4">
                   <div>
-                    <Label htmlFor="maxPlayers">Max Players</Label>
+                    <Label htmlFor="maxPlayers">Max Players (1-20)</Label>
                     <Input
                       id="maxPlayers"
                       type="number"
                       min="1"
-                      max="8"
+                      max="20"
                       value={newCampaign.maxPlayers}
-                      onChange={(e) => setNewCampaign(prev => ({ ...prev, maxPlayers: parseInt(e.target.value) }))}
+                      onChange={(e) => {
+                        const value = parseInt(e.target.value, 10);
+                        setNewCampaign(prev => ({
+                          ...prev,
+                          maxPlayers: Number.isNaN(value) ? prev.maxPlayers : value
+                        }));
+                      }}
                     />
                   </div>
                   <div>
@@ -374,10 +447,15 @@ export function CampaignManager() {
                       min="1"
                       max="20"
                       value={newCampaign.levelRange.min}
-                      onChange={(e) => setNewCampaign(prev => ({ 
-                        ...prev, 
-                        levelRange: { ...prev.levelRange, min: parseInt(e.target.value) }
-                      }))}
+                      onChange={(e) => {
+                        const value = parseInt(e.target.value, 10);
+                        if (!Number.isNaN(value)) {
+                          setNewCampaign(prev => ({ 
+                            ...prev, 
+                            levelRange: { ...prev.levelRange, min: Math.max(1, Math.min(20, value)) }
+                          }));
+                        }
+                      }}
                     />
                   </div>
                   <div>
@@ -388,10 +466,15 @@ export function CampaignManager() {
                       min="1"
                       max="20"
                       value={newCampaign.levelRange.max}
-                      onChange={(e) => setNewCampaign(prev => ({ 
-                        ...prev, 
-                        levelRange: { ...prev.levelRange, max: parseInt(e.target.value) }
-                      }))}
+                      onChange={(e) => {
+                        const value = parseInt(e.target.value, 10);
+                        if (!Number.isNaN(value)) {
+                          setNewCampaign(prev => ({ 
+                            ...prev, 
+                            levelRange: { ...prev.levelRange, max: Math.max(1, Math.min(20, value)) }
+                          }));
+                        }
+                      }}
                     />
                   </div>
                 </div>
@@ -416,6 +499,7 @@ export function CampaignManager() {
               </div>
             </DialogContent>
           </Dialog>
+          </div>
         </div>
 
         {/* Campaign Tabs */}
@@ -434,7 +518,7 @@ export function CampaignManager() {
                   className={`cursor-pointer transition-colors ${
                     selectedCampaign?.id === campaign.id ? 'ring-2 ring-primary' : ''
                   }`}
-                  onClick={() => setSelectedCampaign(campaign)}
+                  onClick={() => handleSelectCampaign(campaign)}
                 >
                   <CardContent className="p-4">
                     <div className="flex items-center gap-2 mb-2">
@@ -495,7 +579,7 @@ export function CampaignManager() {
           <TabsContent value="joined-campaigns" className="mt-4">
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
               {playerCampaigns.map((campaign) => (
-                <Card key={campaign.id} className="cursor-pointer" onClick={() => setSelectedCampaign(campaign)}>
+                <Card key={campaign.id} className="cursor-pointer" onClick={() => handleSelectCampaign(campaign)}>
                   <CardContent className="p-4">
                     <div className="flex items-center gap-2 mb-2">
                       <div className={`w-2 h-2 rounded-full ${getStatusColor(campaign.status)}`} />

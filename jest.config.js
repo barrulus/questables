@@ -8,20 +8,17 @@ export default {
   
   // Transform files
   transform: {
-    '^.+\\.(ts|tsx)$': ['ts-jest', {
-      useESM: true,
-    }],
     '^.+\\.(js|jsx)$': ['babel-jest'],
   },
   
   // Module name mapping for path aliases
-  moduleNameMapping: {
+  moduleNameMapper: {
     '^@/(.*)$': '<rootDir>/$1',
     '\\.(css|less|scss|sass)$': 'identity-obj-proxy',
   },
   
   // Setup files
-  setupFilesAfterEnv: ['<rootDir>/src/setupTests.ts'],
+  setupFilesAfterEnv: ['<rootDir>/src/setupTests.js'],
   
   // Test file patterns
   testMatch: [
@@ -63,12 +60,4 @@ export default {
   verbose: true,
   
   // Handle ES modules
-  extensionsToTreatAsEsm: ['.ts', '.tsx'],
-  
-  // Global setup
-  globals: {
-    'ts-jest': {
-      useESM: true,
-    },
-  },
 };

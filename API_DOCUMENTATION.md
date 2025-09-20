@@ -38,6 +38,48 @@ Check database connection status and server health.
 }
 ```
 
+### GET /api/admin/metrics
+
+Retrieve aggregate platform metrics from the live database. Requires an authenticated admin user.
+
+**Headers:**
+- `Authorization: Bearer <jwt>`
+
+**Response (200 OK):**
+```json
+{
+  "generatedAt": "2025-09-20T15:32:10.123Z",
+  "users": {
+    "total": 42,
+    "active": 38,
+    "inactive": 3,
+    "banned": 1,
+    "newLastSevenDays": 5
+  },
+  "campaigns": {
+    "total": 12,
+    "active": 6,
+    "recruiting": 3,
+    "paused": 2,
+    "completed": 1,
+    "newLastSevenDays": 2
+  },
+  "sessions": {
+    "total": 54,
+    "completed": 30,
+    "scheduled": 10,
+    "active": 4,
+    "cancelled": 10,
+    "averageDurationMinutes": 210.5
+  }
+}
+```
+
+**Errors:**
+- `401`: Missing or invalid authentication token
+- `403`: Authenticated user is not an admin
+- `500`: Unexpected database failure while aggregating metrics
+
 ## Characters API
 
 ### GET /api/characters
@@ -436,7 +478,8 @@ Get current user profile.
   "id": "uuid-string",
   "username": "player_name",
   "email": "player@example.com",
-  "role": "player", // "player", "dm", "admin"
+  "roles": ["player", "dm"],
+  "role": "player", // Primary role for backward compatibility
   "created_at": "2025-09-16T12:00:00.000Z",
   "updated_at": "2025-09-16T12:00:00.000Z"
 }
@@ -534,3 +577,118 @@ Currently no rate limiting is implemented, but recommended limits:
 ## Authentication
 
 The current implementation uses user IDs passed in request bodies/query parameters. In production, implement proper JWT or session-based authentication.
+
+## Campaign Character Roster
+
+### GET /api/campaigns/:campaignId/characters
+
+Returns every character currently attached to a campaign through `campaign_players`. Useful for initiative selection and encounter setup.
+
+**Parameters:**
+- `campaignId` (path): Campaign UUID
+
+**Response (200 OK):**
+```json
+[
+  {
+    "id": "character-uuid",
+    "name": "Elowen",
+    "class": "Wizard",
+    "level": 6,
+    "hit_points": { "max": 38, "current": 24, "temporary": 0 },
+    "armor_class": 15,
+    "role": "player",
+    "status": "active"
+  }
+]
+```
+
+**Errors:**
+- `404`: Campaign not found
+- `500`: Database error while fetching roster
+
+## Encounter API
+
+### GET /api/encounters/:encounterId
+
+Fetch a single encounter record, including current round and stored initiative order.
+
+**Parameters:**
+- `encounterId` (path): Encounter UUID
+
+**Response (200 OK):**
+```json
+{
+  "id": "encounter-uuid",
+  "campaign_id": "campaign-uuid",
+  "name": "Ambush at the Ford",
+  "description": "Six goblins ambush the party at the river crossing.",
+  "type": "combat",
+  "difficulty": "medium",
+  "status": "active",
+  "current_round": 2,
+  "initiative_order": [
+    { "participantId": "participant-1", "initiative": 18, "hasActed": false },
+    { "participantId": "participant-2", "initiative": 14, "hasActed": true }
+  ],
+  "created_at": "2025-09-19T14:20:00.000Z",
+  "updated_at": "2025-09-19T14:33:10.000Z"
+}
+```
+
+**Errors:**
+- `404`: Encounter not found
+- `500`: Unexpected database failure
+
+### POST /api/encounters/:encounterId/initiative
+
+Roll or assign initiative for every participant in an encounter. When no overrides are provided the backend performs a server-side `random()` d20 roll per participant, resets `has_acted`, and marks the encounter as `active`.
+
+**Parameters:**
+- `encounterId` (path): Encounter UUID
+
+**Request Body (optional overrides):**
+```json
+{
+  "overrides": [
+    { "participantId": "participant-1", "initiative": 22 },
+    { "participant_id": "participant-3", "initiative": 18 }
+  ]
+}
+```
+
+**Response (200 OK):**
+```json
+{
+  "encounter": {
+    "id": "encounter-uuid",
+    "status": "active",
+    "current_round": 1,
+    "initiative_order": [
+      { "participantId": "participant-1", "initiative": 22, "hasActed": false },
+      { "participantId": "participant-2", "initiative": 16, "hasActed": false }
+    ]
+  },
+  "participants": [
+    {
+      "id": "participant-1",
+      "participant_type": "character",
+      "initiative": 22,
+      "has_acted": false,
+      "hit_points": { "max": 38, "current": 38, "temporary": 0 }
+    },
+    {
+      "id": "participant-2",
+      "participant_type": "npc",
+      "initiative": 16,
+      "has_acted": false,
+      "hit_points": { "max": 20, "current": 20, "temporary": 0 }
+    }
+  ]
+}
+```
+
+**Errors:**
+- `404`: Encounter not found
+- `400`: Encounter has no participants to roll initiative for
+- `500`: Database error while updating initiative

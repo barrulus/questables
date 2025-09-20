@@ -1,12 +1,13 @@
-import { useState, useEffect, useContext } from 'react';
-import { Card, CardContent, CardHeader, CardTitle } from './ui/card';
-import { Button } from './ui/button';
-import { Input } from './ui/input';
-import { Textarea } from './ui/textarea';
-import { Badge } from './ui/badge';
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from './ui/select';
-import { Tabs, TabsContent, TabsList, TabsTrigger } from './ui/tabs';
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { Card, CardContent, CardHeader, CardTitle } from "./ui/card";
+import { Button } from "./ui/button";
+import { Input } from "./ui/input";
+import { Textarea } from "./ui/textarea";
+import { Badge } from "./ui/badge";
 import { useUser } from "../contexts/UserContext";
+import { apiFetch, readErrorMessage, readJsonBody } from "../utils/api-client";
+import { handleAsyncError } from "../utils/error-handling";
+import { toast } from "sonner";
 import {
   Play,
   Square,
@@ -16,8 +17,7 @@ import {
   Trophy,
   Loader2,
   Plus,
-  Edit3
-} from 'lucide-react';
+} from "lucide-react";
 
 interface Session {
   id: string;
@@ -49,165 +49,324 @@ interface SessionParticipant {
 
 export default function SessionManager({ campaignId, isDM }: { campaignId: string; isDM: boolean }) {
   const { user } = useUser();
+
   const [sessions, setSessions] = useState<Session[]>([]);
-  const [selectedSession, setSelectedSession] = useState<Session | null>(null);
+  const [sessionsError, setSessionsError] = useState<string | null>(null);
+  const [sessionsLoading, setSessionsLoading] = useState(true);
+  const [sessionsRefreshing, setSessionsRefreshing] = useState(false);
+
+  const [selectedSessionId, setSelectedSessionId] = useState<string | null>(null);
+
   const [participants, setParticipants] = useState<SessionParticipant[]>([]);
-  const [loading, setLoading] = useState(true);
-  
-  // Create session form
+  const [participantsLoading, setParticipantsLoading] = useState(false);
+  const [participantsError, setParticipantsError] = useState<string | null>(null);
+
   const [showCreateForm, setShowCreateForm] = useState(false);
-  const [newSessionTitle, setNewSessionTitle] = useState('');
-  const [newSessionSummary, setNewSessionSummary] = useState('');
-  const [newSessionNotes, setNewSessionNotes] = useState('');
-  const [newSessionScheduled, setNewSessionScheduled] = useState('');
-  
-  // End session form
+  const [newSessionTitle, setNewSessionTitle] = useState("");
+  const [newSessionSummary, setNewSessionSummary] = useState("");
+  const [newSessionNotes, setNewSessionNotes] = useState("");
+  const [newSessionScheduled, setNewSessionScheduled] = useState("");
+  const [createBusy, setCreateBusy] = useState(false);
+
   const [showEndForm, setShowEndForm] = useState(false);
-  const [sessionSummary, setSessionSummary] = useState('');
+  const [sessionSummary, setSessionSummary] = useState("");
   const [experienceAwarded, setExperienceAwarded] = useState<number>(0);
+  const [endBusy, setEndBusy] = useState(false);
 
-  const loadSessions = async () => {
-    try {
-      setLoading(true);
-      const response = await fetch(`/api/campaigns/${campaignId}/sessions`);
-      const data = await response.json();
-      setSessions(data);
-    } catch (error) {
-      console.error('Failed to load sessions:', error);
-    } finally {
-      setLoading(false);
-    }
-  };
+  const isMountedRef = useRef(true);
 
-  const loadParticipants = async (sessionId: string) => {
-    try {
-      const response = await fetch(`/api/sessions/${sessionId}/participants`);
-      const data = await response.json();
-      setParticipants(data);
-    } catch (error) {
-      console.error('Failed to load participants:', error);
-    }
-  };
+  const selectedSession = useMemo(() => sessions.find((session) => session.id === selectedSessionId) ?? null, [sessions, selectedSessionId]);
 
-  const createSession = async () => {
-    if (!newSessionTitle.trim()) return;
-
-    try {
-      const response = await fetch(`/api/campaigns/${campaignId}/sessions`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          title: newSessionTitle,
-          summary: newSessionSummary || null,
-          dm_notes: newSessionNotes || null,
-          scheduled_at: newSessionScheduled || null
-        })
-      });
-
-      if (response.ok) {
-        await loadSessions();
-        // Reset form
-        setNewSessionTitle('');
-        setNewSessionSummary('');
-        setNewSessionNotes('');
-        setNewSessionScheduled('');
-        setShowCreateForm(false);
-      }
-    } catch (error) {
-      console.error('Failed to create session:', error);
-    }
-  };
-
-  const startSession = async (sessionId: string) => {
-    try {
-      const response = await fetch(`/api/sessions/${sessionId}`, {
-        method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          status: 'active',
-          started_at: new Date().toISOString()
-        })
-      });
-
-      if (response.ok) {
-        await loadSessions();
-      }
-    } catch (error) {
-      console.error('Failed to start session:', error);
-    }
-  };
-
-  const endSession = async (sessionId: string) => {
-    try {
-      const session = sessions.find(s => s.id === sessionId);
-      if (!session?.started_at) return;
-
-      const endTime = new Date().toISOString();
-      const duration = Math.floor((new Date(endTime).getTime() - new Date(session.started_at).getTime()) / 1000 / 60);
-
-      const response = await fetch(`/api/sessions/${sessionId}`, {
-        method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          status: 'completed',
-          ended_at: endTime,
-          duration,
-          experience_awarded: experienceAwarded,
-          summary: sessionSummary
-        })
-      });
-
-      if (response.ok) {
-        await loadSessions();
-        setShowEndForm(false);
-        setSessionSummary('');
-        setExperienceAwarded(0);
-      }
-    } catch (error) {
-      console.error('Failed to end session:', error);
-    }
-  };
-
-  const formatDuration = (minutes: number) => {
+  const formatDuration = useCallback((minutes: number) => {
     const hours = Math.floor(minutes / 60);
     const mins = minutes % 60;
     return hours > 0 ? `${hours}h ${mins}m` : `${mins}m`;
-  };
+  }, []);
 
-  const formatDateTime = (dateString: string) => {
-    return new Date(dateString).toLocaleString();
-  };
+  const formatDateTime = useCallback((dateString: string) => new Date(dateString).toLocaleString(), []);
+
+  const canMutate = Boolean(user && isDM);
+
+  const loadSessions = useCallback(
+    async ({ signal, showSpinner }: { signal?: AbortSignal; showSpinner: boolean }) => {
+      if (!campaignId) {
+        return;
+      }
+
+      try {
+        if (showSpinner) {
+          setSessionsLoading(true);
+        } else {
+          setSessionsRefreshing(true);
+        }
+        setSessionsError(null);
+
+        const response = await apiFetch(`/api/campaigns/${campaignId}/sessions`, { signal });
+        if (!response.ok) {
+          throw new Error(await readErrorMessage(response, "Failed to load sessions"));
+        }
+
+        const payload = await readJsonBody<Session[]>(response);
+        setSessions(payload ?? []);
+
+        if (!selectedSessionId || !(payload ?? []).some((session) => session.id === selectedSessionId)) {
+          const nextSession = payload?.[0] ?? null;
+          setSelectedSessionId(nextSession?.id ?? null);
+        }
+      } catch (loadError) {
+        if (loadError instanceof DOMException && loadError.name === "AbortError") {
+          return;
+        }
+        const message = handleAsyncError(loadError);
+        setSessionsError(message);
+        console.error("Failed to load sessions:", loadError);
+      } finally {
+        if (isMountedRef.current) {
+          setSessionsLoading(false);
+          setSessionsRefreshing(false);
+        }
+      }
+    },
+    [campaignId, selectedSessionId]
+  );
+
+  const loadParticipants = useCallback(
+    async (sessionId: string, signal?: AbortSignal) => {
+      if (!sessionId) {
+        return;
+      }
+
+      try {
+        setParticipantsLoading(true);
+        setParticipantsError(null);
+
+        const response = await apiFetch(`/api/sessions/${sessionId}/participants`, { signal });
+        if (!response.ok) {
+          throw new Error(await readErrorMessage(response, "Failed to load participants"));
+        }
+
+        const payload = await readJsonBody<SessionParticipant[]>(response);
+        setParticipants(payload ?? []);
+      } catch (loadError) {
+        if (loadError instanceof DOMException && loadError.name === "AbortError") {
+          return;
+        }
+        const message = handleAsyncError(loadError);
+        setParticipantsError(message);
+        console.error("Failed to load participants:", loadError);
+      } finally {
+        if (isMountedRef.current) {
+          setParticipantsLoading(false);
+        }
+      }
+    },
+    []
+  );
+
+  const refreshSessions = useCallback(() => loadSessions({ showSpinner: false }), [loadSessions]);
 
   useEffect(() => {
-    loadSessions();
-  }, [campaignId]);
+    isMountedRef.current = true;
+    const controller = new AbortController();
+    loadSessions({ signal: controller.signal, showSpinner: true });
+    return () => {
+      isMountedRef.current = false;
+      controller.abort();
+    };
+  }, [loadSessions, campaignId]);
 
   useEffect(() => {
-    if (selectedSession) {
-      loadParticipants(selectedSession.id);
+    if (!selectedSession) {
+      setParticipants([]);
+      setParticipantsError(null);
+      return;
     }
-  }, [selectedSession]);
 
-  if (loading) {
+    const controller = new AbortController();
+    loadParticipants(selectedSession.id, controller.signal);
+    return () => controller.abort();
+  }, [loadParticipants, selectedSession]);
+
+  const resetCreateForm = useCallback(() => {
+    setNewSessionTitle("");
+    setNewSessionSummary("");
+    setNewSessionNotes("");
+    setNewSessionScheduled("");
+    setShowCreateForm(false);
+  }, []);
+
+  const createSession = useCallback(async () => {
+    if (!canMutate) {
+      toast.error("Only the DM can create sessions.");
+      return;
+    }
+
+    const trimmedTitle = newSessionTitle.trim();
+    if (!trimmedTitle) {
+      toast.error("Provide a session title.");
+      return;
+    }
+
+    try {
+      setCreateBusy(true);
+      const response = await apiFetch(`/api/campaigns/${campaignId}/sessions`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          title: trimmedTitle,
+          summary: newSessionSummary.trim() || null,
+          dm_notes: newSessionNotes.trim() || null,
+          scheduled_at: newSessionScheduled ? new Date(newSessionScheduled).toISOString() : null,
+        }),
+      });
+
+      if (!response.ok) {
+        throw new Error(await readErrorMessage(response, "Failed to create session"));
+      }
+
+      toast.success("Session created");
+      resetCreateForm();
+      await refreshSessions();
+    } catch (createError) {
+      const message = handleAsyncError(createError);
+      toast.error(message);
+      console.error("Failed to create session:", createError);
+    } finally {
+      setCreateBusy(false);
+    }
+  }, [canMutate, campaignId, newSessionNotes, newSessionScheduled, newSessionSummary, newSessionTitle, refreshSessions, resetCreateForm]);
+
+  const startSession = useCallback(
+    async (sessionId: string) => {
+      if (!canMutate) {
+        toast.error("Only the DM can start sessions.");
+        return;
+      }
+
+      try {
+        const response = await apiFetch(`/api/sessions/${sessionId}`, {
+          method: "PUT",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ status: "active", started_at: new Date().toISOString() }),
+        });
+
+        if (!response.ok) {
+          throw new Error(await readErrorMessage(response, "Failed to start session"));
+        }
+
+        toast.success("Session started");
+        await refreshSessions();
+      } catch (startError) {
+        const message = handleAsyncError(startError);
+        toast.error(message);
+        console.error("Failed to start session:", startError);
+      }
+    },
+    [canMutate, refreshSessions]
+  );
+
+  const endSession = useCallback(
+    async (sessionId: string) => {
+      if (!canMutate) {
+        toast.error("Only the DM can end sessions.");
+        return;
+      }
+
+      const session = sessions.find((entry) => entry.id === sessionId);
+      if (!session) {
+        toast.error("Session not found");
+        return;
+      }
+      if (!session.started_at) {
+        toast.error("Session has not been started");
+        return;
+      }
+
+      try {
+        setEndBusy(true);
+        const endedAt = new Date().toISOString();
+        const durationMinutes = Math.max(
+          1,
+          Math.floor((new Date(endedAt).getTime() - new Date(session.started_at).getTime()) / (1000 * 60)),
+        );
+
+        const response = await apiFetch(`/api/sessions/${sessionId}`, {
+          method: "PUT",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            status: "completed",
+            ended_at: endedAt,
+            duration: durationMinutes,
+            experience_awarded: Number.isFinite(experienceAwarded) ? experienceAwarded : 0,
+            summary: sessionSummary.trim() || null,
+          }),
+        });
+
+        if (!response.ok) {
+          throw new Error(await readErrorMessage(response, "Failed to end session"));
+        }
+
+        toast.success("Session ended");
+        setShowEndForm(false);
+        setSessionSummary("");
+        setExperienceAwarded(0);
+        await refreshSessions();
+      } catch (endError) {
+        const message = handleAsyncError(endError);
+        toast.error(message);
+        console.error("Failed to end session:", endError);
+      } finally {
+        setEndBusy(false);
+      }
+    },
+    [canMutate, experienceAwarded, refreshSessions, sessionSummary, sessions]
+  );
+
+  if (!campaignId) {
     return (
-      <div className="flex items-center justify-center h-64">
-        <Loader2 className="w-8 h-8 animate-spin" />
-        <span className="ml-2">Loading sessions...</span>
+      <div className="flex h-64 items-center justify-center text-muted-foreground">
+        <span>Campaign context missing for session manager.</span>
+      </div>
+    );
+  }
+
+  if (sessionsLoading) {
+    return (
+      <div className="flex h-64 items-center justify-center">
+        <Loader2 className="h-8 w-8 animate-spin" />
+        <span className="ml-2">Loading sessions…</span>
       </div>
     );
   }
 
   return (
     <div className="space-y-6">
-      <div className="flex justify-between items-center">
+      <div className="flex items-center justify-between">
         <h2 className="text-2xl font-bold">Session Management</h2>
-        {isDM && (
-          <Button onClick={() => setShowCreateForm(true)}>
-            <Plus className="w-4 h-4 mr-2" />
-            New Session
+        <div className="flex items-center gap-2">
+          <Button variant="outline" size="sm" onClick={refreshSessions} disabled={sessionsRefreshing}>
+            {sessionsRefreshing ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : null}
+            Refresh
           </Button>
-        )}
+          {isDM && (
+            <Button onClick={() => setShowCreateForm(true)}>
+              <Plus className="mr-2 h-4 w-4" />
+              New Session
+            </Button>
+          )}
+        </div>
       </div>
+
+      {sessionsError && (
+        <Card>
+          <CardHeader>
+            <CardTitle className="text-base text-red-500">Failed to load sessions</CardTitle>
+          </CardHeader>
+          <CardContent>
+            <p className="text-sm text-red-500">{sessionsError}</p>
+          </CardContent>
+        </Card>
+      )}
 
       {/* Create Session Form */}
       {showCreateForm && isDM && (
@@ -225,11 +384,13 @@ export default function SessionManager({ campaignId, isDM }: { campaignId: strin
               placeholder="Session summary/plan"
               value={newSessionSummary}
               onChange={(e) => setNewSessionSummary(e.target.value)}
+              disabled={createBusy}
             />
             <Textarea
               placeholder="DM notes (private)"
               value={newSessionNotes}
               onChange={(e) => setNewSessionNotes(e.target.value)}
+              disabled={createBusy}
             />
             <div>
               <label className="text-sm font-medium">Scheduled Time (optional)</label>
@@ -240,8 +401,11 @@ export default function SessionManager({ campaignId, isDM }: { campaignId: strin
               />
             </div>
             <div className="flex gap-2">
-              <Button onClick={createSession}>Create Session</Button>
-              <Button variant="outline" onClick={() => setShowCreateForm(false)}>
+              <Button onClick={createSession} disabled={createBusy}>
+                {createBusy ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : null}
+                Create Session
+              </Button>
+              <Button variant="outline" onClick={resetCreateForm} disabled={createBusy}>
                 Cancel
               </Button>
             </div>
@@ -365,7 +529,7 @@ export default function SessionManager({ campaignId, isDM }: { campaignId: strin
                 <div>
                   <h4 className="font-medium">{selectedSession.title}</h4>
                   {selectedSession.summary && (
-                    <p className="text-sm text-muted-foreground mt-1">
+                    <p className="mt-1 text-sm text-muted-foreground">
                       {selectedSession.summary}
                     </p>
                   )}
@@ -402,47 +566,47 @@ export default function SessionManager({ campaignId, isDM }: { campaignId: strin
 
                 {isDM && selectedSession.dm_notes && (
                   <div>
-                    <h5 className="font-medium text-sm mb-1">DM Notes:</h5>
-                    <p className="text-sm text-muted-foreground bg-muted p-2 rounded">
+                    <h5 className="mb-1 text-sm font-medium">DM Notes</h5>
+                    <p className="rounded bg-muted p-2 text-sm text-muted-foreground">
                       {selectedSession.dm_notes}
                     </p>
                   </div>
                 )}
 
-                {/* Participants */}
-                {participants.length > 0 && (
-                  <div>
-                    <h5 className="font-medium text-sm mb-2">Participants:</h5>
+                <div>
+                  <h5 className="mb-2 text-sm font-medium">Participants</h5>
+                  {participantsError && <p className="mb-2 text-sm text-red-500">{participantsError}</p>}
+                  {participantsLoading ? (
+                    <div className="flex items-center gap-2 text-sm text-muted-foreground">
+                      <Loader2 className="h-4 w-4 animate-spin" />
+                      Loading participants…
+                    </div>
+                  ) : participants.length > 0 ? (
                     <div className="space-y-2">
                       {participants.map((participant) => (
-                        <div key={participant.id} className="flex justify-between items-center text-sm">
+                        <div key={participant.id} className="flex items-center justify-between rounded border p-2 text-sm">
                           <div>
                             <span className="font-medium">{participant.username}</span>
                             {participant.character_name && (
-                              <span className="text-muted-foreground ml-1">
-                                ({participant.character_name})
-                              </span>
+                              <span className="ml-1 text-muted-foreground">({participant.character_name})</span>
                             )}
                           </div>
                           <div className="flex items-center gap-2">
                             <Badge variant="outline" className="text-xs">
                               Level {participant.character_level_start}
-                              {participant.character_level_end !== participant.character_level_start && 
-                                ` → ${participant.character_level_end}`
-                              }
+                              {participant.character_level_end !== participant.character_level_start ? ` → ${participant.character_level_end}` : ""}
                             </Badge>
-                            <Badge 
-                              variant={participant.attendance_status === 'present' ? 'default' : 'secondary'}
-                              className="text-xs"
-                            >
+                            <Badge variant={participant.attendance_status === "present" ? "default" : "secondary"} className="text-xs">
                               {participant.attendance_status}
                             </Badge>
                           </div>
                         </div>
                       ))}
                     </div>
-                  </div>
-                )}
+                  ) : (
+                    <p className="text-sm text-muted-foreground">No participants recorded for this session yet.</p>
+                  )}
+                </div>
               </CardContent>
             </Card>
           ) : (
@@ -469,6 +633,7 @@ export default function SessionManager({ campaignId, isDM }: { campaignId: strin
                   placeholder="What happened in this session?"
                   value={sessionSummary}
                   onChange={(e) => setSessionSummary(e.target.value)}
+                  disabled={endBusy}
                 />
               </div>
               <div>
@@ -476,15 +641,20 @@ export default function SessionManager({ campaignId, isDM }: { campaignId: strin
                 <Input
                   type="number"
                   placeholder="0"
-                  value={experienceAwarded || ''}
-                  onChange={(e) => setExperienceAwarded(parseInt(e.target.value) || 0)}
+                  value={Number.isFinite(experienceAwarded) ? experienceAwarded : ""}
+                  onChange={(e) => {
+                    const value = Number.parseInt(e.target.value, 10);
+                    setExperienceAwarded(Number.isNaN(value) ? 0 : value);
+                  }}
+                  disabled={endBusy}
                 />
               </div>
               <div className="flex gap-2">
-                <Button onClick={() => endSession(selectedSession.id)}>
+                <Button onClick={() => endSession(selectedSession.id)} disabled={endBusy}>
+                  {endBusy ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : null}
                   End Session
                 </Button>
-                <Button variant="outline" onClick={() => setShowEndForm(false)}>
+                <Button variant="outline" onClick={() => setShowEndForm(false)} disabled={endBusy}>
                   Cancel
                 </Button>
               </div>

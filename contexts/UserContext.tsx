@@ -3,8 +3,60 @@ import { User } from '../utils/database/data-structures';
 import { userHelpers } from '../utils/database/production-helpers';
 import { databaseClient } from '../utils/database/client';
 
+const USER_STORAGE_KEY = 'dnd-user';
+const TOKEN_STORAGE_KEY = 'dnd-auth-token';
+const ALLOWED_ROLES = ['player', 'dm', 'admin'] as const;
+const ROLE_PRIORITY: AllowedRole[] = ['admin', 'dm', 'player'];
+type AllowedRole = typeof ALLOWED_ROLES[number];
+
+type RawUser = Partial<User> & {
+  roles?: unknown;
+  role?: unknown;
+};
+
+const normalizeUser = (rawUser: RawUser): User => {
+  if (!rawUser) {
+    throw new Error('Invalid user payload');
+  }
+
+  const collected = new Set<AllowedRole>();
+
+  const registerRole = (value: unknown) => {
+    if (!value) {
+      return;
+    }
+
+    if (Array.isArray(value)) {
+      value.forEach(registerRole);
+      return;
+    }
+
+    if (typeof value === 'string') {
+      const normalized = value.toLowerCase();
+      if (ALLOWED_ROLES.includes(normalized as AllowedRole)) {
+        collected.add(normalized as AllowedRole);
+      }
+    }
+  };
+
+  registerRole(rawUser.roles);
+  registerRole(rawUser.role);
+  collected.add('player');
+
+  const normalizedRoles = ROLE_PRIORITY.filter((role) => collected.has(role));
+  const roles = normalizedRoles.length > 0 ? normalizedRoles : ['player'];
+  const primaryRole = roles.find((role) => role !== 'player') ?? 'player';
+
+  return {
+    ...rawUser,
+    roles,
+    role: primaryRole,
+  } as User;
+};
+
 interface UserContextType {
   user: User | null;
+  authToken: string | null;
   login: (email: string, password?: string) => Promise<User>;
   logout: () => void;
   loading: boolean;
@@ -28,6 +80,7 @@ interface UserProviderProps {
 
 export function UserProvider({ children }: UserProviderProps) {
   const [user, setUser] = useState<User | null>(null);
+  const [authToken, setAuthToken] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
@@ -38,29 +91,42 @@ export function UserProvider({ children }: UserProviderProps) {
 
   const initializeUser = async () => {
     try {
+      if (typeof window === 'undefined') {
+        return;
+      }
       setLoading(true);
       setError(null);
       
       // Check localStorage for stored user session
-      const storedUser = localStorage.getItem('dnd-user');
-      if (storedUser) {
+      const storedUser = localStorage.getItem(USER_STORAGE_KEY);
+      const storedToken = localStorage.getItem(TOKEN_STORAGE_KEY);
+
+      if (storedUser && storedToken) {
         const userData = JSON.parse(storedUser);
         
         // Validate user session with database
         const currentUser = await userHelpers.getCurrentUser(userData.id);
         if (currentUser) {
-          setUser(currentUser);
+          const normalizedUser = normalizeUser(currentUser);
+          setUser(normalizedUser);
+          setAuthToken(storedToken);
           // Update localStorage with fresh data
-          localStorage.setItem('dnd-user', JSON.stringify(currentUser));
+          localStorage.setItem(USER_STORAGE_KEY, JSON.stringify(normalizedUser));
         } else {
           // Invalid session, clear storage
-          localStorage.removeItem('dnd-user');
+          localStorage.removeItem(USER_STORAGE_KEY);
+          localStorage.removeItem(TOKEN_STORAGE_KEY);
+          setError('Session expired. Please sign in again.');
         }
+      } else if (typeof window !== 'undefined') {
+        localStorage.removeItem(USER_STORAGE_KEY);
+        localStorage.removeItem(TOKEN_STORAGE_KEY);
       }
     } catch (error) {
       console.error('Error initializing user:', error);
-      setError('Failed to initialize user session');
-      localStorage.removeItem('dnd-user');
+      setError('Unable to validate user session. Please sign in again.');
+      localStorage.removeItem(USER_STORAGE_KEY);
+      localStorage.removeItem(TOKEN_STORAGE_KEY);
     } finally {
       setLoading(false);
     }
@@ -77,15 +143,19 @@ export function UserProvider({ children }: UserProviderProps) {
         throw new Error(authError.message || 'Login failed');
       }
       
-      if (!data?.user) {
+      if (!data?.user || !data.token) {
         throw new Error('Invalid login credentials');
       }
 
-      const loggedInUser = data.user;
+      const loggedInUser = normalizeUser(data.user);
       setUser(loggedInUser);
+      setAuthToken(data.token);
       
       // Store user in localStorage for session persistence
-      localStorage.setItem('dnd-user', JSON.stringify(loggedInUser));
+      if (typeof window !== 'undefined') {
+        localStorage.setItem(USER_STORAGE_KEY, JSON.stringify(loggedInUser));
+        localStorage.setItem(TOKEN_STORAGE_KEY, data.token);
+      }
       
       return loggedInUser;
     } catch (error) {
@@ -99,9 +169,13 @@ export function UserProvider({ children }: UserProviderProps) {
 
   const logout = () => {
     setUser(null);
+    setAuthToken(null);
     setError(null);
-    localStorage.removeItem('dnd-user');
-    localStorage.removeItem('dnd-active-campaign');
+    if (typeof window !== 'undefined') {
+      localStorage.removeItem(USER_STORAGE_KEY);
+      localStorage.removeItem(TOKEN_STORAGE_KEY);
+      localStorage.removeItem('dnd-active-campaign');
+    }
   };
 
   const updateProfile = async (updates: Partial<User>): Promise<void> => {
@@ -115,8 +189,11 @@ export function UserProvider({ children }: UserProviderProps) {
 
       const updatedUser = await userHelpers.updateUserProfile(user.id, updates);
       if (updatedUser) {
-        setUser(updatedUser);
-        localStorage.setItem('dnd-user', JSON.stringify(updatedUser));
+        const normalizedUser = normalizeUser(updatedUser);
+        setUser(normalizedUser);
+        if (typeof window !== 'undefined') {
+          localStorage.setItem(USER_STORAGE_KEY, JSON.stringify(normalizedUser));
+        }
       }
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : 'Profile update failed';
@@ -129,6 +206,7 @@ export function UserProvider({ children }: UserProviderProps) {
 
   const value: UserContextType = {
     user,
+    authToken,
     login,
     logout,
     loading,
