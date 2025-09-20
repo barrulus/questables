@@ -136,6 +136,16 @@ const MARKER_TYPE_ICONS: Record<string, string> = {
   portals: '🌀'
 };
 
+const INTERACTIVE_FEATURE_TYPES = new Set(['burg', 'marker']);
+
+const formatTypeLabel = (type: unknown): string => {
+  if (typeof type !== 'string' || type.length === 0) {
+    return 'Feature';
+  }
+  const cleaned = type.replace(/_/g, ' ');
+  return cleaned.charAt(0).toUpperCase() + cleaned.slice(1);
+};
+
 const DEFAULT_ROUTE_STYLE = new Style({
   stroke: new Stroke({
     color: '#b07a57',
@@ -428,6 +438,73 @@ export function OpenLayersMap() {
   const burgStyleCacheRef = useRef<Record<string, Style>>({});
   const markerIconCacheRef = useRef<Record<string, Style>>({});
 
+  const getFeatureType = useCallback((feature: Feature, data?: any) => {
+    const rawType = data?.type ?? feature.get('type');
+    return typeof rawType === 'string' ? rawType.toLowerCase() : '';
+  }, []);
+
+  const buildPopupDetails = useCallback((feature: Feature) => {
+    const data = feature.get('data') ?? feature.getProperties();
+    const featureType = getFeatureType(feature, data);
+
+    const baseTitle = data?.name ?? feature.get('name') ?? (featureType ? featureType.charAt(0).toUpperCase() + featureType.slice(1) : 'Feature');
+
+    const toText = (value: unknown): string => {
+      if (value === null || value === undefined) {
+        return '—';
+      }
+      if (typeof value === 'number') {
+        return Number.isFinite(value) ? value.toLocaleString() : '—';
+      }
+      const stringValue = String(value).trim();
+      return stringValue.length > 0 ? stringValue : '—';
+    };
+
+    const formatElevation = (value: unknown): string => {
+      if (value === null || value === undefined) {
+        return '—';
+      }
+      if (typeof value === 'number' && Number.isFinite(value)) {
+        return `${value.toLocaleString()} m`;
+      }
+      const numeric = Number(value);
+      if (!Number.isNaN(numeric)) {
+        return `${numeric.toLocaleString()} m`;
+      }
+      const stringValue = String(value).trim();
+      return stringValue.length > 0 ? stringValue : '—';
+    };
+
+    let title = baseTitle;
+    let rows: Array<{ label: string; value: string }> | null = null;
+
+    if (featureType === 'burg') {
+      const populationValue = data?.population ?? data?.populationraw ?? data?.populationRaw;
+      const elevationValue = data?.elevation ?? data?.height ?? data?.elevationm;
+
+      rows = [
+        { label: 'Culture', value: toText(data?.culture) },
+        { label: 'Population', value: toText(populationValue) },
+        { label: 'Elevation', value: formatElevation(elevationValue) }
+      ];
+    } else if (featureType === 'marker') {
+      const markerName = data?.name ?? feature.get('name') ?? data?.type ?? 'Marker';
+      title = markerName;
+      rows = [
+        { label: 'Name', value: toText(markerName) },
+        { label: 'Note', value: toText(data?.note) }
+      ];
+    }
+
+    return {
+      data,
+      feature,
+      featureType,
+      title,
+      rows
+    };
+  }, [getFeatureType]);
+
   const getBurgStyle = useCallback((feature: Feature, resolution: number) => {
     const data = feature.get('data');
     const zoom = getZoomForResolution(resolution);
@@ -676,30 +753,47 @@ export function OpenLayersMap() {
         visible: true
       };
       setMapPins(prev => [...prev, newPin]);
-    } else if (selectedTool === 'info') {
-      // Show feature info
-      const features = map.getFeaturesAtPixel(event.pixel) as Feature[];
-      if (features.length > 0) {
-        const feature = features[0];
-        const coordinates = event.coordinate;
+      return;
+    }
+
+    const features = map.getFeaturesAtPixel(event.pixel) as Feature[];
+
+    if (features.length > 0) {
+      const interactiveFeature = features.find((feature) => {
         const data = feature.get('data') ?? feature.getProperties();
-        const featureId = feature.get('id') ?? data?.id ?? null;
+        const type = getFeatureType(feature, data);
+        return INTERACTIVE_FEATURE_TYPES.has(type);
+      });
+
+      if (interactiveFeature) {
+        const details = buildPopupDetails(interactiveFeature);
+        const featureId = interactiveFeature.get('id') ?? details.data?.id ?? null;
         hoveredFeatureIdRef.current = featureId;
-
         setPopupContent({
-          feature,
-          data,
-          coordinates
+          ...details,
+          coordinates: event.coordinate
         });
-
-        overlayRef.current?.setPosition(coordinates);
-      } else {
-        overlayRef.current?.setPosition(undefined);
-        setPopupContent(null);
-        hoveredFeatureIdRef.current = null;
+        overlayRef.current?.setPosition(event.coordinate);
+        return;
       }
     }
-  }, [selectedTool, mapPins]);
+
+    if (selectedTool === 'info' && features.length > 0) {
+      const feature = features[0];
+      const details = buildPopupDetails(feature);
+      const featureId = feature.get('id') ?? details.data?.id ?? null;
+      hoveredFeatureIdRef.current = featureId;
+      setPopupContent({
+        ...details,
+        coordinates: event.coordinate
+      });
+      overlayRef.current?.setPosition(event.coordinate);
+    } else {
+      overlayRef.current?.setPosition(undefined);
+      setPopupContent(null);
+      hoveredFeatureIdRef.current = null;
+    }
+  }, [buildPopupDetails, getFeatureType, mapPins, selectedTool]);
 
   const handleZoomChange = useCallback(() => {
     const view = mapInstanceRef.current?.getView();
@@ -734,14 +828,21 @@ export function OpenLayersMap() {
     if (!targetElement) return;
 
     const features = map.getFeaturesAtPixel(event.pixel) as Feature[];
-    targetElement.style.cursor = features.length > 0 ? 'pointer' : '';
+    const hasInteractiveFeature = features.some((feature) => {
+      const data = feature.get('data') ?? feature.getProperties();
+      const type = getFeatureType(feature, data);
+      return INTERACTIVE_FEATURE_TYPES.has(type);
+    });
+
+    const shouldShowPointer = hasInteractiveFeature || (selectedTool === 'info' && features.length > 0);
+    targetElement.style.cursor = shouldShowPointer ? 'pointer' : '';
 
     if (selectedTool !== 'info') return;
 
     if (features.length > 0) {
       const feature = features[0];
-      const data = feature.get('data') ?? feature.getProperties();
-      const featureId = feature.get('id') ?? data?.id ?? null;
+      const details = buildPopupDetails(feature);
+      const featureId = feature.get('id') ?? details.data?.id ?? null;
       if (hoveredFeatureIdRef.current === featureId) {
         overlayRef.current?.setPosition(event.coordinate);
         return;
@@ -749,8 +850,7 @@ export function OpenLayersMap() {
 
       hoveredFeatureIdRef.current = featureId;
       setPopupContent({
-        feature,
-        data,
+        ...details,
         coordinates: event.coordinate
       });
       overlayRef.current?.setPosition(event.coordinate);
@@ -759,7 +859,7 @@ export function OpenLayersMap() {
       overlayRef.current?.setPosition(undefined);
       setPopupContent(null);
     }
-  }, [selectedTool]);
+  }, [buildPopupDetails, getFeatureType, selectedTool]);
 
   const loadWorldMapData = useCallback(async () => {
     if (!selectedWorldMap || mapMode !== 'world') return;
@@ -1134,6 +1234,10 @@ export function OpenLayersMap() {
     { id: 'info', name: 'Info', icon: <Info className="w-4 h-4" /> }
   ];
 
+  const popupTypeLabel = popupContent
+    ? formatTypeLabel(popupContent.featureType ?? popupContent.feature?.get('type'))
+    : 'Feature';
+
   return (
     <Card className="h-full rounded-none border-0 border-r">
       <CardHeader className="pb-3">
@@ -1245,7 +1349,7 @@ export function OpenLayersMap() {
               <CardHeader className="pb-2">
                 <div className="flex justify-between items-start">
                   <CardTitle className="text-sm">
-                    {popupContent.feature.get('name') || 'Feature'}
+                    {popupContent.title || popupContent.feature?.get('name') || 'Feature'}
                   </CardTitle>
                   <Button
                     variant="ghost"
@@ -1261,15 +1365,26 @@ export function OpenLayersMap() {
                 </div>
               </CardHeader>
               <CardContent className="pt-0">
-                <div className="text-xs space-y-1">
-                  <div>Type: {popupContent.feature.get('type')}</div>
-                  {popupContent.data && (
+                <div className="text-xs space-y-2">
+                  <div className="text-muted-foreground">Type: {popupTypeLabel}</div>
+                  {popupContent.rows ? (
+                    <div className="space-y-2">
+                      {popupContent.rows.map((row) => (
+                        <div key={row.label} className="flex flex-col gap-1">
+                          <span className="font-semibold text-foreground">{row.label}</span>
+                          <span className="whitespace-pre-wrap break-words text-foreground">
+                            {row.value}
+                          </span>
+                        </div>
+                      ))}
+                    </div>
+                  ) : popupContent.data ? (
                     <div>
                       <pre className="whitespace-pre-wrap break-words">
                         {JSON.stringify(popupContent.data, null, 2)}
                       </pre>
                     </div>
-                  )}
+                  ) : null}
                 </div>
               </CardContent>
             </Card>
