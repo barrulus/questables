@@ -2,8 +2,8 @@
 .env.local
 .direnv/
 node_modules/
-.crt
-.key
+*.crt
+*.key
 venv/
 tiles/
 map_data/
