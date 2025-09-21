@@ -115,6 +115,132 @@ Return the currently registered LLM providers with their health summaries.
 - `403`: Caller is not an admin.
 - `503`: LLM service has not been initialized.
 
+### GET /api/admin/llm/metrics
+
+Return live LLM workload metrics. Requires admin authentication.
+
+**Headers:**
+- `Authorization: Bearer <jwt>`
+
+**Response (200 OK):**
+```json
+{
+  "generatedAt": "2025-09-21T07:49:45.552Z",
+  "totals": {
+    "requests": 12,
+    "cacheHits": 7,
+    "cacheMisses": 5,
+    "errors": 1,
+    "cacheEvictions": 2,
+    "cacheSize": 4,
+    "cacheTtlMs": 300000,
+    "maxCacheEntries": 500
+  },
+  "providers": [
+    {
+      "providerName": "ollama",
+      "providerModel": "qwen3:8b",
+      "requests": 12,
+      "cacheHits": 7,
+      "cacheMisses": 5,
+      "errors": 1,
+      "averageLatencyMs": 10450.12,
+      "averageTimeToFirstByteMs": 230.5,
+      "totalTokens": 4821,
+      "lastRequestAt": "2025-09-21T07:49:45.552Z"
+    }
+  ],
+  "recentRequests": [
+    {
+      "id": "ef940c99-b881-43c8-b311-8d31d4af60b4",
+      "occurredAt": "2025-09-21T07:49:16.115Z",
+      "providerName": "ollama",
+      "providerModel": "qwen3:8b",
+      "type": "dm_narration",
+      "cacheHit": false,
+      "latencyMs": 10699,
+      "ttfbMs": 210,
+      "totalTokens": 406,
+      "error": false
+    }
+  ]
+}
+```
+
+**Errors:**
+- `401`: Missing/invalid token.
+- `403`: Caller is not an admin.
+- `503`: LLM service has not been initialized.
+
+### GET /api/admin/llm/cache
+
+Inspect the current Enhanced LLM cache. Requires admin authentication.
+
+**Headers:**
+- `Authorization: Bearer <jwt>`
+
+**Response (200 OK):**
+```json
+{
+  "generatedAt": "2025-09-21T07:49:50.000Z",
+  "size": 4,
+  "maxEntries": 500,
+  "defaultTtlMs": 300000,
+  "entries": [
+    {
+      "key": "1c4735ef46673da405a628dc5c3169d44d4bcf72113e01fd5e4210c0052c923a",
+      "type": "action_narrative",
+      "providerName": "ollama",
+      "providerModel": "qwen3:8b",
+      "createdAt": "2025-09-21T07:49:37.149Z",
+      "lastAccessedAt": "2025-09-21T07:49:37.150Z",
+      "expiresAt": "2025-09-21T07:54:37.149Z",
+      "ttlRemainingMs": 300000
+    }
+  ]
+}
+```
+
+**Errors:**
+- `401`: Missing/invalid token.
+- `403`: Caller is not an admin.
+- `503`: LLM service has not been initialized.
+
+### DELETE /api/admin/llm/cache
+
+Flush the entire LLM cache. Requires admin authentication.
+
+**Headers:**
+- `Authorization: Bearer <jwt>`
+
+**Response (200 OK):**
+```json
+{ "cleared": 4 }
+```
+
+**Errors:**
+- `401`: Missing/invalid token.
+- `403`: Caller is not an admin.
+- `503`: LLM service has not been initialized.
+
+### DELETE /api/admin/llm/cache/:cacheKey
+
+Remove a single cache entry. Requires admin authentication.
+
+**Headers:**
+- `Authorization: Bearer <jwt>`
+
+**Response (200 OK):**
+```json
+{ "removed": true }
+```
+
+**Errors:**
+- `401`: Missing/invalid token.
+- `403`: Caller is not an admin.
+- `404`: Cache key not found.
+- `503`: LLM service has not been initialized.
+
 ## Enhanced LLM Service (Provider Abstraction)
 
 The backend now boots an Enhanced LLM Service that routes narrative generation through provider-specific adapters. The default configuration registers the Ollama-backed provider (`qwen3:8b` hosted at `http://192.168.1.34`). While public HTTP endpoints are not yet exposed, internal services can call the provider layer with the following operations:

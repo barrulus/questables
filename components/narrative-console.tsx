@@ -77,6 +77,30 @@ const SENTIMENT_OPTIONS = [
   { value: "negative", label: "Negative" },
 ];
 
+const normalizeNarrativeErrorMessage = (rawMessage: string): string => {
+  const message = rawMessage.trim();
+  if (!message) {
+    return "Narrative request failed due to an unexpected error.";
+  }
+
+  const lower = message.toLowerCase();
+
+  if (lower.includes("narrative_provider_error")) {
+    return "The narrative provider is currently unavailable. Verify the Ollama service is running and reachable, then try again.";
+  }
+
+  if (lower.includes("narrative_service_error")) {
+    return "The narrative service failed to generate a response. Check provider status and retry.";
+  }
+
+  return message;
+};
+
+const stripThinkingAnnotations = (content: string | undefined | null): string => {
+  if (!content) return "";
+  return content.replace(/<think>[\s\S]*?<\/think>/gi, "").trim();
+};
+
 export function NarrativeConsole() {
   const { activeCampaignId, activeCampaign, latestSession } = useGameSession();
   const { user } = useUser();
@@ -309,7 +333,7 @@ export function NarrativeConsole() {
         const entry: NarrativeHistoryEntry = {
           id: body.narrativeId || `${type}-${Date.now()}`,
           type,
-          content: body.content,
+          content: stripThinkingAnnotations(body.content),
           recordedAt: body.recordedAt ?? new Date().toISOString(),
           providerName: body.provider?.name ?? null,
           providerModel: body.provider?.model ?? null,
@@ -322,7 +346,7 @@ export function NarrativeConsole() {
         setHistory((previous) => [entry, ...previous]);
       } catch (error) {
         const message = handleAsyncError(error);
-        setRequestError({ type, message });
+        setRequestError({ type, message: normalizeNarrativeErrorMessage(message) });
       } finally {
         setLoadingType(null);
       }

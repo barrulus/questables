@@ -22,6 +22,10 @@ A comprehensive web application for managing D&D 5e campaigns, characters, and g
 - The in-game "Narratives" panel lets DMs and co-DMs call `/api/campaigns/:campaignId/narratives/*` endpoints for DM narration, scene descriptions, NPC dialogue, action outcomes, and quest outlines using the active campaign/session context.
 - Responses display verbatim with provider metadata, cache indicators, and surfaced backend errors—there is no local fallback or synthetic prose when the LLM service is unavailable.
 
+### LLM Monitoring & Cache Governance
+- `/api/admin/llm/metrics` streams live request counters, provider latency averages, token totals, and the latest 25 generation attempts; the admin dashboard now renders this data on the **LLM Workloads** tab.
+- `/api/admin/llm/cache` exposes cache entries (provider/model, TTL, timestamps) with destructive controls for clearing all entries or a specific key—no dummy cache rows are ever returned.
+
 ### Mapping & Spatial Data
 - OpenLayers map viewer loads world metadata and spatial layers from `/api/maps/world` and related PostGIS-powered routes.
 - Campaign location overlays rely on live responses; failures present actionable error states instead of silent fallbacks.
@@ -195,7 +199,7 @@ The Enhanced LLM Service runs via a provider abstraction layer. Production and d
 
 ```env
 LLM_PROVIDER=ollama
-LLM_OLLAMA_HOST=http://<your-ollama-host>
+LLM_OLLAMA_HOST=http://<your-ollama-host>:11434
 LLM_OLLAMA_MODEL=qwen3:8b
 # Optional overrides
 # LLM_OLLAMA_API_KEY= # set only if the Ollama host requires bearer auth

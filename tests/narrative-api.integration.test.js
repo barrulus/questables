@@ -160,4 +160,48 @@ describe('Narrative API endpoints', () => {
     const payload = await response.json();
     expect(payload).toHaveProperty('error', 'Validation failed');
   });
+
+  it('exposes LLM metrics snapshot for administrators', async () => {
+    if (guard()) {
+      return;
+    }
+
+    const response = await fetch(`${baseUrl}/api/admin/llm/metrics`, {
+      headers: {
+        Authorization: `Bearer ${adminToken}`,
+      },
+    });
+
+    expect(response.status).toBe(200);
+    const payload = await response.json();
+    expect(payload).toHaveProperty('totals');
+    expect(payload.totals).toHaveProperty('requests');
+    expect(payload).toHaveProperty('providers');
+  });
+
+  it('allows administrators to inspect and clear the LLM cache', async () => {
+    if (guard()) {
+      return;
+    }
+
+    const snapshotResponse = await fetch(`${baseUrl}/api/admin/llm/cache`, {
+      headers: {
+        Authorization: `Bearer ${adminToken}`,
+      },
+    });
+
+    expect(snapshotResponse.status).toBe(200);
+    await snapshotResponse.json();
+
+    const clearResponse = await fetch(`${baseUrl}/api/admin/llm/cache`, {
+      method: 'DELETE',
+      headers: {
+        Authorization: `Bearer ${adminToken}`,
+      },
+    });
+
+    expect(clearResponse.status).toBe(200);
+    const clearPayload = await clearResponse.json();
+    expect(clearPayload).toHaveProperty('cleared');
+  });
 });

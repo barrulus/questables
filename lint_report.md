@@ -32,3 +32,7 @@
 - `npx eslint components/narrative-console.tsx components/icon-sidebar.tsx components/expandable-panel.tsx --ext ts,tsx` (pass)
 - `LLM_PROVIDER=ollama LLM_OLLAMA_HOST=http://192.168.1.34:11434 LLM_OLLAMA_MODEL=qwen3:8b npm test -- --runTestsByPath tests/ollama-provider.integration.test.js --runInBand` (pass)
 - `LLM_PROVIDER=ollama LLM_OLLAMA_HOST=http://192.168.1.34:11434 LLM_OLLAMA_MODEL=qwen3:8b LIVE_API_BASE_URL=https://quixote.tail3f19fe.ts.net:3001 LIVE_API_ADMIN_EMAIL=b@rry.im LIVE_API_ADMIN_PASSWORD=barrulus npm test -- --runTestsByPath tests/narrative-api.integration.test.js --runInBand` (pass)
+- `npx eslint server/llm/enhanced-llm-service.js components/admin-dashboard.tsx --ext js,tsx` (pass)
+- `npx eslint server/llm/enhanced-llm-service.js server/database-server.js components/admin-dashboard.tsx --ext js,ts,tsx` (fails: server lint baseline still lacks Node globals; new endpoints share the existing violations)
+- `LLM_PROVIDER=ollama LLM_OLLAMA_HOST=http://192.168.1.34:11434 LLM_OLLAMA_MODEL=qwen3:8b npm test -- --runTestsByPath tests/ollama-provider.integration.test.js --runInBand` (pass; logs live latency/token metrics)
+- `LLM_PROVIDER=ollama LLM_OLLAMA_HOST=http://192.168.1.34:11434 LLM_OLLAMA_MODEL=qwen3:8b LIVE_API_BASE_URL=https://quixote.tail3f19fe.ts.net:3001 LIVE_API_ADMIN_EMAIL=b@rry.im LIVE_API_ADMIN_PASSWORD=barrulus npm test -- --runTestsByPath tests/narrative-api.integration.test.js --runInBand` (pass; new assertions cover LLM metrics/cache endpoints)

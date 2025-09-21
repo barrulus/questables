@@ -334,3 +334,20 @@ Always append new entries; do not erase or rewrite previous log items except to 
 - **Documentation Updates:** README.md:33 (documented the live narrative console); llm_tasks_that_will_work.md:53 (progress log entry for Task 4).
 - **Tests & Verification:** `npx eslint components/narrative-console.tsx components/icon-sidebar.tsx components/expandable-panel.tsx --ext ts,tsx` (pass)
 - **Remaining Gaps / Blockers:** Manual end-to-end validation still requires an authenticated DM session against the live backend; without provider connectivity (`fetch failed` from Ollama) narrative requests will surface the backend error banner in the console.
+
+## Task 7 – Performance Monitoring & Cache Governance for LLM Workloads
+- **Date:** 2025-09-21
+- **Engineer(s):** Codex Agent
+- **Work Done:**
+  - Augmented the Enhanced LLM Service with request counters, provider averages, recent activity tracking, and cache governance helpers so every live generation updates metrics and exposes cache state (`server/llm/enhanced-llm-service.js`).
+  - Added authenticated admin endpoints to surface the metrics snapshot, inspect cache entries, and invalidate all or specific keys with audit logging (`server/database-server.js`).
+  - Expanded the admin dashboard with a dedicated “LLM Workloads” tab that renders the live telemetry, highlights provider latency/TTFB, lists recent requests, and wires destructive cache controls to the new DELETE routes while showing “Metrics service unavailable” when the backend errors (`components/admin-dashboard.tsx`).
+- **Cleanups:** None required—feature work only, all data is sourced directly from the live cache/metrics state.
+- **Documentation Updates:** README.md:21 (new monitoring feature); API_DOCUMENTATION.md:63 (metrics/cache endpoints); docs/LLM_MONITORING.md:1 (operations guide); llm_tasks_that_will_work.md:95 (progress log).
+- **Tests & Verification:**
+  - `npx eslint server/llm/enhanced-llm-service.js components/admin-dashboard.tsx --ext js,tsx` (pass)
+  - `npx eslint server/llm/enhanced-llm-service.js server/database-server.js components/admin-dashboard.tsx --ext js,ts,tsx` (fails: existing server lint baseline still lacks Node globals; tracked in lint_report.md)
+  - `LLM_PROVIDER=ollama LLM_OLLAMA_HOST=http://192.168.1.34:11434 LLM_OLLAMA_MODEL=qwen3:8b npm test -- --runTestsByPath tests/ollama-provider.integration.test.js --runInBand` (pass; logs live latency/token metrics)
+  - `LLM_PROVIDER=ollama LLM_OLLAMA_HOST=http://192.168.1.34:11434 LLM_OLLAMA_MODEL=qwen3:8b LIVE_API_BASE_URL=https://quixote.tail3f19fe.ts.net:3001 LIVE_API_ADMIN_EMAIL=b@rry.im LIVE_API_ADMIN_PASSWORD=barrulus npm test -- --runTestsByPath tests/narrative-api.integration.test.js --runInBand` (pass; asserts LLM metrics/cache endpoints respond for admin)
+  - `node --input-type=module scripts/login-and-fetch-llm-metrics.js` *(inline run captured real `/api/admin/llm/metrics` and `/api/admin/llm/cache` payloads; see CLI output in session log)*
+- **Remaining Gaps / Blockers:** Maintain ongoing access to the Ollama host and admin credentials in CI so telemetry continues to reflect live traffic; lint debt in `server/database-server.js` remains outstanding from prior work.

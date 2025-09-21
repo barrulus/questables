@@ -445,6 +445,71 @@ app.get('/api/admin/metrics', requireAuth, requireRole('admin'), async (req, res
   }
 });
 
+app.get('/api/admin/llm/metrics', requireAuth, requireRole('admin'), (req, res) => {
+  try {
+    const llmService = ensureLLMService(req);
+    const metrics = llmService.getMetrics();
+    res.json(metrics);
+  } catch (error) {
+    logError('Failed to load LLM metrics snapshot', error, {
+      userId: req.user?.id,
+    });
+    res.status(500).json({ error: 'Failed to load LLM metrics snapshot' });
+  }
+});
+
+app.get('/api/admin/llm/cache', requireAuth, requireRole('admin'), (req, res) => {
+  try {
+    const llmService = ensureLLMService(req);
+    const snapshot = llmService.getCacheSnapshot();
+    res.json(snapshot);
+  } catch (error) {
+    logError('Failed to load LLM cache snapshot', error, {
+      userId: req.user?.id,
+    });
+    res.status(500).json({ error: 'Failed to load LLM cache snapshot' });
+  }
+});
+
+app.delete('/api/admin/llm/cache', requireAuth, requireRole('admin'), (req, res) => {
+  try {
+    const llmService = ensureLLMService(req);
+    const removed = llmService.clearCache();
+    logInfo('LLM cache cleared by admin', {
+      userId: req.user?.id,
+      removed,
+    });
+    res.json({ cleared: removed });
+  } catch (error) {
+    logError('Failed to clear LLM cache', error, {
+      userId: req.user?.id,
+    });
+    res.status(500).json({ error: 'Failed to clear LLM cache' });
+  }
+});
+
+app.delete('/api/admin/llm/cache/:cacheKey', requireAuth, requireRole('admin'), (req, res) => {
+  const { cacheKey } = req.params;
+  try {
+    const llmService = ensureLLMService(req);
+    const removed = llmService.deleteCacheEntry(cacheKey);
+    if (!removed) {
+      return res.status(404).json({ error: 'Cache entry not found' });
+    }
+    logInfo('LLM cache entry invalidated', {
+      userId: req.user?.id,
+      cacheKey,
+    });
+    res.json({ removed: true });
+  } catch (error) {
+    logError('Failed to invalidate LLM cache entry', error, {
+      userId: req.user?.id,
+      cacheKey,
+    });
+    res.status(500).json({ error: 'Failed to invalidate cache entry' });
+  }
+});
+
 app.get('/api/admin/llm/providers', requireAuth, requireRole('admin'), async (req, res) => {
   const registry = req.app?.locals?.llmRegistry;
   const configs = req.app?.locals?.llmProviderConfigs || [];
@@ -712,6 +777,16 @@ const ensureLLMReady = (req) => {
     });
   }
   return contextualService;
+};
+
+const ensureLLMService = (req) => {
+  const llmService = req.app?.locals?.llmService;
+  if (!llmService) {
+    throw new LLMServiceError('Enhanced LLM service is not available', {
+      type: 'llm_not_initialized',
+    });
+  }
+  return llmService;
 };
 
 const ensureSessionBelongsToCampaign = async (campaignId, sessionId) => {
