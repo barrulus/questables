@@ -80,6 +80,41 @@ Retrieve aggregate platform metrics from the live database. Requires an authenti
 - `403`: Authenticated user is not an admin
 - `500`: Unexpected database failure while aggregating metrics
 
+### GET /api/admin/llm/providers
+
+Return the currently registered LLM providers with their health summaries.
+
+**Headers:**
+- `Authorization: Bearer <jwt>` (admin only)
+
+**Response (200 OK):**
+```json
+{
+  "defaultProvider": "ollama",
+  "providers": [
+    {
+      "name": "ollama",
+      "adapter": "ollama",
+      "default": true,
+      "enabled": true,
+      "host": "http://192.168.1.34",
+      "model": "qwen3:8b",
+      "timeoutMs": 60000,
+      "options": { "temperature": 0.7, "top_p": 0.9 },
+      "health": {
+        "healthy": false,
+        "error": "fetch failed"
+      }
+    }
+  ]
+}
+```
+
+**Errors:**
+- `401`: Missing/invalid token.
+- `403`: Caller is not an admin.
+- `503`: LLM service has not been initialized.
+
 ## Enhanced LLM Service (Provider Abstraction)
 
 The backend now boots an Enhanced LLM Service that routes narrative generation through provider-specific adapters. The default configuration registers the Ollama-backed provider (`qwen3:8b` hosted at `http://192.168.1.34`). While public HTTP endpoints are not yet exposed, internal services can call the provider layer with the following operations:
@@ -102,6 +137,93 @@ The backend now boots an Enhanced LLM Service that routes narrative generation t
 ### Configuration
 
 Environment variables documented in `.env.example`/`README.md` (prefixed with `LLM_`) control provider host, model, credentials, and cache limits. Bootstrap failures are logged and block narrative generation until resolved.
+
+## Narrative Generation API
+
+Authenticated endpoints that invoke the Enhanced LLM Service. All routes require a bearer token; DM-only endpoints also demand that the caller is the campaign DM, a co-DM, or holds the `admin` role.
+
+| Method | Path | Description | Access |
+|--------|------|-------------|--------|
+| POST | `/api/campaigns/:campaignId/narratives/dm` | Produces DM narration grounded in live campaign context. | DM / co-DM / admin |
+| POST | `/api/campaigns/:campaignId/narratives/scene` | Generates atmospheric scene descriptions. | DM / co-DM / admin |
+| POST | `/api/campaigns/:campaignId/narratives/npc` | Returns NPC dialogue and records memory/relationship updates. | DM / co-DM / admin |
+| POST | `/api/campaigns/:campaignId/narratives/action` | Narrates the outcome of a specific action. | Any authenticated participant |
+| POST | `/api/campaigns/:campaignId/narratives/quest` | Drafts a quest outline aligned with campaign state. | DM / co-DM / admin |
+
+### Common Request Fields
+
+```json
+{
+  "sessionId": "optional-session-uuid",
+  "focus": "Optional guidance for the model",
+  "provider": { "name": "ollama", "model": "qwen3:8b" },
+  "parameters": { "temperature": 0.6 },
+  "metadata": { "trigger": "end_of_round" }
+}
+```
+
+- `sessionId` (optional) must belong to the campaign.
+- `focus` is trimmed to 500 characters within prompt construction.
+- `provider` overrides the default model when multiple providers are registered.
+- `parameters` are passed verbatim to the provider adapter (subject to provider support).
+- `metadata` is persisted in `llm_narratives.metadata` for auditability.
+
+### Response Structure (201 Created)
+
+```json
+{
+  "narrativeId": "uuid",
+  "content": "Generated narrative",
+  "provider": { "name": "ollama", "model": "qwen3:8b", "requestId": "uuid" },
+  "metrics": { "latencyMs": 1234, "promptTokens": 512, "completionTokens": 180 },
+  "cache": { "hit": false, "key": "hash", "expiresAt": 1737072000000 },
+  "request": { "id": "uuid", "metadata": { ... } },
+  "prompt": { "system": "...", "user": "..." },
+  "contextGeneratedAt": "ISO timestamp",
+  "recordedAt": "ISO timestamp"
+}
+```
+
+### NPC Dialogue Extras
+
+`POST /api/campaigns/:campaignId/narratives/npc` accepts an `interaction` object:
+
+```json
+{
+  "npcId": "npc-uuid",
+  "interaction": {
+    "summary": "Players reassured the nervous scholar.",
+    "sentiment": "positive",
+    "trustDelta": 1,
+    "tags": ["research", "trust"],
+    "relationshipChanges": [
+      {
+        "targetId": "character-uuid",
+        "targetType": "character",
+        "relationshipType": "ally",
+        "delta": 1,
+        "description": "Shared valuable research notes."
+      }
+    ]
+  }
+}
+```
+
+- Inserts a record into `npc_memories` with the supplied summary, sentiment, trust delta, and tags.
+- Applies each relationship delta via an upsert into `npc_relationships` (clamped between -5 and 5, with `trust_delta_total` tracking cumulative changes).
+- When no summary is provided, the service derives one from the generated response and estimates sentiment using keyword heuristics (default trust delta of +1/-1/0 for positive/negative/neutral output).
+- If `interaction` is omitted, the narrative is still recorded but no memory/relationship adjustments occur.
+
+### Error Handling
+
+- `400` – Validation failure (missing required fields, invalid sentiment/relationship values).
+- `401` – Missing or invalid authentication token.
+- `403` – Caller lacks campaign privileges (non-participant or not a DM/co-DM/admin for restricted routes).
+- `404` – Campaign, session, or NPC not found.
+- `502` – Provider failure (`error: "narrative_provider_error"`).
+- `503` – Enhanced LLM service unavailable (`error: "narrative_service_error"`).
+
+All failures surface factual messages; no canned fallback narratives are returned.
 
 ## Characters API
 

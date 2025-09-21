@@ -412,8 +412,83 @@ CREATE TABLE IF NOT EXISTS public.npc_relationships (
     relationship_type TEXT NOT NULL CHECK (relationship_type IN ('ally', 'enemy', 'neutral', 'romantic', 'family', 'business')),
     description TEXT,
     strength INTEGER DEFAULT 0 CHECK (strength >= -5 AND strength <= 5),
+    last_interaction_at TIMESTAMP WITH TIME ZONE,
+    last_interaction_summary TEXT,
     UNIQUE(npc_id, target_id)
 );
+
+ALTER TABLE public.npc_relationships
+    ADD COLUMN IF NOT EXISTS trust_delta_total INTEGER DEFAULT 0;
+
+ALTER TABLE public.npc_relationships
+    ALTER COLUMN trust_delta_total SET DEFAULT 0;
+
+-- LLM provider configuration
+CREATE TABLE IF NOT EXISTS public.llm_providers (
+    id UUID DEFAULT uuid_generate_v4() PRIMARY KEY,
+    name TEXT NOT NULL UNIQUE,
+    adapter TEXT NOT NULL CHECK (adapter IN ('ollama')),
+    host TEXT,
+    model TEXT,
+    api_key TEXT,
+    timeout_ms INTEGER,
+    options JSONB DEFAULT '{}'::jsonb,
+    enabled BOOLEAN DEFAULT true,
+    default_provider BOOLEAN DEFAULT false,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW() NOT NULL,
+    updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW() NOT NULL
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_llm_providers_default
+    ON public.llm_providers (default_provider)
+    WHERE default_provider;
+
+CREATE INDEX IF NOT EXISTS idx_llm_providers_enabled ON public.llm_providers(enabled);
+
+-- LLM narrative response log
+CREATE TABLE IF NOT EXISTS public.llm_narratives (
+    id UUID DEFAULT uuid_generate_v4() PRIMARY KEY,
+    request_id UUID NOT NULL,
+    campaign_id UUID REFERENCES public.campaigns(id) ON DELETE CASCADE NOT NULL,
+    session_id UUID REFERENCES public.sessions(id) ON DELETE SET NULL,
+    npc_id UUID REFERENCES public.npcs(id) ON DELETE SET NULL,
+    request_type TEXT NOT NULL CHECK (request_type IN ('dm_narration','scene_description','npc_dialogue','action_narrative','quest_generation')),
+    requested_by UUID REFERENCES public.user_profiles(id) ON DELETE SET NULL,
+    cache_key TEXT,
+    cache_hit BOOLEAN DEFAULT false,
+    provider_name TEXT NOT NULL,
+    provider_model TEXT,
+    provider_request_metadata JSONB,
+    prompt TEXT NOT NULL,
+    system_prompt TEXT NOT NULL,
+    response TEXT NOT NULL,
+    metrics JSONB,
+    metadata JSONB,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW() NOT NULL,
+    UNIQUE(request_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_llm_narratives_campaign_id ON public.llm_narratives(campaign_id);
+CREATE INDEX IF NOT EXISTS idx_llm_narratives_session_id ON public.llm_narratives(session_id);
+CREATE INDEX IF NOT EXISTS idx_llm_narratives_request_type ON public.llm_narratives(request_type);
+
+-- NPC memory log (conversation history and outcomes)
+CREATE TABLE IF NOT EXISTS public.npc_memories (
+    id UUID DEFAULT uuid_generate_v4() PRIMARY KEY,
+    npc_id UUID REFERENCES public.npcs(id) ON DELETE CASCADE NOT NULL,
+    campaign_id UUID REFERENCES public.campaigns(id) ON DELETE CASCADE NOT NULL,
+    session_id UUID REFERENCES public.sessions(id) ON DELETE SET NULL,
+    narrative_id UUID REFERENCES public.llm_narratives(id) ON DELETE SET NULL,
+    memory_summary TEXT NOT NULL,
+    sentiment TEXT CHECK (sentiment IN ('positive', 'negative', 'neutral', 'mixed')),
+    trust_delta INTEGER DEFAULT 0 CHECK (trust_delta >= -10 AND trust_delta <= 10),
+    tags TEXT[] DEFAULT ARRAY[]::TEXT[],
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW() NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_npc_memories_npc_id ON public.npc_memories(npc_id);
+CREATE INDEX IF NOT EXISTS idx_npc_memories_campaign_id ON public.npc_memories(campaign_id);
+CREATE INDEX IF NOT EXISTS idx_npc_memories_session_id ON public.npc_memories(session_id);
 
 -- =============================================================================
 -- ENCOUNTERS

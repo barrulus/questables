@@ -126,4 +126,31 @@ describe('Live Questables API smoke tests', () => {
     expect(payload).toHaveProperty('campaigns');
     expect(payload).toHaveProperty('sessions');
   });
+
+  it('exposes LLM provider status to admin users', async () => {
+    if (!adminToken) {
+      await loginAsAdmin();
+    }
+
+    const response = await fetch(`${baseUrl}/api/admin/llm/providers`, {
+      headers: {
+        Authorization: `Bearer ${adminToken}`,
+      },
+    });
+
+    expect(response.status).toBeLessThan(600);
+
+    if (!response.ok) {
+      const message = await response.text();
+      throw new Error(`LLM provider status request failed (${response.status}): ${message}`);
+    }
+
+    const payload = await response.json();
+    expect(Array.isArray(payload.providers)).toBe(true);
+    if (payload.providers.length > 0) {
+      const provider = payload.providers[0];
+      expect(provider).toHaveProperty('name');
+      expect(provider).toHaveProperty('health');
+    }
+  });
 });

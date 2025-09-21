@@ -69,6 +69,7 @@ This system provides intelligent narrative generation for tabletop RPG (D&D) cam
 - Tracks conversation history and emotional outcomes
 - Maintains character-specific trust levels and relationship status
 - Updates NPC knowledge base and reaction patterns over time
+- When NPC dialogue is generated without explicit interaction metadata, the service derives a summary from the response, estimates sentiment via keyword heuristics, clamps trust adjustments within ±10, and applies relationship deltas (±5) before persisting to `npc_memories` and `npc_relationships`.
 
 ### 5. Prompt Template Manager
 **Purpose**: Provides structured prompts and templates for different narrative types

@@ -15,6 +15,7 @@ import { useUser } from "../contexts/UserContext";
 import { characterHelpers, type Character } from '../utils/database/data-helpers';
 import { createAsyncHandler } from '../utils/error-handling';
 import { OfflineModeWrapper } from './database-status';
+import { NarrativeConsole } from "./narrative-console";
 import { 
   User, 
   Package, 
@@ -22,6 +23,7 @@ import {
   BookOpen, 
   Sword,
   Compass,
+  Sparkles,
   X,
   ScrollText,
   Book,
@@ -118,6 +120,8 @@ export function ExpandablePanel({ activePanel, onClose }: ExpandablePanelProps) 
             remediation="Integrate with campaign travel endpoints when they are delivered to re-enable this tooling."
           />
         );
+      case "narratives":
+        return <NarrativeConsole />;
       case "rulebooks":
         return <RuleBooks />;
       case "journals":
@@ -139,6 +143,7 @@ export function ExpandablePanel({ activePanel, onClose }: ExpandablePanelProps) 
       case "dice": return "Dice Roller";
       case "combat": return "Combat Tracker";
       case "exploration": return "Exploration Tools";
+      case "narratives": return "Narrative Console";
       case "rulebooks": return "Rule Books";
       case "journals": return "Session Notes";
       case "compendium": return "Compendium";
@@ -155,6 +160,7 @@ export function ExpandablePanel({ activePanel, onClose }: ExpandablePanelProps) 
       case "dice": return <Dice6 className="w-5 h-5" />;
       case "combat": return <Sword className="w-5 h-5" />;
       case "exploration": return <Compass className="w-5 h-5" />;
+      case "narratives": return <Sparkles className="w-5 h-5" />;
       case "rulebooks": return <Book className="w-5 h-5" />;
       case "journals": return <ScrollText className="w-5 h-5" />;
       case "compendium": return <Library className="w-5 h-5" />;

@@ -2,6 +2,7 @@
 // This server handles database queries when using local PostgreSQL instead of Supabase
 
 import express from 'express';
+import { randomUUID } from 'crypto';
 import { Pool } from 'pg';
 import cors from 'cors';
 import dotenv from 'dotenv';
@@ -42,7 +43,19 @@ import {
   logApplicationStart,
   logApplicationShutdown
 } from './utils/logger.js';
-import { initializeLLMServiceFromEnv } from './llm/index.js';
+import {
+  initializeLLMService,
+  createContextualLLMService,
+  NARRATIVE_TYPES,
+  LLMProviderError,
+  LLMServiceError,
+} from './llm/index.js';
+import {
+  deriveNpcInteraction,
+  VALID_SENTIMENTS,
+  clamp,
+  NORMALIZED_MAX_SUMMARY_LENGTH,
+} from './llm/npc-interaction-utils.js';
 
 // Load env from multiple locations to support repo-root .env.local
 const __filename = fileURLToPath(import.meta.url);
@@ -115,23 +128,6 @@ app.use(express.json());
 
 // Request logging middleware
 app.use(createRequestLogger());
-
-// Enhanced LLM service bootstrap
-try {
-  const { service: enhancedLLMService, registry: llmRegistry } = initializeLLMServiceFromEnv(process.env);
-  app.locals.llmService = enhancedLLMService;
-  app.locals.llmRegistry = llmRegistry;
-  logInfo('Enhanced LLM service initialized', {
-    providers: llmRegistry.list(),
-    defaultProvider: process.env.LLM_PROVIDER || 'ollama',
-  });
-} catch (error) {
-  logError('Failed to initialize Enhanced LLM service', error, {
-    provider: process.env.LLM_PROVIDER || 'ollama',
-  });
-  app.locals.llmService = null;
-  app.locals.llmRegistry = null;
-}
 
 // In-memory cache for frequently accessed data
 const cache = new Map();
@@ -449,6 +445,52 @@ app.get('/api/admin/metrics', requireAuth, requireRole('admin'), async (req, res
   }
 });
 
+app.get('/api/admin/llm/providers', requireAuth, requireRole('admin'), async (req, res) => {
+  const registry = req.app?.locals?.llmRegistry;
+  const configs = req.app?.locals?.llmProviderConfigs || [];
+  const defaultProvider = req.app?.locals?.defaultLLMProvider || null;
+
+  if (!registry) {
+    return res.status(503).json({
+      error: 'llm_service_unavailable',
+      message: 'The Enhanced LLM service is not initialized',
+    });
+  }
+
+  const providerNames = registry.list();
+
+  const providers = await Promise.all(providerNames.map(async (name) => {
+    const provider = registry.get(name);
+    const config = configs.find((cfg) => cfg.name === name) || {};
+    let health;
+    try {
+      health = await provider.checkHealth();
+    } catch (error) {
+      health = {
+        healthy: false,
+        error: error instanceof Error ? error.message : String(error),
+      };
+    }
+
+    return {
+      name,
+      adapter: config.adapter || 'ollama',
+      default: name === defaultProvider,
+      enabled: config.enabled !== false,
+      host: config.host || null,
+      model: config.model || null,
+      timeoutMs: config.timeoutMs || null,
+      options: config.options || {},
+      health,
+    };
+  }));
+
+  res.json({
+    providers,
+    defaultProvider,
+  });
+});
+
 // Validation middleware for character data
 const validateCharacterData = (req, res, next) => {
   const { name, character_class, race, background } = req.body;
@@ -540,6 +582,87 @@ const pool = new Pool({
 // Set database pool for auth middleware
 setDatabasePool(pool);
 
+const loadProviderConfigurations = async () => {
+  try {
+    const { rows } = await pool.query(
+      `SELECT id, name, adapter, host, model, api_key, timeout_ms, options, enabled, default_provider
+         FROM public.llm_providers
+        WHERE enabled = true
+        ORDER BY default_provider DESC, created_at ASC`
+    );
+    return rows.map((row) => ({
+      id: row.id,
+      name: row.name,
+      adapter: row.adapter,
+      host: row.host,
+      model: row.model,
+      apiKey: row.api_key,
+      timeoutMs: row.timeout_ms,
+      options: row.options,
+      enabled: row.enabled,
+      defaultProvider: row.default_provider,
+    }));
+  } catch (error) {
+    if (error?.code === '42P01') {
+      logWarn('llm_providers table not found; falling back to environment configuration');
+      return [];
+    }
+    throw error;
+  }
+};
+
+const bootstrapLLMServices = async () => {
+  try {
+    const providerConfigs = await loadProviderConfigurations();
+    const {
+      service: enhancedLLMService,
+      registry: llmRegistry,
+      defaultProvider,
+      providers,
+    } = initializeLLMService({
+      env: process.env,
+      providerConfigs,
+    });
+
+    app.locals.llmService = enhancedLLMService;
+    app.locals.llmRegistry = llmRegistry;
+    app.locals.llmProviderConfigs = providers.map(({ apiKey, ...rest }) => ({
+      ...rest,
+    }));
+    app.locals.defaultLLMProvider = defaultProvider;
+
+    try {
+      const contextualLLMService = createContextualLLMService({
+        pool,
+        llmService: enhancedLLMService,
+        providerName: defaultProvider,
+        providerRegistry: llmRegistry,
+      });
+      app.locals.contextualLLMService = contextualLLMService;
+    } catch (contextError) {
+      logError('Failed to initialize contextual LLM service', contextError, {
+        provider: defaultProvider,
+      });
+      app.locals.contextualLLMService = null;
+    }
+
+    logInfo('Enhanced LLM service initialized', {
+      providers: llmRegistry.list(),
+      defaultProvider,
+    });
+  } catch (error) {
+    logError('Failed to initialize Enhanced LLM service', error, {
+      provider: process.env.LLM_PROVIDER || 'ollama',
+    });
+    app.locals.llmService = null;
+    app.locals.llmRegistry = null;
+    app.locals.contextualLLMService = null;
+    app.locals.llmProviderConfigs = [];
+  }
+};
+
+await bootstrapLLMServices();
+
 // Pool event handlers for monitoring
 pool.on('connect', (client) => {
   console.log('[Database] Client connected to pool');
@@ -577,6 +700,461 @@ const queryWithRetry = async (text, params, maxRetries = 3) => {
       await new Promise(resolve => setTimeout(resolve, 1000 * attempt));
     }
   }
+};
+
+const MAX_MEMORY_SUMMARY_LENGTH = NORMALIZED_MAX_SUMMARY_LENGTH;
+
+const ensureLLMReady = (req) => {
+  const contextualService = req.app?.locals?.contextualLLMService;
+  if (!contextualService) {
+    throw new LLMServiceError('Enhanced LLM service is not available', {
+      type: 'llm_not_initialized',
+    });
+  }
+  return contextualService;
+};
+
+const ensureSessionBelongsToCampaign = async (campaignId, sessionId) => {
+  if (!sessionId) {
+    return null;
+  }
+  const { rows, rowCount } = await pool.query(
+    'SELECT id FROM public.sessions WHERE id = $1 AND campaign_id = $2',
+    [sessionId, campaignId]
+  );
+  if (rowCount === 0) {
+    const error = new LLMServiceError('Session does not belong to the specified campaign', {
+      type: 'session_not_found',
+      campaignId,
+      sessionId,
+    });
+    error.statusCode = 404;
+    throw error;
+  }
+  return rows[0].id;
+};
+
+const ensureNpcBelongsToCampaign = async (campaignId, npcId) => {
+  const { rowCount } = await pool.query(
+    'SELECT 1 FROM public.npcs WHERE id = $1 AND campaign_id = $2',
+    [npcId, campaignId]
+  );
+  if (rowCount === 0) {
+    const error = new LLMServiceError('NPC not found in campaign', {
+      type: 'npc_not_found',
+      campaignId,
+      npcId,
+    });
+    error.statusCode = 404;
+    throw error;
+  }
+};
+
+const insertNarrativeRecord = async (client, {
+  requestId,
+  campaignId,
+  sessionId,
+  npcId,
+  type,
+  requestedBy,
+  cacheKey,
+  cacheHit,
+  provider,
+  requestMetadata,
+  prompt,
+  systemPrompt,
+  response,
+  metrics,
+  metadata,
+}) => {
+  const { rows } = await client.query(
+    `INSERT INTO public.llm_narratives (
+       request_id,
+       campaign_id,
+       session_id,
+       npc_id,
+       request_type,
+       requested_by,
+       cache_key,
+       cache_hit,
+       provider_name,
+       provider_model,
+       provider_request_metadata,
+       prompt,
+       system_prompt,
+       response,
+       metrics,
+       metadata
+     ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16)
+     RETURNING *`,
+    [
+      requestId,
+      campaignId,
+      sessionId ?? null,
+      npcId ?? null,
+      type,
+      requestedBy ?? null,
+      cacheKey ?? null,
+      cacheHit ?? false,
+      provider?.name ?? null,
+      provider?.model ?? null,
+      requestMetadata ? JSON.stringify(requestMetadata) : null,
+      prompt,
+      systemPrompt,
+      response,
+      metrics ? JSON.stringify(metrics) : null,
+      metadata ? JSON.stringify(metadata) : null,
+    ]
+  );
+  return rows[0];
+};
+
+const normalizeTags = (tags) => {
+  if (!Array.isArray(tags)) {
+    return [];
+  }
+  const normalized = tags
+    .map((tag) => (typeof tag === 'string' ? tag.trim() : ''))
+    .filter((tag) => tag.length > 0);
+  return [...new Set(normalized)];
+};
+
+const applyNpcInteraction = async (client, {
+  campaignId,
+  sessionId,
+  npcId,
+  narrativeId,
+  interaction,
+}) => {
+  if (!interaction || !interaction.summary) {
+    return null;
+  }
+
+  const summary = sanitizeUserInput(interaction.summary, MAX_MEMORY_SUMMARY_LENGTH).trim();
+  if (summary.length === 0) {
+    throw new LLMServiceError('NPC interaction summary cannot be empty', {
+      type: 'npc_interaction_summary_missing',
+    });
+  }
+
+  const sentiment = interaction.sentiment ? interaction.sentiment.toLowerCase() : null;
+  if (sentiment && !VALID_SENTIMENTS.has(sentiment)) {
+    throw new LLMServiceError('Invalid sentiment value for NPC memory', {
+      type: 'npc_interaction_invalid_sentiment',
+      sentiment,
+    });
+  }
+
+  const trustDelta = clamp(interaction.trustDelta ?? 0, -10, 10);
+  const tags = normalizeTags(interaction.tags);
+
+  await client.query(
+    `INSERT INTO public.npc_memories (
+       npc_id,
+       campaign_id,
+       session_id,
+       narrative_id,
+       memory_summary,
+       sentiment,
+       trust_delta,
+      tags
+    ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)` ,
+    [
+      npcId,
+      campaignId,
+      sessionId ?? null,
+      narrativeId,
+      summary,
+      sentiment,
+      trustDelta,
+      tags.length > 0 ? tags : null,
+    ]
+  );
+
+  if (Array.isArray(interaction.relationshipChanges)) {
+    for (const change of interaction.relationshipChanges) {
+      if (!change || !change.targetId) {
+        continue;
+      }
+      const delta = clamp(change.delta ?? 0, -5, 5);
+      if (delta === 0) {
+        continue;
+      }
+      const targetType = (change.targetType || 'character').toLowerCase();
+      if (!['npc', 'character'].includes(targetType)) {
+        throw new LLMServiceError('Invalid relationship target type', {
+          type: 'npc_relationship_invalid_target',
+          targetType,
+        });
+      }
+      const relationshipType = change.relationshipType || 'neutral';
+      const description = change.description ? sanitizeUserInput(change.description, MAX_MEMORY_SUMMARY_LENGTH) : summary;
+
+      await client.query(
+        `INSERT INTO public.npc_relationships (
+           npc_id,
+           target_id,
+           target_type,
+           relationship_type,
+           description,
+           strength,
+           last_interaction_at,
+           last_interaction_summary,
+           trust_delta_total
+         ) VALUES ($1, $2, $3, $4, $5, LEAST(5, GREATEST(-5, $6)), NOW(), $7, LEAST(100, GREATEST(-100, $6)))
+         ON CONFLICT (npc_id, target_id)
+         DO UPDATE SET
+           relationship_type = EXCLUDED.relationship_type,
+           description = CASE
+             WHEN public.npc_relationships.description IS NULL OR public.npc_relationships.description = ''
+               THEN EXCLUDED.description
+             ELSE public.npc_relationships.description
+           END,
+           strength = LEAST(5, GREATEST(-5, public.npc_relationships.strength + $6)),
+           last_interaction_at = NOW(),
+           last_interaction_summary = EXCLUDED.last_interaction_summary,
+           trust_delta_total = LEAST(100, GREATEST(-100, COALESCE(public.npc_relationships.trust_delta_total, 0) + $6));` ,
+        [
+          npcId,
+          change.targetId,
+          targetType,
+          relationshipType,
+          description,
+          delta,
+          summary,
+        ]
+      );
+    }
+  }
+};
+
+const persistNarrative = async ({
+  campaignId,
+  sessionId,
+  npcId,
+  requestedBy,
+  type,
+  result,
+  prompt,
+  metadata,
+  interaction,
+}) => {
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+
+    const derivedInteraction = npcId
+      ? deriveNpcInteraction({
+          result,
+          interaction,
+          metadata,
+        })
+      : null;
+
+    const narrativeRecord = await insertNarrativeRecord(client, {
+      requestId: result.request?.id ?? randomUUID(),
+      campaignId,
+      sessionId,
+      npcId,
+      type,
+      requestedBy,
+      cacheKey: result.cache?.key ?? null,
+      cacheHit: result.cache?.hit ?? false,
+      provider: result.provider ?? {},
+      requestMetadata: result.request ?? null,
+      prompt: prompt.user,
+      systemPrompt: prompt.system,
+      response: result.content,
+      metrics: result.metrics ?? null,
+      metadata,
+    });
+
+    if (interaction && npcId) {
+      await applyNpcInteraction(client, {
+        campaignId,
+        sessionId,
+        npcId,
+        narrativeId: narrativeRecord.id,
+        interaction,
+      });
+    }
+
+    await client.query('COMMIT');
+    return narrativeRecord;
+  } catch (error) {
+    await client.query('ROLLBACK');
+    throw error;
+  } finally {
+    client.release();
+  }
+};
+
+const userHasRole = (user, role) => Array.isArray(user?.roles) && user.roles.includes(role);
+
+const assertNarrativeLead = async ({ user, campaignId }) => {
+  if (userHasRole(user, 'admin')) {
+    return;
+  }
+
+  const { rows, rowCount } = await pool.query(
+    'SELECT dm_user_id FROM public.campaigns WHERE id = $1',
+    [campaignId]
+  );
+  if (rowCount === 0) {
+    const error = new LLMServiceError('Campaign not found', {
+      type: 'campaign_not_found',
+      campaignId,
+    });
+    error.statusCode = 404;
+    throw error;
+  }
+
+  if (rows[0].dm_user_id === user.id) {
+    return;
+  }
+
+  const { rowCount: coDmCount } = await pool.query(
+    `SELECT 1
+       FROM public.campaign_players
+      WHERE campaign_id = $1
+        AND user_id = $2
+        AND role = 'co-dm'
+      LIMIT 1`,
+    [campaignId, user.id]
+  );
+
+  if (coDmCount > 0) {
+    return;
+  }
+
+  const error = new LLMServiceError('Only the campaign DM or a co-DM may request this narrative type', {
+    type: 'campaign_access_forbidden',
+    campaignId,
+    userId: user.id,
+  });
+  error.statusCode = 403;
+  throw error;
+};
+
+const narrativeBaseValidators = [
+  param('campaignId')
+    .isUUID()
+    .withMessage('campaignId must be a valid UUID'),
+  body('sessionId')
+    .optional({ checkFalsy: true })
+    .isUUID()
+    .withMessage('sessionId must be a valid UUID'),
+  body('focus')
+    .optional({ checkFalsy: true })
+    .isString()
+    .isLength({ max: 500 })
+    .withMessage('focus must be a string up to 500 characters'),
+  body('metadata')
+    .optional()
+    .isObject()
+    .withMessage('metadata must be an object'),
+  body('provider')
+    .optional()
+    .isObject()
+    .withMessage('provider must be an object'),
+  body('parameters')
+    .optional()
+    .isObject()
+    .withMessage('parameters must be an object'),
+];
+
+const npcNarrativeValidators = [
+  body('npcId')
+    .isUUID()
+    .withMessage('npcId is required and must be a valid UUID'),
+  body('interaction')
+    .optional()
+    .isObject()
+    .withMessage('interaction must be an object when provided'),
+  body('interaction.summary')
+    .optional({ checkFalsy: true })
+    .isString()
+    .isLength({ max: 1000 })
+    .withMessage('interaction.summary must be a string up to 1000 characters'),
+  body('interaction.sentiment')
+    .optional({ checkFalsy: true })
+    .isString()
+    .custom((value) => VALID_SENTIMENTS.has(value.toLowerCase()))
+    .withMessage('interaction.sentiment must be one of positive, negative, neutral, or mixed'),
+  body('interaction.trustDelta')
+    .optional()
+    .isInt({ min: -10, max: 10 })
+    .withMessage('interaction.trustDelta must be an integer between -10 and 10'),
+  body('interaction.tags')
+    .optional()
+    .isArray()
+    .withMessage('interaction.tags must be an array of strings'),
+  body('interaction.relationshipChanges')
+    .optional()
+    .isArray()
+    .withMessage('interaction.relationshipChanges must be an array'),
+  body('interaction.relationshipChanges.*.targetId')
+    .optional({ checkFalsy: true })
+    .isUUID()
+    .withMessage('relationshipChanges.targetId must be a valid UUID'),
+  body('interaction.relationshipChanges.*.targetType')
+    .optional({ checkFalsy: true })
+    .isString()
+    .isIn(['npc', 'character'])
+    .withMessage('relationshipChanges.targetType must be npc or character'),
+  body('interaction.relationshipChanges.*.relationshipType')
+    .optional({ checkFalsy: true })
+    .isString()
+    .isIn(['ally', 'enemy', 'neutral', 'romantic', 'family', 'business'])
+    .withMessage('relationshipChanges.relationshipType must be a recognised relationship type'),
+  body('interaction.relationshipChanges.*.delta')
+    .optional()
+    .isInt({ min: -5, max: 5 })
+    .withMessage('relationshipChanges.delta must be an integer between -5 and 5'),
+];
+
+const actionNarrativeValidators = [
+  body('action')
+    .isObject()
+    .withMessage('action details are required for action narratives'),
+  body('action.type')
+    .optional({ checkFalsy: true })
+    .isString()
+    .withMessage('action.type must be a string when provided'),
+  body('action.result')
+    .optional({ checkFalsy: true })
+    .isString()
+    .withMessage('action.result must be a string when provided'),
+];
+
+const questNarrativeValidators = [
+  body('questSeeds')
+    .optional()
+    .isArray()
+    .withMessage('questSeeds must be an array when provided'),
+];
+
+const respondWithNarrativeError = (res, error) => {
+  if (error instanceof LLMProviderError) {
+    return res.status(error.statusCode || 502).json({
+      error: 'narrative_provider_error',
+      message: error.message,
+      provider: error.provider ?? null,
+      details: error.details ?? null,
+    });
+  }
+  if (error instanceof LLMServiceError) {
+    return res.status(error.statusCode || 503).json({
+      error: 'narrative_service_error',
+      message: error.message,
+      provider: error.provider ?? null,
+      type: error.type ?? null,
+    });
+  }
+  return res.status(500).json({
+    error: 'narrative_generation_failed',
+    message: 'Failed to generate narrative response',
+  });
 };
 
 // Test database connection and setup basic schema
@@ -1604,6 +2182,375 @@ app.delete('/api/campaigns/:campaignId/messages/:messageId', async (req, res) =>
     res.status(500).json({ error: 'Failed to delete message' });
   }
 });
+
+// Narrative generation endpoints
+app.post(
+  '/api/campaigns/:campaignId/narratives/dm',
+  requireAuth,
+  requireCampaignParticipation,
+  narrativeBaseValidators,
+  handleValidationErrors,
+  async (req, res) => {
+    const { campaignId } = req.params;
+    const { sessionId, focus, metadata = {}, provider, parameters } = req.body;
+
+    try {
+      await assertNarrativeLead({ user: req.user, campaignId });
+      const validatedSessionId = await ensureSessionBelongsToCampaign(campaignId, sessionId);
+      const contextualService = ensureLLMReady(req);
+
+      const generation = await contextualService.generateFromContext({
+        campaignId,
+        sessionId: validatedSessionId,
+        type: NARRATIVE_TYPES.DM_NARRATION,
+        provider: provider ?? undefined,
+        parameters,
+        metadata: {
+          ...metadata,
+          focus: focus || null,
+          requestedBy: req.user.id,
+          requestType: NARRATIVE_TYPES.DM_NARRATION,
+        },
+        request: { focus: focus || null },
+      });
+
+      const narrativeRecord = await persistNarrative({
+        campaignId,
+        sessionId: generation.context.session?.id ?? validatedSessionId ?? null,
+        npcId: null,
+        requestedBy: req.user.id,
+        type: NARRATIVE_TYPES.DM_NARRATION,
+        result: generation.result,
+        prompt: generation.prompt,
+        metadata: {
+          ...metadata,
+          focus: focus || null,
+          parameters: parameters || null,
+          cache: generation.result.cache,
+          provider: generation.result.provider,
+          raw: generation.result.raw,
+        },
+      });
+
+      res.status(201).json({
+        narrativeId: narrativeRecord.id,
+        content: generation.result.content,
+        provider: generation.result.provider,
+        metrics: generation.result.metrics,
+        cache: generation.result.cache,
+        request: generation.result.request,
+        prompt: generation.prompt,
+        contextGeneratedAt: generation.context.generatedAt,
+        recordedAt: narrativeRecord.created_at?.toISOString?.() ?? null,
+      });
+    } catch (error) {
+      logError('DM narration request failed', error, {
+        campaignId,
+        sessionId,
+        userId: req.user?.id,
+      });
+      respondWithNarrativeError(res, error);
+    }
+  }
+);
+
+app.post(
+  '/api/campaigns/:campaignId/narratives/scene',
+  requireAuth,
+  requireCampaignParticipation,
+  narrativeBaseValidators,
+  handleValidationErrors,
+  async (req, res) => {
+    const { campaignId } = req.params;
+    const { sessionId, focus, metadata = {}, provider, parameters } = req.body;
+
+    try {
+      await assertNarrativeLead({ user: req.user, campaignId });
+      const validatedSessionId = await ensureSessionBelongsToCampaign(campaignId, sessionId);
+      const contextualService = ensureLLMReady(req);
+
+      const generation = await contextualService.generateFromContext({
+        campaignId,
+        sessionId: validatedSessionId,
+        type: NARRATIVE_TYPES.SCENE_DESCRIPTION,
+        provider: provider ?? undefined,
+        parameters,
+        metadata: {
+          ...metadata,
+          focus: focus || null,
+          requestedBy: req.user.id,
+          requestType: NARRATIVE_TYPES.SCENE_DESCRIPTION,
+        },
+        request: { focus: focus || null },
+      });
+
+      const narrativeRecord = await persistNarrative({
+        campaignId,
+        sessionId: generation.context.session?.id ?? validatedSessionId ?? null,
+        npcId: null,
+        requestedBy: req.user.id,
+        type: NARRATIVE_TYPES.SCENE_DESCRIPTION,
+        result: generation.result,
+        prompt: generation.prompt,
+        metadata: {
+          ...metadata,
+          focus: focus || null,
+          parameters: parameters || null,
+          cache: generation.result.cache,
+          provider: generation.result.provider,
+          raw: generation.result.raw,
+        },
+      });
+
+      res.status(201).json({
+        narrativeId: narrativeRecord.id,
+        content: generation.result.content,
+        provider: generation.result.provider,
+        metrics: generation.result.metrics,
+        cache: generation.result.cache,
+        request: generation.result.request,
+        prompt: generation.prompt,
+        contextGeneratedAt: generation.context.generatedAt,
+        recordedAt: narrativeRecord.created_at?.toISOString?.() ?? null,
+      });
+    } catch (error) {
+      logError('Scene description request failed', error, {
+        campaignId,
+        sessionId,
+        userId: req.user?.id,
+      });
+      respondWithNarrativeError(res, error);
+    }
+  }
+);
+
+app.post(
+  '/api/campaigns/:campaignId/narratives/npc',
+  requireAuth,
+  requireCampaignParticipation,
+  [...narrativeBaseValidators, ...npcNarrativeValidators],
+  handleValidationErrors,
+  async (req, res) => {
+    const { campaignId } = req.params;
+    const { sessionId, focus, metadata = {}, provider, parameters, npcId, interaction } = req.body;
+
+    try {
+      await assertNarrativeLead({ user: req.user, campaignId });
+      await ensureNpcBelongsToCampaign(campaignId, npcId);
+      const validatedSessionId = await ensureSessionBelongsToCampaign(campaignId, sessionId);
+      const contextualService = ensureLLMReady(req);
+
+      const generation = await contextualService.generateFromContext({
+        campaignId,
+        sessionId: validatedSessionId,
+        type: NARRATIVE_TYPES.NPC_DIALOGUE,
+        provider: provider ?? undefined,
+        parameters,
+        metadata: {
+          ...metadata,
+          focus: focus || null,
+          requestedBy: req.user.id,
+          npcId,
+          requestType: NARRATIVE_TYPES.NPC_DIALOGUE,
+        },
+        request: {
+          focus: focus || null,
+          npcId,
+          interaction,
+        },
+      });
+
+      const narrativeRecord = await persistNarrative({
+        campaignId,
+        sessionId: generation.context.session?.id ?? validatedSessionId ?? null,
+        npcId,
+        requestedBy: req.user.id,
+        type: NARRATIVE_TYPES.NPC_DIALOGUE,
+      result: generation.result,
+      prompt: generation.prompt,
+      metadata: {
+        ...metadata,
+        focus: focus || null,
+        parameters: parameters || null,
+        cache: generation.result.cache,
+        provider: generation.result.provider,
+        raw: generation.result.raw,
+        interaction: derivedInteraction || interaction || null,
+      },
+      interaction: derivedInteraction || interaction || null,
+    });
+
+      res.status(201).json({
+        narrativeId: narrativeRecord.id,
+        content: generation.result.content,
+        provider: generation.result.provider,
+        metrics: generation.result.metrics,
+        cache: generation.result.cache,
+        request: generation.result.request,
+        prompt: generation.prompt,
+        contextGeneratedAt: generation.context.generatedAt,
+        recordedAt: narrativeRecord.created_at?.toISOString?.() ?? null,
+      });
+    } catch (error) {
+      logError('NPC dialogue request failed', error, {
+        campaignId,
+        sessionId,
+        npcId,
+        userId: req.user?.id,
+      });
+      respondWithNarrativeError(res, error);
+    }
+  }
+);
+
+app.post(
+  '/api/campaigns/:campaignId/narratives/action',
+  requireAuth,
+  requireCampaignParticipation,
+  [...narrativeBaseValidators, ...actionNarrativeValidators],
+  handleValidationErrors,
+  async (req, res) => {
+    const { campaignId } = req.params;
+    const { sessionId, focus, metadata = {}, provider, parameters, action } = req.body;
+
+    try {
+      const validatedSessionId = await ensureSessionBelongsToCampaign(campaignId, sessionId);
+      const contextualService = ensureLLMReady(req);
+
+      const generation = await contextualService.generateFromContext({
+        campaignId,
+        sessionId: validatedSessionId,
+        type: NARRATIVE_TYPES.ACTION_NARRATIVE,
+        provider: provider ?? undefined,
+        parameters,
+        metadata: {
+          ...metadata,
+          focus: focus || null,
+          requestedBy: req.user.id,
+          action,
+          requestType: NARRATIVE_TYPES.ACTION_NARRATIVE,
+        },
+        request: {
+          focus: focus || null,
+          action,
+        },
+      });
+
+      const narrativeRecord = await persistNarrative({
+        campaignId,
+        sessionId: generation.context.session?.id ?? validatedSessionId ?? null,
+        npcId: null,
+        requestedBy: req.user.id,
+        type: NARRATIVE_TYPES.ACTION_NARRATIVE,
+        result: generation.result,
+        prompt: generation.prompt,
+        metadata: {
+          ...metadata,
+          focus: focus || null,
+          parameters: parameters || null,
+          cache: generation.result.cache,
+          provider: generation.result.provider,
+          raw: generation.result.raw,
+          action,
+        },
+      });
+
+      res.status(201).json({
+        narrativeId: narrativeRecord.id,
+        content: generation.result.content,
+        provider: generation.result.provider,
+        metrics: generation.result.metrics,
+        cache: generation.result.cache,
+        request: generation.result.request,
+        prompt: generation.prompt,
+        contextGeneratedAt: generation.context.generatedAt,
+        recordedAt: narrativeRecord.created_at?.toISOString?.() ?? null,
+      });
+    } catch (error) {
+      logError('Action narrative request failed', error, {
+        campaignId,
+        sessionId,
+        userId: req.user?.id,
+      });
+      respondWithNarrativeError(res, error);
+    }
+  }
+);
+
+app.post(
+  '/api/campaigns/:campaignId/narratives/quest',
+  requireAuth,
+  requireCampaignParticipation,
+  [...narrativeBaseValidators, ...questNarrativeValidators],
+  handleValidationErrors,
+  async (req, res) => {
+    const { campaignId } = req.params;
+    const { sessionId, focus, metadata = {}, provider, parameters, questSeeds } = req.body;
+
+    try {
+      await assertNarrativeLead({ user: req.user, campaignId });
+      const validatedSessionId = await ensureSessionBelongsToCampaign(campaignId, sessionId);
+      const contextualService = ensureLLMReady(req);
+
+      const generation = await contextualService.generateFromContext({
+        campaignId,
+        sessionId: validatedSessionId,
+        type: NARRATIVE_TYPES.QUEST,
+        provider: provider ?? undefined,
+        parameters,
+        metadata: {
+          ...metadata,
+          focus: focus || null,
+          questSeeds: questSeeds ?? null,
+          requestedBy: req.user.id,
+          requestType: NARRATIVE_TYPES.QUEST,
+        },
+        request: {
+          focus: focus || null,
+          questSeeds,
+        },
+      });
+
+      const narrativeRecord = await persistNarrative({
+        campaignId,
+        sessionId: generation.context.session?.id ?? validatedSessionId ?? null,
+        npcId: null,
+        requestedBy: req.user.id,
+        type: NARRATIVE_TYPES.QUEST,
+        result: generation.result,
+        prompt: generation.prompt,
+        metadata: {
+          ...metadata,
+          focus: focus || null,
+          parameters: parameters || null,
+          cache: generation.result.cache,
+          provider: generation.result.provider,
+          raw: generation.result.raw,
+          questSeeds: questSeeds ?? null,
+        },
+      });
+
+      res.status(201).json({
+        narrativeId: narrativeRecord.id,
+        content: generation.result.content,
+        provider: generation.result.provider,
+        metrics: generation.result.metrics,
+        cache: generation.result.cache,
+        request: generation.result.request,
+        prompt: generation.prompt,
+        contextGeneratedAt: generation.context.generatedAt,
+        recordedAt: narrativeRecord.created_at?.toISOString?.() ?? null,
+      });
+    } catch (error) {
+      logError('Quest generation request failed', error, {
+        campaignId,
+        sessionId,
+        userId: req.user?.id,
+      });
+      respondWithNarrativeError(res, error);
+    }
+  }
+);
 
 // PostGIS World Map API Endpoints (Phase 3 - Task 1)
 

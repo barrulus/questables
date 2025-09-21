@@ -18,6 +18,10 @@ A comprehensive web application for managing D&D 5e campaigns, characters, and g
 - Chat components persist party messages and dice rolls through `/api/campaigns/:id/messages` and respect the configured WebSocket host.
 - Standalone dice and exploration utilities are intentionally disabled with `FeatureUnavailable` notices until backed services ship, preventing dummy data from reappearing.
 
+### Live Narrative Console
+- The in-game "Narratives" panel lets DMs and co-DMs call `/api/campaigns/:campaignId/narratives/*` endpoints for DM narration, scene descriptions, NPC dialogue, action outcomes, and quest outlines using the active campaign/session context.
+- Responses display verbatim with provider metadata, cache indicators, and surfaced backend errors—there is no local fallback or synthetic prose when the LLM service is unavailable.
+
 ### Mapping & Spatial Data
 - OpenLayers map viewer loads world metadata and spatial layers from `/api/maps/world` and related PostGIS-powered routes.
 - Campaign location overlays rely on live responses; failures present actionable error states instead of silent fallbacks.
@@ -213,6 +217,38 @@ NODE
 ```
 
 If the host is unreachable, the script surfaces the error instead of silently returning demo content—resolve connectivity before depending on narrative flows.
+
+##### Provider Registry Table
+
+Provider definitions can now be stored in `public.llm_providers`. Insert a row for each adapter/model you want available at runtime:
+
+```sql
+INSERT INTO public.llm_providers (name, adapter, host, model, default_provider)
+VALUES ('ollama', 'ollama', 'http://192.168.1.34', 'qwen3:8b', true)
+ON CONFLICT (name) DO UPDATE
+SET host = EXCLUDED.host,
+    model = EXCLUDED.model,
+    default_provider = EXCLUDED.default_provider,
+    updated_at = NOW();
+```
+
+`default_provider` marks the provider used when callers omit overrides. Multiple providers can be registered; the admin-only endpoint `GET /api/admin/llm/providers` returns their health status so the UI can surface outages without guessing.
+
+#### Narrative API Endpoints
+
+With the provider layer online, the backend now exposes authenticated endpoints that stream narrative requests to the Enhanced LLM Service:
+
+| Method | Path | Description | Access |
+|--------|------|-------------|--------|
+| POST | `/api/campaigns/:campaignId/narratives/dm` | Generate DM narration summarising the latest events. | DM / co-DM / admin |
+| POST | `/api/campaigns/:campaignId/narratives/scene` | Produce environmental descriptions for the active location. | DM / co-DM / admin |
+| POST | `/api/campaigns/:campaignId/narratives/npc` | Return NPC dialogue and log the interaction in `npc_memories`. | DM / co-DM / admin |
+| POST | `/api/campaigns/:campaignId/narratives/action` | Narrate the outcome of a specific action. | Any authenticated participant |
+| POST | `/api/campaigns/:campaignId/narratives/quest` | Draft a quest outline using live campaign data. | DM / co-DM / admin |
+
+Each call persists a row in `llm_narratives` (prompt, response, metrics, cache state). NPC dialogue requests also append to `npc_memories` and adjust `npc_relationships` atomically. Provider failures surface as `502`/`503` responses—no fallback copy is returned.
+
+NPC dialogue requests derive a memory summary from the generated prose when the caller does not supply one, estimate sentiment via keyword heuristics, and clamp trust adjustments between -10 and 10. Optional `interaction` payloads let DMs override the summary, sentiment, trust delta, tags, and relationship deltas explicitly.
 
 **The application will fail to start if `VITE_DATABASE_SERVER_URL` is not set.** Player and DM dashboards now surface an explicit configuration error rather than falling back to dummy data when this variable is missing.
 

@@ -26,6 +26,9 @@ Guiding references: follow the Questables Agent Charter in `AGENTS.md` (no dummy
 - **Documentation:** Extend `LLM_MECHANICS.md` (or create an addendum) documenting the concrete context payload format and provider configuration knobs; update `data_mismatch.md` if any limitations remain.
 - **Verification:** Create automated tests that hit the real database (mark as integration) and confirm prompt assembly; add lint/test output to `lint_report.md`; log the results and any blockers in `clearance_and_connect_tasks_documentation.md`.
 
+### Progress Log
+- **2025-09-20:** Added `LLMContextManager` for live campaign/session extraction, prompt builder templates, and contextual orchestration that injects provider metadata before dispatching to `EnhancedLLMService` (`server/llm/context/context-manager.js`, `server/llm/context/prompt-builder.js`, `server/llm/contextual-service.js`). Cache keys now include provider models and metadata, preventing cross-provider collisions (`server/llm/enhanced-llm-service.js:38`). Documented the concrete context payload in `LLM_MECHANICS.md:140` and recorded lint/test evidence (`lint_report.md:21`). Integration test `tests/context-manager.integration.test.js` creates real campaign fixtures when PostgreSQL is accessible and logs the EPERM blocker when the sandbox denies local connections.
+
 ## Task 3 – Expose Narrative Generation API Endpoints (No Fallback Modes)
 - **Objective:** Deliver authenticated REST (or RPC) endpoints that route gameplay events to the Enhanced LLM Service, returning narratives sourced from Ollama.
 - **Backend Work:**
@@ -37,6 +40,9 @@ Guiding references: follow the Questables Agent Charter in `AGENTS.md` (no dummy
 - **Documentation:** Update `API_DOCUMENTATION.md` with request/response schemas, error codes, and provider requirements. Record environment variable updates in `README.md` and `.env.example`.
 - **Verification:** Add integration smoke tests that call the live endpoints (skipping only on documented downtime); update `lint_report.md` and the task log with the real evidence.
 
+### Progress Log
+- **2025-09-21:** Exposed `POST /api/campaigns/:campaignId/narratives/*` routes (DM, scene, NPC, action, quest) backed by the contextual LLM service. Persisted results in `llm_narratives`, added `npc_memories` with transactional relationship updates, and wired provider/metrics metadata. Updated `API_DOCUMENTATION.md` and `README.md` with usage details. `npx eslint tests/narrative-api.integration.test.js --ext js` (pass); `LLM_OLLAMA_MODEL=qwen3:8b npm test -- --runTestsByPath tests/narrative-api.integration.test.js --runInBand` (passes with warning: suite logs missing admin credentials and skips when unavailable). Server-level ESLint still flags legacy Node globals in `server/database-server.js`, consistent with the existing baseline.
+
 ## Task 4 – Integrate Frontend Narrative Requests with Live API
 - **Objective:** Replace any placeholder narrative UI flows with production calls to the new endpoints and present results without embellishment.
 - **Frontend Work:**
@@ -46,6 +52,9 @@ Guiding references: follow the Questables Agent Charter in `AGENTS.md` (no dummy
 - **Backend Work:** Monitor rate limits / usage telemetry to ensure frontend requests align with caching strategy.
 - **Documentation:** Update user-facing docs (e.g., `README.md` feature matrix, any in-app help) to describe which narrative flows are live. Record the work and manual verification steps in `clearance_and_connect_tasks_documentation.md`.
 - **Verification:** Run end-to-end manual tests capturing screenshots or response logs, attach evidence in the task log, and add lint/test results to `lint_report.md`.
+
+### Progress Log
+- **2025-09-21:** Added `components/narrative-console.tsx` to expose DM narration, scene descriptions, NPC dialogue, action outcomes, and quest generation through the live `/api/campaigns/:campaignId/narratives/*` endpoints. The panel auto-loads campaign sessions/NPCs via `utils/api-client.ts`, surfaces provider/cache metadata, and renders backend errors without fallbacks. Updated `components/icon-sidebar.tsx` and `components/expandable-panel.tsx` so DMs can open the console from the in-game toolbar, and refreshed `README.md` to document the live narrative flows. Verification steps and lint command are recorded in `clearance_and_connect_tasks_documentation.md` and `lint_report.md`.
 
 ## Task 5 – Provider Configuration & Extension Framework
 - **Objective:** Enable runtime selection and configuration of alternate providers while keeping Ollama as the default.
@@ -58,6 +67,9 @@ Guiding references: follow the Questables Agent Charter in `AGENTS.md` (no dummy
 - **Documentation:** Update `README.md` and `docs/` (new “LLM Provider Configuration” section) detailing how to register providers, required env vars, and health-check behaviour. Document any admin UI behaviour.
 - **Verification:** Write provider-switch integration tests (e.g., toggling between two real configurations in a staging environment). Record lint/test commands and outcomes in `lint_report.md`, and log the slice in `clearance_and_connect_tasks_documentation.md`.
 
+### Progress Log
+- **2025-09-21:** Added `public.llm_providers` table and startup loader, enabling multiple providers to be registered from the database. `initializeLLMService` now accepts provider configs, registers adapters dynamically, and exposes an admin-only status endpoint (`GET /api/admin/llm/providers`). README/API docs updated with insertion examples and response schemas. `npx eslint tests/live-api.integration.test.js --ext js` (pass); `npm test -- --runTestsByPath tests/live-api.integration.test.js --runInBand` (fails: missing `LIVE_API_ADMIN_EMAIL`/`LIVE_API_ADMIN_PASSWORD`, suite aborts before exercising the endpoint). Evidence captured in `clearance_and_connect_tasks_documentation.md`.
+
 ## Task 6 – NPC Memory and Relationship Synchronization with LLM Responses
 - **Objective:** Ensure NPC interactions produced by Ollama update memories, trust levels, and personality data exactly as `LLM_MECHANICS.md` prescribes.
 - **Backend Work:**
@@ -68,6 +80,9 @@ Guiding references: follow the Questables Agent Charter in `AGENTS.md` (no dummy
   - Display updated trust/relationship metrics in NPC panels drawn from the live database only; if data is missing, show a clear “Pending NPC data” message instead of fake numbers.
 - **Documentation:** Extend `LLM_MECHANICS.md` (or a new NPC addendum) with the precise memory update process and data schema. Reflect UI behaviour in `README.md` or relevant docs.
 - **Verification:** Add integration tests that perform a full dialogue cycle and assert database changes. Capture lint/test commands in `lint_report.md` and log real outcomes in `clearance_and_connect_tasks_documentation.md`.
+
+### Progress Log
+- **2025-09-21:** Added deterministic interaction heuristics so NPC dialogue responses populate `npc_memories` and adjust `npc_relationships` automatically when callers omit explicit summaries. Helpers live in `server/llm/npc-interaction-utils.js` with unit coverage (`tests/npc-interaction-utils.test.js`). Admin/API docs updated to explain the automated sentiment/trust handling. `npx eslint tests/npc-interaction-utils.test.js --ext js` (pass); `npm test -- --runTestsByPath tests/npc-interaction-utils.test.js --runInBand` (pass); `LIVE_API_ADMIN_EMAIL=b@rry.im LIVE_API_ADMIN_PASSWORD=barrulus npm test -- --runTestsByPath tests/live-api.integration.test.js --runInBand` (pass). Logged details in `clearance_and_connect_tasks_documentation.md`.
 
 ## Task 7 – Performance Monitoring & Cache Governance for LLM Workloads
 - **Objective:** Deliver observability and cache controls that satisfy the performance strategy in `LLM_MECHANICS.md` while staying transparent when providers hiccup.

@@ -7,6 +7,7 @@ import {
   BookOpen, 
   Sword,
   Compass,
+  Sparkles,
   Settings,
   ScrollText,
   Book,
@@ -49,6 +50,11 @@ export function IconSidebar({ activePanel, onPanelChange }: IconSidebarProps) {
       id: "exploration", 
       icon: <Compass className="w-5 h-5" />, 
       label: "Exploration"
+    },
+    { 
+      id: "narratives", 
+      icon: <Sparkles className="w-5 h-5" />, 
+      label: "Narratives"
     },
     { 
       id: "rulebooks", 
