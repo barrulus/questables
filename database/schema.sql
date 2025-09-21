@@ -281,8 +281,98 @@ CREATE TABLE IF NOT EXISTS public.campaign_players (
     joined_at TIMESTAMP WITH TIME ZONE DEFAULT NOW() NOT NULL,
     status TEXT NOT NULL DEFAULT 'active' CHECK (status IN ('active', 'inactive', 'left')),
     role TEXT NOT NULL DEFAULT 'player' CHECK (role IN ('player', 'co-dm')),
+    loc_current geometry(Point, 4326),
+    last_located_at TIMESTAMP WITH TIME ZONE DEFAULT NOW() NOT NULL,
+    CONSTRAINT campaign_players_loc_current_srid CHECK (loc_current IS NULL OR ST_SRID(loc_current) = 4326),
     UNIQUE(campaign_id, user_id)
 );
+
+ALTER TABLE public.campaign_players
+    ADD COLUMN IF NOT EXISTS loc_current geometry(Point, 4326);
+ALTER TABLE public.campaign_players
+    ADD COLUMN IF NOT EXISTS last_located_at TIMESTAMP WITH TIME ZONE;
+ALTER TABLE public.campaign_players
+    ALTER COLUMN last_located_at SET DEFAULT NOW();
+UPDATE public.campaign_players
+    SET last_located_at = NOW()
+    WHERE last_located_at IS NULL;
+ALTER TABLE public.campaign_players
+    ALTER COLUMN last_located_at SET NOT NULL;
+DO $$
+BEGIN
+    IF NOT EXISTS (
+        SELECT 1
+        FROM information_schema.constraint_column_usage
+        WHERE constraint_name = 'campaign_players_loc_current_srid'
+          AND table_name = 'campaign_players'
+          AND table_schema = 'public'
+    ) THEN
+        ALTER TABLE public.campaign_players
+            ADD CONSTRAINT campaign_players_loc_current_srid CHECK (loc_current IS NULL OR ST_SRID(loc_current) = 4326);
+    END IF;
+END
+$$;
+
+-- Player location history for live map tokens
+CREATE TABLE IF NOT EXISTS public.campaign_player_locations (
+    id BIGSERIAL PRIMARY KEY,
+    campaign_id UUID REFERENCES public.campaigns(id) ON DELETE CASCADE NOT NULL,
+    player_id UUID REFERENCES public.campaign_players(id) ON DELETE CASCADE NOT NULL,
+    loc geometry(Point, 4326) NOT NULL,
+    recorded_at TIMESTAMP WITH TIME ZONE DEFAULT NOW() NOT NULL,
+    CONSTRAINT campaign_player_locations_loc_srid CHECK (ST_SRID(loc) = 4326)
+);
+CREATE INDEX IF NOT EXISTS idx_campaign_player_locations_lookup
+    ON public.campaign_player_locations (campaign_id, player_id, recorded_at DESC);
+CREATE INDEX IF NOT EXISTS idx_campaign_player_locations_loc_gix
+    ON public.campaign_player_locations USING GIST (loc);
+
+-- Automatically capture player location changes
+CREATE OR REPLACE FUNCTION public.log_campaign_player_location()
+RETURNS trigger
+LANGUAGE plpgsql
+AS $_log$
+BEGIN
+    IF NEW.loc_current IS NULL THEN
+        RETURN NEW;
+    END IF;
+
+    IF TG_OP = 'INSERT' OR (TG_OP = 'UPDATE' AND (NEW.loc_current IS DISTINCT FROM OLD.loc_current)) THEN
+        NEW.last_located_at := NOW();
+        INSERT INTO public.campaign_player_locations (campaign_id, player_id, loc, recorded_at)
+        VALUES (NEW.campaign_id, NEW.id, NEW.loc_current, NEW.last_located_at);
+    END IF;
+
+    RETURN NEW;
+END;
+$_log$;
+
+DROP TRIGGER IF EXISTS trg_campaign_players_location_audit ON public.campaign_players;
+CREATE TRIGGER trg_campaign_players_location_audit
+AFTER INSERT OR UPDATE OF loc_current ON public.campaign_players
+FOR EACH ROW
+EXECUTE FUNCTION public.log_campaign_player_location();
+
+-- Recent player trail view (30 most recent points)
+CREATE OR REPLACE VIEW public.v_player_recent_trails AS
+SELECT
+    ranked.campaign_id,
+    ranked.player_id,
+    ST_SetSRID(ST_MakeLine(ranked.loc ORDER BY ranked.recorded_at), 4326) AS trail_geom,
+    MIN(ranked.recorded_at) AS recorded_from,
+    MAX(ranked.recorded_at) AS recorded_to,
+    COUNT(*) AS point_count
+FROM (
+    SELECT
+        cpl.campaign_id,
+        cpl.player_id,
+        cpl.loc,
+        cpl.recorded_at,
+        ROW_NUMBER() OVER (PARTITION BY cpl.campaign_id, cpl.player_id ORDER BY cpl.recorded_at DESC) AS rn
+    FROM public.campaign_player_locations cpl
+) AS ranked
+WHERE ranked.rn <= 30
+GROUP BY ranked.campaign_id, ranked.player_id;
 
 -- =============================================================================
 -- SESSIONS
@@ -747,6 +837,8 @@ CREATE INDEX IF NOT EXISTS idx_campaigns_is_public ON public.campaigns(is_public
 -- Campaign players
 CREATE INDEX IF NOT EXISTS idx_campaign_players_campaign_id ON public.campaign_players(campaign_id);
 CREATE INDEX IF NOT EXISTS idx_campaign_players_user_id ON public.campaign_players(user_id);
+CREATE INDEX IF NOT EXISTS idx_campaign_players_loc_current_gix
+    ON public.campaign_players USING GIST (loc_current) WHERE loc_current IS NOT NULL;
 
 -- Sessions
 CREATE INDEX IF NOT EXISTS idx_sessions_campaign_id ON public.sessions(campaign_id);

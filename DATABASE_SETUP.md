@@ -126,7 +126,8 @@ The application uses a comprehensive PostgreSQL schema with the following key fe
 - **users**: User authentication and profiles
 - **characters**: D&D character data with JSONB fields for flexibility
 - **campaigns**: Campaign management and settings
-- **campaign_players**: Many-to-many relationship for campaign membership
+- **campaign_players**: Many-to-many relationship for campaign membership (with live map coordinates)
+- **campaign_player_locations**: Historical position trail for player tokens
 - **chat_messages**: Real-time chat with character-based messaging
 - **sessions**: Campaign session tracking
 - **locations**: Geographic data with PostGIS integration
@@ -136,7 +137,8 @@ The application uses a comprehensive PostgreSQL schema with the following key fe
 ### Key Features
 - **UUID Primary Keys**: All tables use UUID for better distributed system support
 - **JSONB Fields**: Flexible storage for D&D-specific data (abilities, inventory, spellcasting)
-- **PostGIS Integration**: Spatial data support for maps and locations
+- **PostGIS Integration**: Spatial data support for maps, locations, and player tokens
+- **Player Token Telemetry**: Current and historical player positions persisted in PostGIS with automatic auditing
 - **Field Mapping**: Automatic conversion between snake_case (database) and camelCase (frontend)
 
 ## API Endpoints

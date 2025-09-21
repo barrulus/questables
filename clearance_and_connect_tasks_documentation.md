@@ -179,7 +179,7 @@ Always append new entries; do not erase or rewrite previous log items except to 
 - **Tests & Verification:**
   - `npx eslint components/combat-tracker.tsx --ext ts,tsx`
   - `npx eslint server/database-server.js` *(fails: existing repo config lacks Node globals; failure is pre-existing and unrelated to the new routes)*
-  - `npx jest utils/database/__tests__/data-helpers.test.tsx` *(fails: repository still missing `ts-jest`; unable to execute TypeScript suites)*
+  - `npx jest utils/database/__tests__/data-helpers.test.tsx` *(fails: Jest worker exits unexpectedly after transformer install; see CLI crash report)*
 - **Remaining Gaps / Blockers:** Jest cannot run TypeScript tests until `ts-jest` (or another transformer) is installed; additional encounter automation (e.g., NPC lookups) will require future backend endpoints.
 
 ## Task 13 – Role-Aware Dashboard Landing & Navigation
@@ -351,3 +351,16 @@ Always append new entries; do not erase or rewrite previous log items except to 
   - `LLM_PROVIDER=ollama LLM_OLLAMA_HOST=http://192.168.1.34:11434 LLM_OLLAMA_MODEL=qwen3:8b LIVE_API_BASE_URL=https://quixote.tail3f19fe.ts.net:3001 LIVE_API_ADMIN_EMAIL=b@rry.im LIVE_API_ADMIN_PASSWORD=barrulus npm test -- --runTestsByPath tests/narrative-api.integration.test.js --runInBand` (pass; asserts LLM metrics/cache endpoints respond for admin)
   - `node --input-type=module scripts/login-and-fetch-llm-metrics.js` *(inline run captured real `/api/admin/llm/metrics` and `/api/admin/llm/cache` payloads; see CLI output in session log)*
 - **Remaining Gaps / Blockers:** Maintain ongoing access to the Ollama host and admin credentials in CI so telemetry continues to reflect live traffic; lint debt in `server/database-server.js` remains outstanding from prior work.
+
+## Task – Player Token Schema Foundations
+- **Date:** 2025-09-21
+- **Engineer(s):** Codex Agent
+- **Work Done:**
+  - Added authoritative player token columns to the campaign membership table, enforcing SRID 4326 and timestamping each update (`database/schema.sql:284`).
+  - Created the `campaign_player_locations` history table with GIST indexing, automatic SRID checks, and an auditing trigger that captures every live move (`database/schema.sql:292`).
+  - Defined `v_player_recent_trails` for the last 30 location samples per player so the API can stream ready-to-render LineStrings without mock data (`database/schema.sql:332`).
+  - Updated the database setup guide to document the new player telemetry tables and PostGIS responsibilities (`DATABASE_SETUP.md:83`).
+- **Documentation Updates:** DATABASE_SETUP.md:83; database/schema.sql (multiple new sections).
+- **Tests & Verification:** Not yet executed; will validate by replaying schema against the running Postgres instance once migration scaffolding is prepared.
+- **Remaining Gaps / Blockers:** Need to run the updated schema in migration tooling and add automated regression tests for the logging trigger before exposing the new endpoints.
+

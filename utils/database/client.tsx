@@ -19,16 +19,21 @@ class PostgreSQLClient implements DatabaseClient {
 
   private ensureInitialized() {
     if (this.baseUrl === null) {
-      if (typeof import.meta === 'undefined' || !import.meta.env) {
-        throw new Error('Environment variables not available. Make sure you have a .env file with VITE_DATABASE_SERVER_URL (e.g. http://localhost:3001 or https://quixote.tail3f19fe.ts.net:3001)');
+      const envSource =
+        (typeof import.meta !== 'undefined' && import.meta.env)
+          ? import.meta.env
+          : (typeof process !== 'undefined' ? (process.env as Record<string, string | undefined>) : undefined);
+
+      if (!envSource) {
+        throw new Error('Environment variables not available. Set VITE_DATABASE_SERVER_URL in your .env file (e.g. http://localhost:3001).');
       }
-      
-      const env = import.meta.env;
-      if (!env.VITE_DATABASE_SERVER_URL) {
+
+      const resolvedBaseUrl = envSource.VITE_DATABASE_SERVER_URL;
+      if (!resolvedBaseUrl) {
         throw new Error('VITE_DATABASE_SERVER_URL environment variable is required. Add VITE_DATABASE_SERVER_URL=http://localhost:3001 (or your HTTPS endpoint) to your .env file');
       }
-      
-      this.baseUrl = env.VITE_DATABASE_SERVER_URL;
+
+      this.baseUrl = resolvedBaseUrl;
       console.log('[Database] Initializing PostgreSQL client with server:', this.baseUrl);
     }
   }
