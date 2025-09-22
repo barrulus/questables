@@ -175,6 +175,22 @@ export const useWebSocket = (campaignId: string) => {
       console.log('[Socket.io] Presence update:', data);
     });
 
+    socket.on('player-moved', (data) => {
+      setMessages((prev) => [...prev, { type: 'player-moved', data }]);
+    });
+
+    socket.on('player-teleported', (data) => {
+      setMessages((prev) => [...prev, { type: 'player-teleported', data }]);
+    });
+
+    socket.on('spawn-updated', (data) => {
+      setMessages((prev) => [...prev, { type: 'spawn-updated', data }]);
+    });
+
+    socket.on('spawn-deleted', (data) => {
+      setMessages((prev) => [...prev, { type: 'spawn-deleted', data }]);
+    });
+
     socket.on('error', (error) => {
       console.error('[Socket.io] Server error:', error);
     });

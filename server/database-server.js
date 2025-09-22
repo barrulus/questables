@@ -647,6 +647,262 @@ const pool = new Pool({
 // Set database pool for auth middleware
 setDatabasePool(pool);
 
+const MOVE_MODES = ['walk', 'ride', 'boat', 'fly', 'teleport', 'gm'];
+const MOVE_MODE_SET = new Set(MOVE_MODES);
+const TELEPORT_MODES = new Set(['teleport', 'gm']);
+const DEFAULT_VISIBILITY_RADIUS = Number.parseFloat(process.env.CAMPAIGN_VISIBILITY_RADIUS ?? '') || 500;
+const MAX_MOVE_DISTANCE = Math.max(0, Number.parseFloat(process.env.CAMPAIGN_MAX_MOVE_DISTANCE ?? '') || 500);
+const MIN_MOVE_INTERVAL_MS = Math.max(0, Number.parseFloat(process.env.CAMPAIGN_MIN_MOVE_INTERVAL_MS ?? '') || 1000);
+
+const isAdminUser = (user) => Array.isArray(user?.roles) && user.roles.includes('admin');
+
+const extractNumeric = (value) => {
+  if (value === undefined || value === null) return null;
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? parsed : null;
+};
+
+const normalizeTargetCoordinates = (input) => {
+  if (!input || typeof input !== 'object') return null;
+  const candidate = input.target && typeof input.target === 'object' ? input.target : input;
+  const x = extractNumeric(
+    candidate.x ?? candidate.lon ?? candidate.lng ?? candidate.longitude ?? candidate.east ?? candidate.right
+  );
+  const y = extractNumeric(
+    candidate.y ?? candidate.lat ?? candidate.latitude ?? candidate.north ?? candidate.top
+  );
+  if (x === null || y === null) {
+    return null;
+  }
+  return { x, y };
+};
+
+const parseBounds = (bounds) => {
+  if (!bounds) return null;
+  const source = typeof bounds === 'string' ? (() => {
+    try {
+      return JSON.parse(bounds);
+    } catch (error) {
+      return null;
+    }
+  })() : bounds;
+
+  if (!source) return null;
+
+  const west = extractNumeric(source.west);
+  const east = extractNumeric(source.east);
+  const south = extractNumeric(source.south);
+  const north = extractNumeric(source.north);
+
+  if ([west, east, south, north].some((value) => value === null)) {
+    return null;
+  }
+
+  return { west, east, south, north };
+};
+
+const pointWithinBounds = (bounds, x, y) => {
+  const parsed = parseBounds(bounds);
+  if (!parsed) return false;
+  return x >= parsed.west && x <= parsed.east && y >= parsed.south && y <= parsed.north;
+};
+
+const sanitizeReason = (reason) => {
+  if (typeof reason !== 'string') return null;
+  const trimmed = reason.trim();
+  if (!trimmed) return null;
+  return trimmed.length > 512 ? trimmed.slice(0, 512) : trimmed;
+};
+
+const resolveCampaignViewerContext = async (client, campaignId, userId) => {
+  const { rows } = await client.query(
+    `SELECT 
+        CASE 
+          WHEN c.dm_user_id = $2 THEN 'dm'
+          WHEN cp.role = 'co-dm' THEN 'co-dm'
+          WHEN cp.user_id IS NOT NULL THEN 'player'
+          ELSE NULL
+        END AS role,
+        cp.id AS campaign_player_id
+      FROM public.campaigns c
+      LEFT JOIN public.campaign_players cp
+        ON cp.campaign_id = c.id
+       AND cp.user_id = $2
+      WHERE c.id = $1
+      LIMIT 1`,
+    [campaignId, userId]
+  );
+  if (rows.length === 0) {
+    return { role: null, campaign_player_id: null };
+  }
+  return rows[0];
+};
+
+const getViewerContextOrThrow = async (client, campaignId, user) => {
+  const viewer = await resolveCampaignViewerContext(client, campaignId, user.id);
+  const isAdmin = isAdminUser(user);
+  const role = viewer.role || (isAdmin ? 'dm' : null);
+
+  if (!role && !isAdmin) {
+    const error = new Error('You must be part of this campaign to access this resource');
+    error.status = 403;
+    error.code = 'campaign_access_forbidden';
+    throw error;
+  }
+
+  return { ...viewer, role, isAdmin };
+};
+
+const performPlayerMovement = async ({
+  client,
+  campaignId,
+  playerId,
+  requestorUserId,
+  requestorRole,
+  isRequestorAdmin = false,
+  targetX,
+  targetY,
+  mode,
+  reason,
+  enforceClamp = true,
+}) => {
+  if (!MOVE_MODE_SET.has(mode)) {
+    const error = new Error(`Unsupported movement mode: ${mode}`);
+    error.status = 400;
+    error.code = 'invalid_mode';
+    throw error;
+  }
+
+  const isDungeonMaster = isRequestorAdmin || ['dm', 'co-dm'].includes(requestorRole);
+
+  const movementQuery = await client.query(
+    `SELECT 
+        cp.id,
+        cp.user_id,
+        cp.role AS player_role,
+        cp.status,
+        ST_AsText(cp.loc_current) AS loc_current_wkt,
+        cp.last_located_at,
+        c.world_map_id,
+        c.dm_user_id,
+        cp.visibility_state,
+        mw.bounds,
+        ST_Distance(cp.loc_current, ST_SetSRID(ST_MakePoint($3, $4), 0)) AS requested_distance
+      FROM public.campaign_players cp
+      JOIN public.campaigns c ON cp.campaign_id = c.id
+      LEFT JOIN public.maps_world mw ON c.world_map_id = mw.id
+      WHERE cp.id = $1 AND cp.campaign_id = $2
+      FOR UPDATE`,
+    [playerId, campaignId, targetX, targetY]
+  );
+
+  if (movementQuery.rowCount === 0) {
+    const error = new Error('Player not found in campaign');
+    error.status = 404;
+    error.code = 'player_not_found';
+    throw error;
+  }
+
+  const playerRow = movementQuery.rows[0];
+
+  if (!isDungeonMaster && playerRow.user_id !== requestorUserId) {
+    const error = new Error('You may only move your own token');
+    error.status = 403;
+    error.code = 'movement_forbidden';
+    throw error;
+  }
+
+  if (playerRow.status !== 'active') {
+    const error = new Error('Only active campaign participants can be moved');
+    error.status = 409;
+    error.code = 'player_inactive';
+    throw error;
+  }
+
+  if (!playerRow.world_map_id) {
+    const error = new Error('Campaign world map is not configured for movement');
+    error.status = 409;
+    error.code = 'campaign_missing_map';
+    throw error;
+  }
+
+  if (!pointWithinBounds(playerRow.bounds, targetX, targetY)) {
+    const error = new Error('Target coordinates are outside the campaign map bounds');
+    error.status = 422;
+    error.code = 'movement_out_of_bounds';
+    throw error;
+  }
+
+  if (enforceClamp && playerRow.requested_distance !== null && playerRow.requested_distance > MAX_MOVE_DISTANCE) {
+    const error = new Error(`Requested movement exceeds the maximum distance of ${MAX_MOVE_DISTANCE}`);
+    error.status = 422;
+    error.code = 'movement_distance_exceeded';
+    throw error;
+  }
+
+  if (
+    enforceClamp &&
+    playerRow.last_located_at &&
+    MIN_MOVE_INTERVAL_MS > 0 &&
+    !isDungeonMaster
+  ) {
+    const last = new Date(playerRow.last_located_at);
+    const elapsed = Date.now() - last.getTime();
+    if (elapsed < MIN_MOVE_INTERVAL_MS) {
+      const error = new Error('Movement rate limit exceeded');
+      error.status = 429;
+      error.code = 'movement_rate_limited';
+      throw error;
+    }
+  }
+
+  const updateResult = await client.query(
+    `UPDATE public.campaign_players
+        SET loc_current = ST_SetSRID(ST_MakePoint($2, $3), 0),
+            last_located_at = NOW()
+      WHERE id = $1
+      RETURNING id, campaign_id, user_id, character_id, role, visibility_state,
+                ST_AsGeoJSON(loc_current)::json AS geometry,
+                last_located_at`,
+    [playerId, targetX, targetY]
+  );
+
+  await client.query(
+    `INSERT INTO public.player_movement_audit
+        (campaign_id, player_id, moved_by, mode, reason, previous_loc, new_loc)
+      VALUES
+        ($1, $2, $3, $4, $5,
+         CASE WHEN $6 IS NULL THEN NULL ELSE ST_SetSRID(ST_GeomFromText($6), 0) END,
+         ST_SetSRID(ST_MakePoint($7, $8), 0))`,
+    [
+      campaignId,
+      playerId,
+      requestorUserId,
+      mode,
+      reason,
+      playerRow.loc_current_wkt,
+      targetX,
+      targetY,
+    ]
+  );
+
+  return {
+    player: updateResult.rows[0],
+    requestedDistance: playerRow.requested_distance,
+  };
+};
+
+const formatSpawnRow = (row) => ({
+  id: row.id,
+  campaignId: row.campaign_id,
+  name: row.name,
+  description: row.description,
+  isDefault: row.is_default,
+  geometry: row.geometry,
+  createdAt: row.created_at instanceof Date ? row.created_at.toISOString() : row.created_at,
+  updatedAt: row.updated_at instanceof Date ? row.updated_at.toISOString() : row.updated_at,
+});
+
 const loadProviderConfigurations = async () => {
   try {
     const { rows } = await pool.query(
@@ -1298,10 +1554,15 @@ pool.connect(async (err, client, release) => {
         UPDATE user_profiles
         SET roles = (
           SELECT ARRAY(
-            SELECT DISTINCT role_value
-            FROM unnest(COALESCE(user_profiles.roles, ARRAY[]::TEXT[]) || ARRAY['player']) AS role_value
-            WHERE role_value = ANY(allowed_roles)
-            ORDER BY CASE role_value
+            SELECT role_value
+            FROM (
+              SELECT DISTINCT role_value
+              FROM unnest(
+                COALESCE(user_profiles.roles, ARRAY[]::TEXT[]) || ARRAY['player']
+              ) AS role_value
+              WHERE role_value = ANY(allowed_roles)
+            ) AS distinct_roles
+            ORDER BY CASE distinct_roles.role_value
               WHEN 'admin' THEN 1
               WHEN 'dm' THEN 2
               ELSE 3
@@ -1369,7 +1630,12 @@ app.post('/api/database/spatial/:function', async (req, res) => {
     switch (functionName) {
       case 'get_burgs_near_point':
         sql = 'SELECT * FROM get_burgs_near_point($1, $2, $3, $4)';
-        queryParams = [params.world_map_id, params.lat, params.lng, params.radius_km];
+        queryParams = [
+          params.world_map_id,
+          params.x ?? params.lng ?? params.lon ?? params.lat,
+          params.y ?? params.lat ?? params.latY,
+          params.radius ?? params.radius_units ?? params.radius_km,
+        ];
         break;
 
       case 'get_routes_between_points':
@@ -1423,10 +1689,8 @@ app.post('/api/database/spatial/:function', async (req, res) => {
             plaza,
             temple,
             shanty,
-            xworld,
-            yworld,
-            xpixel,
-            ypixel,
+            x_px,
+            y_px,
             cell,
             ST_AsGeoJSON(geom)::json AS geometry
           FROM public.maps_burgs
@@ -1928,7 +2192,12 @@ app.get('/api/campaigns/:id', async (req, res) => {
       return res.status(404).json({ error: 'Campaign not found' });
     }
 
-    res.json({ campaign: result.rows[0] });
+    const campaign = result.rows[0];
+    if (!Object.prototype.hasOwnProperty.call(campaign, 'visibility_radius')) {
+      campaign.visibility_radius = DEFAULT_VISIBILITY_RADIUS;
+    }
+
+    res.json({ campaign });
   } catch (error) {
     console.error('[Campaigns] Get error:', error);
     res.status(500).json({ error: 'Failed to fetch campaign' });
@@ -1999,8 +2268,13 @@ app.get('/api/campaigns/:campaignId/characters', async (req, res) => {
     const result = await client.query(`
       SELECT
         c.*,
+        cp.id AS campaign_player_id,
+        cp.user_id AS campaign_user_id,
         cp.role,
-        cp.status
+        cp.status,
+        cp.visibility_state,
+        ST_AsGeoJSON(cp.loc_current)::json AS loc_geometry,
+        cp.last_located_at
       FROM campaign_players cp
       JOIN characters c ON cp.character_id = c.id
       WHERE cp.campaign_id = $1
@@ -2036,6 +2310,712 @@ app.delete('/api/campaigns/:campaignId/players/:userId', async (req, res) => {
     res.status(500).json({ error: 'Failed to leave campaign' });
   }
 });
+
+app.post(
+  '/api/campaigns/:campaignId/players/:playerId/move',
+  requireAuth,
+  requireCampaignParticipation,
+  async (req, res) => {
+    const { campaignId, playerId } = req.params;
+    const target = normalizeTargetCoordinates(
+      req.body?.target ?? req.body?.position ?? req.body
+    );
+
+    if (!target) {
+      return res.status(400).json({
+        error: 'invalid_target',
+        message: 'Target coordinates are required (provide x/y in SRID-0 units).',
+      });
+    }
+
+    const modeRaw = typeof req.body?.mode === 'string' ? req.body.mode.trim().toLowerCase() : 'walk';
+    if (!MOVE_MODE_SET.has(modeRaw)) {
+      return res.status(400).json({
+        error: 'invalid_mode',
+        message: `Movement mode must be one of: ${MOVE_MODES.join(', ')}`,
+      });
+    }
+
+    const reason = sanitizeReason(req.body?.reason);
+
+    const client = await pool.connect();
+    try {
+      await client.query('BEGIN');
+      const viewer = await getViewerContextOrThrow(client, campaignId, req.user);
+
+      if (!viewer.isAdmin && viewer.role === 'player' && viewer.campaign_player_id !== playerId) {
+        const error = new Error('You may only move your own token');
+        error.status = 403;
+        error.code = 'movement_forbidden';
+        throw error;
+      }
+
+      if (TELEPORT_MODES.has(modeRaw) && !viewer.isAdmin && !['dm', 'co-dm'].includes(viewer.role)) {
+        const error = new Error('Teleportation requires DM privileges');
+        error.status = 403;
+        error.code = 'teleport_forbidden';
+        throw error;
+      }
+
+      const { player, requestedDistance } = await performPlayerMovement({
+        client,
+        campaignId,
+        playerId,
+        requestorUserId: req.user.id,
+        requestorRole: viewer.role,
+        isRequestorAdmin: viewer.isAdmin,
+        targetX: target.x,
+        targetY: target.y,
+        mode: modeRaw,
+        reason,
+        enforceClamp: !(viewer.isAdmin || ['dm', 'co-dm'].includes(viewer.role) || TELEPORT_MODES.has(modeRaw)),
+      });
+
+      await client.query('COMMIT');
+
+      if (player?.id && wsServer) {
+        wsServer.broadcastToCampaign(campaignId, 'player-moved', {
+          playerId: player.id,
+          geometry: player.geometry,
+          visibilityState: player.visibility_state,
+          mode: modeRaw,
+          movedBy: req.user.id,
+          updatedAt: player.last_located_at,
+          distance: typeof requestedDistance === 'number' ? requestedDistance : null,
+          reason: reason ?? null,
+        });
+      }
+
+      res.json({
+        playerId: player.id,
+        geometry: player.geometry,
+        visibilityState: player.visibility_state,
+        lastLocatedAt: player.last_located_at
+          ? new Date(player.last_located_at).toISOString()
+          : null,
+        mode: modeRaw,
+        distance: typeof requestedDistance === 'number' ? requestedDistance : null,
+        reason: reason ?? null,
+      });
+    } catch (error) {
+      await client.query('ROLLBACK').catch(() => {});
+      console.error('[Movement] Player move error:', error);
+      res.status(error.status || 500).json({
+        error: error.code || 'move_failed',
+        message: error.message || 'Failed to move player',
+      });
+    } finally {
+      client.release();
+    }
+  }
+);
+
+app.post(
+  '/api/campaigns/:campaignId/players/:playerId/teleport',
+  requireAuth,
+  requireCampaignParticipation,
+  async (req, res) => {
+    const { campaignId, playerId } = req.params;
+    const client = await pool.connect();
+    try {
+      await client.query('BEGIN');
+      const viewer = await getViewerContextOrThrow(client, campaignId, req.user);
+
+      if (!viewer.isAdmin && !['dm', 'co-dm'].includes(viewer.role)) {
+        const error = new Error('Teleportation requires DM privileges');
+        error.status = 403;
+        error.code = 'teleport_forbidden';
+        throw error;
+      }
+
+      let target = null;
+      let spawnMeta = null;
+
+      if (req.body?.spawnId) {
+        const spawnResult = await client.query(
+          `SELECT id, campaign_id, name, description, is_default,
+                  ST_X(world_position) AS x,
+                  ST_Y(world_position) AS y,
+                  ST_AsGeoJSON(world_position)::json AS geometry
+             FROM public.campaign_spawns
+            WHERE id = $1 AND campaign_id = $2`,
+          [req.body.spawnId, campaignId]
+        );
+
+        if (spawnResult.rowCount === 0) {
+          const error = new Error('Spawn point not found for this campaign');
+          error.status = 404;
+          error.code = 'spawn_not_found';
+          throw error;
+        }
+
+        const spawnRow = spawnResult.rows[0];
+        spawnMeta = spawnRow;
+        target = {
+          x: Number(spawnRow.x),
+          y: Number(spawnRow.y),
+        };
+      }
+
+      if (!target) {
+        target = normalizeTargetCoordinates(
+          req.body?.target ?? req.body?.position ?? req.body
+        );
+      }
+
+      if (!target) {
+        const error = new Error('Target coordinates or spawnId are required for teleport');
+        error.status = 400;
+        error.code = 'invalid_target';
+        throw error;
+      }
+
+      const inferredReason = spawnMeta ? `Teleport to spawn: ${spawnMeta.name}` : null;
+      const reason = sanitizeReason(req.body?.reason ?? inferredReason);
+
+      const { player } = await performPlayerMovement({
+        client,
+        campaignId,
+        playerId,
+        requestorUserId: req.user.id,
+        requestorRole: viewer.role,
+        isRequestorAdmin: viewer.isAdmin,
+        targetX: target.x,
+        targetY: target.y,
+        mode: 'teleport',
+        reason,
+        enforceClamp: false,
+      });
+
+      await client.query('COMMIT');
+
+      if (player?.id && wsServer) {
+        wsServer.broadcastToCampaign(campaignId, 'player-teleported', {
+          playerId: player.id,
+          geometry: player.geometry,
+          visibilityState: player.visibility_state,
+          mode: 'teleport',
+          movedBy: req.user.id,
+          spawn: spawnMeta
+            ? {
+                id: spawnMeta.id,
+                name: spawnMeta.name,
+                description: spawnMeta.description,
+                isDefault: spawnMeta.is_default,
+              }
+            : null,
+          reason: reason ?? null,
+          updatedAt: player.last_located_at,
+        });
+      }
+
+      res.json({
+        playerId: player.id,
+        geometry: player.geometry,
+        visibilityState: player.visibility_state,
+        lastLocatedAt: player.last_located_at
+          ? new Date(player.last_located_at).toISOString()
+          : null,
+        mode: 'teleport',
+        reason: reason ?? null,
+        spawn: spawnMeta
+          ? {
+              id: spawnMeta.id,
+              name: spawnMeta.name,
+              description: spawnMeta.description,
+              isDefault: spawnMeta.is_default,
+              geometry: spawnMeta.geometry,
+            }
+          : null,
+      });
+    } catch (error) {
+      await client.query('ROLLBACK').catch(() => {});
+      console.error('[Movement] Player teleport error:', error);
+      res.status(error.status || 500).json({
+        error: error.code || 'teleport_failed',
+        message: error.message || 'Failed to teleport player',
+      });
+    } finally {
+      client.release();
+    }
+  }
+);
+
+app.get(
+  '/api/campaigns/:campaignId/spawns',
+  requireAuth,
+  requireCampaignParticipation,
+  async (req, res) => {
+    const { campaignId } = req.params;
+    const client = await pool.connect();
+    try {
+      const viewer = await getViewerContextOrThrow(client, campaignId, req.user);
+      if (!viewer.isAdmin && !['dm', 'co-dm'].includes(viewer.role)) {
+        return res.status(403).json({
+          error: 'spawn_access_forbidden',
+          message: 'Only DMs can view campaign spawn points.',
+        });
+      }
+
+      const { rows } = await client.query(
+        `SELECT id, campaign_id, name, description, is_default,
+                ST_AsGeoJSON(world_position)::json AS geometry,
+                created_at, updated_at
+           FROM public.campaign_spawns
+          WHERE campaign_id = $1
+          ORDER BY is_default DESC, name ASC`,
+        [campaignId]
+      );
+
+      res.json({ spawns: rows.map(formatSpawnRow) });
+    } catch (error) {
+      console.error('[Spawns] List error:', error);
+      res.status(500).json({ error: 'Failed to fetch spawns' });
+    } finally {
+      client.release();
+    }
+  }
+);
+
+app.post(
+  '/api/campaigns/:campaignId/spawns',
+  requireAuth,
+  requireCampaignParticipation,
+  async (req, res) => {
+    const { campaignId } = req.params;
+    const { name } = req.body ?? {};
+    if (typeof name !== 'string' || !name.trim()) {
+      return res.status(400).json({
+        error: 'invalid_spawn_name',
+        message: 'Spawn name is required.',
+      });
+    }
+
+    const target = normalizeTargetCoordinates(
+      req.body?.worldPosition ?? req.body?.position ?? req.body?.target ?? req.body
+    );
+
+    if (!target) {
+      return res.status(400).json({
+        error: 'invalid_target',
+        message: 'Spawn world_position must provide x/y coordinates.',
+      });
+    }
+
+    const description = typeof req.body?.description === 'string' ? req.body.description.trim() || null : null;
+    const isDefault = Boolean(req.body?.isDefault);
+
+    const client = await pool.connect();
+    try {
+      await client.query('BEGIN');
+      const viewer = await getViewerContextOrThrow(client, campaignId, req.user);
+      if (!viewer.isAdmin && !['dm', 'co-dm'].includes(viewer.role)) {
+        const error = new Error('Only DMs can create spawn points');
+        error.status = 403;
+        error.code = 'spawn_forbidden';
+        throw error;
+      }
+
+      const insertResult = await client.query(
+        `INSERT INTO public.campaign_spawns
+           (campaign_id, name, description, world_position, is_default, created_by, updated_by)
+         VALUES
+           ($1, $2, $3, ST_SetSRID(ST_MakePoint($4, $5), 0), $6, $7, $7)
+         RETURNING id, campaign_id, name, description, is_default,
+                   ST_AsGeoJSON(world_position)::json AS geometry,
+                   created_at, updated_at`,
+        [campaignId, name.trim(), description, target.x, target.y, isDefault, req.user.id]
+      );
+
+      const spawnRow = insertResult.rows[0];
+
+      if (isDefault) {
+        await client.query(
+          `UPDATE public.campaign_spawns
+              SET is_default = false, updated_at = NOW(), updated_by = $2
+            WHERE campaign_id = $1 AND id <> $3 AND is_default = true`,
+          [campaignId, req.user.id, spawnRow.id]
+        );
+      }
+
+      await client.query('COMMIT');
+
+      if (wsServer) {
+        wsServer.broadcastToCampaign(campaignId, 'spawn-updated', {
+          action: 'created',
+          spawn: formatSpawnRow(spawnRow),
+        });
+      }
+
+      res.status(201).json({ spawn: formatSpawnRow(spawnRow) });
+    } catch (error) {
+      await client.query('ROLLBACK').catch(() => {});
+      console.error('[Spawns] Create error:', error);
+      res.status(error.status || 500).json({
+        error: error.code || 'spawn_create_failed',
+        message: error.message || 'Failed to create spawn',
+      });
+    } finally {
+      client.release();
+    }
+  }
+);
+
+app.put(
+  '/api/campaigns/:campaignId/spawns/:spawnId',
+  requireAuth,
+  requireCampaignParticipation,
+  async (req, res) => {
+    const { campaignId, spawnId } = req.params;
+    const client = await pool.connect();
+    try {
+      await client.query('BEGIN');
+      const viewer = await getViewerContextOrThrow(client, campaignId, req.user);
+      if (!viewer.isAdmin && !['dm', 'co-dm'].includes(viewer.role)) {
+        const error = new Error('Only DMs can update spawn points');
+        error.status = 403;
+        error.code = 'spawn_forbidden';
+        throw error;
+      }
+
+      const target = normalizeTargetCoordinates(
+        req.body?.worldPosition ?? req.body?.position ?? req.body?.target
+      );
+
+      const fields = [];
+      const values = [];
+      let paramIndex = 1;
+
+      if (typeof req.body?.name === 'string' && req.body.name.trim()) {
+        fields.push(`name = $${paramIndex++}`);
+        values.push(req.body.name.trim());
+      }
+
+      if (req.body?.description !== undefined) {
+        fields.push(`description = $${paramIndex++}`);
+        values.push(
+          typeof req.body.description === 'string'
+            ? req.body.description.trim() || null
+            : null
+        );
+      }
+
+      if (target) {
+        fields.push(`world_position = ST_SetSRID(ST_MakePoint($${paramIndex}, $${paramIndex + 1}), 0)`);
+        values.push(target.x, target.y);
+        paramIndex += 2;
+      }
+
+      if (typeof req.body?.isDefault === 'boolean') {
+        fields.push(`is_default = $${paramIndex++}`);
+        values.push(req.body.isDefault);
+      }
+
+      if (fields.length === 0) {
+        const error = new Error('No valid fields provided for update');
+        error.status = 400;
+        error.code = 'spawn_noop';
+        throw error;
+      }
+
+      fields.push(`updated_at = NOW()`);
+      fields.push(`updated_by = $${paramIndex++}`);
+      values.push(req.user.id);
+
+      values.push(campaignId);
+      values.push(spawnId);
+
+      const updateResult = await client.query(
+        `UPDATE public.campaign_spawns
+            SET ${fields.join(', ')}
+          WHERE campaign_id = $${paramIndex - 1} AND id = $${paramIndex}
+          RETURNING id, campaign_id, name, description, is_default,
+                    ST_AsGeoJSON(world_position)::json AS geometry,
+                    created_at, updated_at`,
+        values
+      );
+
+      if (updateResult.rowCount === 0) {
+        const error = new Error('Spawn point not found');
+        error.status = 404;
+        error.code = 'spawn_not_found';
+        throw error;
+      }
+
+      const spawnRow = updateResult.rows[0];
+
+      if (spawnRow.is_default) {
+        await client.query(
+          `UPDATE public.campaign_spawns
+              SET is_default = false, updated_at = NOW(), updated_by = $2
+            WHERE campaign_id = $1 AND id <> $3 AND is_default = true`,
+          [campaignId, req.user.id, spawnRow.id]
+        );
+      }
+
+      await client.query('COMMIT');
+
+      if (wsServer) {
+        wsServer.broadcastToCampaign(campaignId, 'spawn-updated', {
+          action: 'updated',
+          spawn: formatSpawnRow(spawnRow),
+        });
+      }
+
+      res.json({ spawn: formatSpawnRow(spawnRow) });
+    } catch (error) {
+      await client.query('ROLLBACK').catch(() => {});
+      console.error('[Spawns] Update error:', error);
+      res.status(error.status || 500).json({
+        error: error.code || 'spawn_update_failed',
+        message: error.message || 'Failed to update spawn',
+      });
+    } finally {
+      client.release();
+    }
+  }
+);
+
+app.delete(
+  '/api/campaigns/:campaignId/spawns/:spawnId',
+  requireAuth,
+  requireCampaignParticipation,
+  async (req, res) => {
+    const { campaignId, spawnId } = req.params;
+    const client = await pool.connect();
+    try {
+      const viewer = await getViewerContextOrThrow(client, campaignId, req.user);
+      if (!viewer.isAdmin && !['dm', 'co-dm'].includes(viewer.role)) {
+        return res.status(403).json({
+          error: 'spawn_forbidden',
+          message: 'Only DMs can delete spawn points.',
+        });
+      }
+
+      const deleteResult = await client.query(
+        'DELETE FROM public.campaign_spawns WHERE campaign_id = $1 AND id = $2 RETURNING id',
+        [campaignId, spawnId]
+      );
+
+      if (deleteResult.rowCount === 0) {
+        return res.status(404).json({
+          error: 'spawn_not_found',
+          message: 'Spawn point not found.',
+        });
+      }
+
+      if (wsServer) {
+        wsServer.broadcastToCampaign(campaignId, 'spawn-deleted', {
+          spawnId,
+        });
+      }
+
+      res.json({ success: true });
+    } catch (error) {
+      console.error('[Spawns] Delete error:', error);
+      res.status(500).json({ error: 'Failed to delete spawn' });
+    } finally {
+      client.release();
+    }
+  }
+);
+
+app.get(
+  '/api/campaigns/:campaignId/players/visible',
+  requireAuth,
+  requireCampaignParticipation,
+  async (req, res) => {
+    const { campaignId } = req.params;
+    const radiusOverride = extractNumeric(req.query?.radius);
+    const radius = radiusOverride !== null ? Math.max(radiusOverride, 0) : DEFAULT_VISIBILITY_RADIUS;
+
+    const client = await pool.connect();
+    try {
+      const viewer = await getViewerContextOrThrow(client, campaignId, req.user);
+
+      const { rows } = await client.query(
+        `SELECT player_id, user_id, character_id, role, visibility_state,
+                ST_AsGeoJSON(loc)::json AS geometry,
+                can_view_history
+           FROM visible_player_positions($1, $2, $3)` ,
+        [campaignId, req.user.id, radius]
+      );
+
+      const features = rows.map((row) => ({
+        type: 'Feature',
+        geometry: row.geometry,
+        properties: {
+          playerId: row.player_id,
+          userId: row.user_id,
+          characterId: row.character_id,
+          role: row.role,
+          visibilityState: row.visibility_state,
+          canViewHistory: row.can_view_history,
+        },
+      }));
+
+      res.json({
+        type: 'FeatureCollection',
+        features,
+        metadata: {
+          radius,
+          viewerRole: viewer.role,
+        },
+      });
+    } catch (error) {
+      console.error('[Movement] Visible players error:', error);
+      res.status(500).json({ error: 'Failed to load visible players' });
+    } finally {
+      client.release();
+    }
+  }
+);
+
+app.get(
+  '/api/campaigns/:campaignId/players/:playerId/trail',
+  requireAuth,
+  requireCampaignParticipation,
+  async (req, res) => {
+    const { campaignId, playerId } = req.params;
+    const radiusOverride = extractNumeric(req.query?.radius);
+    const radius = radiusOverride !== null ? Math.max(radiusOverride, 0) : DEFAULT_VISIBILITY_RADIUS;
+
+    const client = await pool.connect();
+    try {
+      const viewer = await getViewerContextOrThrow(client, campaignId, req.user);
+
+      const visibilityCheck = await client.query(
+        `SELECT player_id, can_view_history
+           FROM visible_player_positions($1, $2, $3)
+          WHERE player_id = $4`,
+        [campaignId, req.user.id, radius, playerId]
+      );
+
+      const canViewHistory = visibilityCheck.rowCount > 0 && visibilityCheck.rows[0].can_view_history;
+      const isSelf = viewer.campaign_player_id && viewer.campaign_player_id === playerId;
+      const isDungeonMaster = viewer.isAdmin || ['dm', 'co-dm'].includes(viewer.role);
+
+      if (!isDungeonMaster && !isSelf && !canViewHistory) {
+        return res.status(403).json({
+          error: 'trail_hidden',
+          message: 'Trail is not visible to the current user.',
+        });
+      }
+
+      const trailResult = await client.query(
+        `SELECT ST_AsGeoJSON(trail_geom)::json AS geometry,
+                point_count,
+                recorded_from,
+                recorded_to
+           FROM public.v_player_recent_trails
+          WHERE campaign_id = $1 AND player_id = $2`,
+        [campaignId, playerId]
+      );
+
+      if (trailResult.rowCount === 0) {
+        return res.status(404).json({
+          error: 'trail_not_found',
+          message: 'No trail data recorded for this player.',
+        });
+      }
+
+      const trail = trailResult.rows[0];
+
+      res.json({
+        playerId,
+        geometry: trail.geometry,
+        pointCount: trail.point_count,
+        recordedFrom: trail.recorded_from ? new Date(trail.recorded_from).toISOString() : null,
+        recordedTo: trail.recorded_to ? new Date(trail.recorded_to).toISOString() : null,
+      });
+    } catch (error) {
+      console.error('[Movement] Trail fetch error:', error);
+      res.status(500).json({ error: 'Failed to load player trail' });
+    } finally {
+      client.release();
+    }
+  }
+);
+
+app.get(
+  '/api/campaigns/:campaignId/movement-audit',
+  requireAuth,
+  requireCampaignParticipation,
+  async (req, res) => {
+    const { campaignId } = req.params;
+    const limitParam = Number.parseInt(req.query?.limit, 10);
+    const limit = Number.isFinite(limitParam) ? Math.min(Math.max(limitParam, 1), 200) : 50;
+    const beforeRaw = req.query?.before;
+    let before = null;
+
+    if (beforeRaw) {
+      const timestamp = Date.parse(beforeRaw);
+      if (Number.isNaN(timestamp)) {
+        return res.status(400).json({
+          error: 'invalid_cursor',
+          message: 'Invalid before cursor provided.',
+        });
+      }
+      before = new Date(timestamp).toISOString();
+    }
+
+    const client = await pool.connect();
+    try {
+      const viewer = await getViewerContextOrThrow(client, campaignId, req.user);
+      if (!viewer.isAdmin && !['dm', 'co-dm'].includes(viewer.role)) {
+        return res.status(403).json({
+          error: 'audit_forbidden',
+          message: 'Only campaign DMs can review movement audits.',
+        });
+      }
+
+      const { rows } = await client.query(
+        `SELECT pma.id,
+                pma.player_id,
+                pma.moved_by,
+                pma.mode,
+                pma.reason,
+                pma.created_at,
+                ST_AsGeoJSON(pma.previous_loc)::json AS previous_geometry,
+                ST_AsGeoJSON(pma.new_loc)::json AS new_geometry,
+                cp.user_id,
+                cp.character_id
+           FROM public.player_movement_audit pma
+           LEFT JOIN public.campaign_players cp ON cp.id = pma.player_id
+          WHERE pma.campaign_id = $1
+            AND ($3::timestamptz IS NULL OR pma.created_at < $3)
+          ORDER BY pma.created_at DESC
+          LIMIT $2`,
+        [campaignId, limit, before]
+      );
+
+      res.json({
+        entries: rows.map((row) => ({
+          id: row.id,
+          playerId: row.player_id,
+          movedBy: row.moved_by,
+          mode: row.mode,
+          reason: row.reason,
+          createdAt: row.created_at ? new Date(row.created_at).toISOString() : null,
+          previousGeometry: row.previous_geometry,
+          newGeometry: row.new_geometry,
+          userId: row.user_id,
+          characterId: row.character_id,
+        })),
+        pagination: {
+          limit,
+          before,
+          hasMore: rows.length === limit,
+        },
+      });
+    } catch (error) {
+      console.error('[Movement] Audit fetch error:', error);
+      res.status(500).json({ error: 'Failed to load movement audit' });
+    } finally {
+      client.release();
+    }
+  }
+);
 
 app.put('/api/campaigns/:id', async (req, res) => {
   const { id } = req.params;
@@ -2435,25 +3415,33 @@ app.post(
         },
       });
 
+      const derivedInteraction = npcId
+        ? deriveNpcInteraction({
+            result: generation.result,
+            interaction,
+            metadata,
+          })
+        : null;
+
       const narrativeRecord = await persistNarrative({
         campaignId,
         sessionId: generation.context.session?.id ?? validatedSessionId ?? null,
         npcId,
         requestedBy: req.user.id,
         type: NARRATIVE_TYPES.NPC_DIALOGUE,
-      result: generation.result,
-      prompt: generation.prompt,
-      metadata: {
-        ...metadata,
-        focus: focus || null,
-        parameters: parameters || null,
-        cache: generation.result.cache,
-        provider: generation.result.provider,
-        raw: generation.result.raw,
+        result: generation.result,
+        prompt: generation.prompt,
+        metadata: {
+          ...metadata,
+          focus: focus || null,
+          parameters: parameters || null,
+          cache: generation.result.cache,
+          provider: generation.result.provider,
+          raw: generation.result.raw,
+          interaction: derivedInteraction || interaction || null,
+        },
         interaction: derivedInteraction || interaction || null,
-      },
-      interaction: derivedInteraction || interaction || null,
-    });
+      });
 
       res.status(201).json({
         narrativeId: narrativeRecord.id,
@@ -2698,13 +3686,41 @@ app.get('/api/maps/:worldId/burgs', async (req, res) => {
     const { bounds } = req.query; // Optional bounding box filter
     
     const client = await pool.connect();
-    let query = 'SELECT * FROM maps_burgs WHERE world_id = $1';
+    let query = `
+      SELECT 
+        id,
+        world_id,
+        burg_id,
+        name,
+        state,
+        statefull,
+        province,
+        provincefull,
+        culture,
+        religion,
+        population,
+        populationraw,
+        elevation,
+        temperature,
+        temperaturelikeness,
+        capital,
+        port,
+        citadel,
+        walls,
+        plaza,
+        temple,
+        shanty,
+        x_px,
+        y_px,
+        cell,
+        ST_AsGeoJSON(geom)::json AS geometry
+      FROM maps_burgs WHERE world_id = $1`;
     let params = [worldId];
-    
+
     if (bounds) {
       try {
         const { north, south, east, west } = JSON.parse(bounds);
-        query += ` AND ST_Within(geom, ST_MakeEnvelope($2, $3, $4, $5, 0))`;
+        query += ` AND ST_Intersects(geom, ST_MakeEnvelope($2, $3, $4, $5, 0))`;
         params.push(west, south, east, north);
       } catch (parseError) {
         client.release();
@@ -2772,13 +3788,22 @@ app.get('/api/maps/:worldId/routes', async (req, res) => {
     const { bounds } = req.query;
     
     const client = await pool.connect();
-    let query = 'SELECT * FROM routes WHERE world_id = $1';
+    let query = `
+      SELECT 
+        id,
+        world_id,
+        route_id,
+        name,
+        type,
+        feature,
+        ST_AsGeoJSON(geom)::json AS geometry
+      FROM maps_routes WHERE world_id = $1`;
     let params = [worldId];
-    
+
     if (bounds) {
       try {
         const { north, south, east, west } = JSON.parse(bounds);
-        query += ` AND ST_Intersects(route_path, ST_MakeEnvelope($2, $3, $4, $5, 0))`;
+        query += ` AND ST_Intersects(geom, ST_MakeEnvelope($2, $3, $4, $5, 0))`;
         params.push(west, south, east, north);
       } catch (parseError) {
         client.release();
@@ -3427,7 +4452,7 @@ app.post('/api/npcs/:npcId/relationships', async (req, res) => {
     const result = await pool.query(`
       INSERT INTO npc_relationships (npc_id, target_id, target_type, relationship_type, description, strength)
       VALUES ($1, $2, $3, $4, $5, $6)
-      ON CONFLICT (npc_id, target_id) DO UPDATE SET
+      ON CONFLICT (npc_id, target_type, target_id) DO UPDATE SET
       relationship_type = EXCLUDED.relationship_type,
       description = EXCLUDED.description,
       strength = EXCLUDED.strength
@@ -3508,7 +4533,7 @@ app.post('/api/upload/map', upload.single('mapFile'), async (req, res) => {
 
       // Create world map record
       const result = await pool.query(`
-        INSERT INTO maps_world (name, description, geojson_url, bounds, uploaded_by, file_size)
+        INSERT INTO maps_world (name, description, geojson_url, bounds, uploaded_by, file_size_bytes)
         VALUES ($1, $2, $3, $4, $5, $6)
         RETURNING *
       `, [name, description, `/uploads/${req.file.filename}`, JSON.stringify(bounds), uploaded_by, req.file.size]);
@@ -3598,6 +4623,7 @@ const websocketUrl = `${websocketProtocol}://${publicHost}${portSegment}/socket.
 
 // Initialize Socket.io WebSocket server
 const wsServer = new WebSocketServerClass(server);
+app.locals.wsServer = wsServer;
 
 // Add WebSocket health check endpoint
 app.get('/api/websocket/status', (req, res) => {

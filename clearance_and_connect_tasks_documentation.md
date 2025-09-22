@@ -92,7 +92,26 @@ Always append new entries; do not erase or rewrite previous log items except to 
 - **Cleanups:** Replaced direct `setSelectedCampaign` calls with a tracked selector helper and removed silent local mutations that previously masked stale state between refreshes (`components/campaign-manager.tsx:71`).
 - **Documentation Updates:** README.md:17 (documented player-scoped filtering and manual refresh availability for campaign management); lint_report.md:3 (recorded lint run for campaign manager).
 - **Tests & Verification:** `npx eslint components/campaign-manager.tsx --ext ts,tsx` (pass).
-- **Remaining Gaps / Blockers:** Campaign editing/settings actions are still placeholders pending backend endpoints; UI now labels controls but continues to rely on future server work for those operations.
+- **Remaining Gaps / Blockers:** Campaign editing/settings actions were placeholders pending backend endpoints; UI now labels controls but continues to rely on future server work for those operations.
+
+## Task 6 – Campaign Manager & Selection Flow Fixes
+- **Date:** 2025-09-21
+- **Engineer(s):** Codex Agent
+- **Work Done:**
+  - Wired the campaign edit and settings dialogs to the live `/api/campaigns/:id` endpoint so DMs can persist metadata and access policies without dummy fallbacks (`components/campaign-manager.tsx:271`, `components/campaign-manager.tsx:379`).
+  - Extracted shared parsing and validation utilities to keep campaign forms aligned across surfaces (`components/campaign-shared.ts:1`).
+  - Replaced the in-game Settings panel placeholder with a backend-powered form that honours DM permissions and refreshes the active campaign state (`components/settings.tsx:37`).
+  - Bridged `GameSessionContext` and the map so visibility radius and viewer role flow from the live `/players/visible` metadata instead of local guesses (`contexts/GameSessionContext.tsx:16`, `components/openlayers-map.tsx:489`).
+  - Centralised 401 handling in the API client with a logout broadcast so expired sessions surface honest failures and clear tokens automatically (`utils/api-client.ts:1`, `contexts/UserContext.tsx:1`).
+  - Resolved the map runtime regression by moving the move-confirmation handler below the player loader so `loadVisiblePlayers` is initialised before use, eliminating the TDZ crash (`components/openlayers-map.tsx:1188`).
+  - Added the missing `visibility_state` column to `campaign_players` so the live map endpoints stop 500-ing on `ST_AsGeoJSON` queries (psql migration executed against local Postgres).
+- **Cleanups:** Removed the `FeatureUnavailable` stub from the settings panel and consolidated duplicate form logic into shared helpers (`components/settings.tsx:1`, `components/campaign-shared.ts:1`).
+- **Documentation Updates:** lint_report.md:41 (recorded eslint run for updated campaign settings files).
+- **Tests & Verification:**
+  - `npx eslint components/campaign-manager.tsx components/settings.tsx components/campaign-shared.ts --ext ts,tsx` (pass).
+  - `npx eslint contexts/GameSessionContext.tsx contexts/UserContext.tsx components/openlayers-map.tsx utils/api-client.ts --ext ts,tsx` (pass).
+  - `npx eslint server/database-server.js --ext js` (fails: existing Node-global lint baseline persists; no new violations from visibility radius attachment).
+- **Remaining Gaps / Blockers:** The backend `PUT /api/campaigns/:id` route still lacks explicit DM ownership enforcement; flagged to backend maintainers for follow-up hardening.
 
 ## Task 7 – Chat Systems (ChatPanel & ChatSystem) Real-Time + Persistence
 - **Date:** 2025-09-20
@@ -352,6 +371,19 @@ Always append new entries; do not erase or rewrite previous log items except to 
   - `node --input-type=module scripts/login-and-fetch-llm-metrics.js` *(inline run captured real `/api/admin/llm/metrics` and `/api/admin/llm/cache` payloads; see CLI output in session log)*
 - **Remaining Gaps / Blockers:** Maintain ongoing access to the Ollama host and admin credentials in CI so telemetry continues to reflect live traffic; lint debt in `server/database-server.js` remains outstanding from prior work.
 
+## Task – Player Token Map Integration (Phase 3)
+- **Date:** 2025-09-22
+- **Engineer(s):** Codex Agent
+- **Work Done:**
+  - Replaced the placeholder pin layer with live player tokens sourced from `/players/visible`, merging roster metadata for HP/conditions (`components/openlayers-map.tsx:1095`, `components/openlayers-map.tsx:1370`).
+  - Added trail toggles, focus controls, and the SRID-0 movement confirmation modal so DMs/players can move tokens without dummy data (`components/openlayers-map.tsx:1985`, `components/openlayers-map.tsx:2250`).
+  - Subscribed the map to `player-moved`, `player-teleported`, and spawn events so the layer refreshes on real-time updates (`components/openlayers-map.tsx:1525`, `hooks/useWebSocket.tsx:135`).
+  - Broadcast movement/teleport/spawn changes from the API to keep connected clients synchronized (`server/database-server.js:2338`, `server/database-server.js:2479`, `server/database-server.js:2411`).
+- **Cleanups:** Removed the add-pin tool and unused player style cache references from the map component (`components/openlayers-map.tsx:1970`, `components/openlayers-map.tsx:782`).
+- **Documentation Updates:** None.
+- **Tests & Verification:** `npx eslint components/openlayers-map.tsx` (pass).
+- **Remaining Gaps / Blockers:** API lint debt persists for Node globals; future work should stream trail pruning when audit retention is enforced.
+
 ## Task – Player Token Schema Foundations
 - **Date:** 2025-09-21
 - **Engineer(s):** Codex Agent
@@ -364,3 +396,30 @@ Always append new entries; do not erase or rewrite previous log items except to 
 - **Tests & Verification:** Not yet executed; will validate by replaying schema against the running Postgres instance once migration scaffolding is prepared.
 - **Remaining Gaps / Blockers:** Need to run the updated schema in migration tooling and add automated regression tests for the logging trigger before exposing the new endpoints.
 
+## Task – Database Server SRID-0 Alignment
+- **Date:** 2025-09-22
+- **Engineer(s):** Codex Agent
+- **Work Done:**
+  - Swapped the world routes endpoint to load `maps_routes.geom` with GeoJSON serialization and the SRID-0 bounding filter (`server/database-server.js:2813`).
+  - Normalized burg queries to use the new `x_px/y_px` columns, GeoJSON responses, and `ST_Intersects` envelopes so SRID-0 bounds behave consistently (`server/database-server.js:2713`, `server/database-server.js:2746`).
+  - Re-keyed NPC relationship upserts on `(npc_id, target_type, target_id)` and restored map upload inserts to `file_size_bytes` (`server/database-server.js:3476`, `server/database-server.js:3559`).
+  - Added an in-route `derivedInteraction` calculation to mirror `persistNarrative` usage and prevent undefined references (`server/database-server.js:2438`).
+  - Brought the campaigns table back in line with the asset upload endpoint via an `assets` JSONB column plus migration scaffolding (`database/schema.sql:266`, `database/migration.sql:210`).
+  - Made the schema idempotent for repeated startup loads by clearing `_touch_*` triggers before creation, dropping/recreating spatial helper functions before redefining them, and aligning the roles normalization DO-block with PostgreSQL DISTINCT ordering rules (`database/schema.sql:49`, `database/schema.sql:648`, `server/database-server.js:1298`).
+- **Cleanups:** None.
+- **Documentation Updates:** `lint_report.md:39` (recorded eslint run for database server alignment).
+- **Tests & Verification:** `npx eslint server/database-server.js` (fails: existing Node-globals lint debt remains; no new errors introduced).
+- **Remaining Gaps / Blockers:** Need to run the updated migration against the live database and resolve longstanding lint configuration gaps so Node globals stop masking regressions.
+
+## Task – Player Token Service Layer Authorization & Visibility
+- **Date:** 2025-09-22
+- **Engineer(s):** Codex Agent
+- **Work Done:**
+  - Implemented SRID-0 movement endpoints with bounds validation, rate/distance clamps, and audit logging for player moves (`server/database-server.js:2281`, `server/database-server.js:2321`).
+  - Added DM-only teleport helper backed by campaign spawns plus spawn CRUD returning GeoJSON for map overlays (`server/database-server.js:2357`, `server/database-server.js:2414`, `server/database-server.js:2481`).
+  - Exposed visibility, trail, and movement audit APIs powered by the new `visible_player_positions` helper (`server/database-server.js:2544`, `server/database-server.js:2611`, `server/database-server.js:2669`; `database/schema.sql:372`).
+  - Extended the schema with `visibility_state`, SRID-0 spawns, movement audit log, and visibility function; mirrored changes in migration script for repeatable loads (`database/schema.sql:298`, `database/schema.sql:310`, `database/migration.sql:150`).
+- **Cleanups:** None.
+- **Documentation Updates:** `lint_report.md:40` (captured eslint execution after movement endpoints).
+- **Tests & Verification:** `npx eslint server/database-server.js` (fails: existing Node globals/unused symbol debt; confirms no new errors introduced by Phase 2 slice).
+- **Remaining Gaps / Blockers:** Pending real-time WebSocket broadcasting for token updates and repo-wide lint configuration fix so Node globals are recognised.

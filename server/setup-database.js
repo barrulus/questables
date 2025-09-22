@@ -64,9 +64,9 @@ async function setupDatabase() {
 
     // Create default admin user if it doesn't exist
     console.log('Creating default admin user...');
-    const defaultAdminUsername = process.env.DEFAULT_ADMIN_USERNAME || 'barrulus';
-    const defaultAdminEmail = process.env.DEFAULT_ADMIN_EMAIL || 'barrulus@localhost';
-    const defaultAdminPassword = process.env.DEFAULT_ADMIN_PASSWORD || 'barrulus123';
+    const defaultAdminUsername = process.env.DEFAULT_ADMIN_USERNAME || 'admin';
+    const defaultAdminEmail = process.env.DEFAULT_ADMIN_EMAIL || 'admin@localhost';
+    const defaultAdminPassword = process.env.DEFAULT_ADMIN_PASSWORD || 'admin123';
 
     try {
       const hashResult = await client.query(

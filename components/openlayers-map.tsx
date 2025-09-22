@@ -1,3 +1,4 @@
+/* eslint-disable @typescript-eslint/no-explicit-any */
 import { useEffect, useRef, useState, useCallback, useMemo } from "react";
 import type { RefObject, ReactNode } from "react";
 import { Card, CardContent, CardHeader, CardTitle } from "./ui/card";
@@ -7,6 +8,9 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from ".
 import { Badge } from "./ui/badge";
 import { Popover, PopoverTrigger, PopoverContent } from "./ui/popover";
 import { Checkbox } from "./ui/checkbox";
+import { Switch } from "./ui/switch";
+import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "./ui/dialog";
+import { Avatar, AvatarFallback, AvatarImage } from "./ui/avatar";
 import {
   MapPin,
   ZoomIn,
@@ -14,21 +18,13 @@ import {
   Move,
   Flag,
   Users,
-  Skull,
   Crown,
   Globe,
   Crosshair,
-  Trees,
-  Mountain,
-  Waves,
-  Castle,
-  Home,
-  Tent,
   Layers,
   Navigation,
   Info,
-  Search,
-  Settings
+  Search
 } from "lucide-react";
 
 // OpenLayers imports
@@ -40,22 +36,82 @@ import VectorSource from 'ol/source/Vector';
 import XYZ from 'ol/source/XYZ';
 import Feature from 'ol/Feature';
 import Point from 'ol/geom/Point';
+import LineString from 'ol/geom/LineString';
+import GeoJSON from 'ol/format/GeoJSON';
 import { Style, Fill, Stroke, Circle as CircleStyle, Text } from 'ol/style';
 import 'ol/ol.css';
 import TileGrid from 'ol/tilegrid/TileGrid';
 import { defaults as defaultControls } from 'ol/control';
 import { Overlay } from 'ol';
 import { mapDataLoader, type WorldMapBounds } from './map-data-loader';
-import { DEFAULT_PIXEL_EXTENT, questablesProjection, updateProjectionExtent } from './map-projection';
+import { DEFAULT_PIXEL_EXTENT, questablesProjection, updateProjectionExtent, PIXEL_PROJECTION_CODE } from './map-projection';
+import { useGameSession } from "../contexts/GameSessionContext";
+import { useUser } from "../contexts/UserContext";
+import { useWebSocket } from "../hooks/useWebSocket";
+import { apiFetch, fetchJson, readErrorMessage, readJsonBody } from "../utils/api-client";
+import { toast } from "sonner";
 
-interface MapPin {
-  id: string;
+interface PlayerToken {
+  playerId: string;
+  userId: string;
+  characterId?: string;
   coordinates: [number, number];
-  type: 'party' | 'enemy' | 'location' | 'treasure' | 'danger' | 'town' | 'dungeon' | 'burg' | 'marker';
   name: string;
-  visible: boolean;
-  description?: string;
-  data?: any;
+  initials: string;
+  avatarUrl?: string | null;
+  visibilityState: 'visible' | 'stealthed' | 'hidden';
+  role: string;
+  canViewHistory: boolean;
+  lastLocatedAt?: string | null;
+  hitPoints?: { current: number; max: number; temporary?: number };
+  conditions: string[];
+}
+
+interface PlayerTrailMeta {
+  feature: Feature<LineString>;
+  fetchedAt: number;
+}
+
+interface CampaignCharacterRow {
+  id: string;
+  name: string;
+  avatar_url?: string | null;
+  user_id?: string;
+  campaign_player_id?: string;
+  campaign_user_id?: string;
+  role?: string;
+  status?: string;
+  visibility_state?: string;
+  hit_points?: unknown;
+  conditions?: unknown;
+  loc_geometry?: unknown;
+  last_located_at?: string | null;
+}
+
+interface WorldMapSummary {
+  id: string;
+  name: string;
+  bounds: WorldMapBounds;
+}
+
+interface TileSetConfig {
+  id: string;
+  name: string;
+  base_url: string;
+  attribution?: string;
+  min_zoom?: number;
+  max_zoom?: number;
+  tile_size?: number;
+  wrapX?: boolean;
+}
+
+interface PopupDetails {
+  data: unknown;
+  feature: Feature;
+  featureType: string;
+  title: string;
+  rows: Array<{ label: string; value: string }> | null;
+  coordinates?: [number, number];
 }
 
 interface LayerVisibility {
@@ -65,11 +121,12 @@ interface LayerVisibility {
   cells: boolean;
   markers: boolean;
   campaignLocations: boolean;
-  userPins: boolean;
+  playerTokens: boolean;
+  playerTrails: boolean;
 }
 
 const FANTASY_TILESET_ID = 'fantasy-atlas';
-const FANTASY_TILESET = {
+const FANTASY_TILESET: TileSetConfig = {
   id: FANTASY_TILESET_ID,
   name: 'Fantasy Atlas',
   base_url: '/tiles-states/{z}/{x}/{y}.png',
@@ -81,7 +138,7 @@ const FANTASY_TILESET = {
 };
 
 const HEIGHTMAP_TILESET_ID = 'fantasy-heightmap-relief';
-const HEIGHTMAP_TILESET = {
+const HEIGHTMAP_TILESET: TileSetConfig = {
   id: HEIGHTMAP_TILESET_ID,
   name: 'Heightmap Relief',
   base_url: '/tiles-hm/{z}/{x}/{y}.png',
@@ -92,7 +149,7 @@ const HEIGHTMAP_TILESET = {
   wrapX: false
 };
 
-const BUILTIN_TILESETS = [FANTASY_TILESET, HEIGHTMAP_TILESET];
+const BUILTIN_TILESETS: TileSetConfig[] = [FANTASY_TILESET, HEIGHTMAP_TILESET];
 
 const LABEL_VISIBILITY = {
   burgs: 3,
@@ -136,7 +193,9 @@ const MARKER_TYPE_ICONS: Record<string, string> = {
   portals: '🌀'
 };
 
-const INTERACTIVE_FEATURE_TYPES = new Set(['burg', 'marker']);
+const INTERACTIVE_FEATURE_TYPES = new Set(['burg', 'marker', 'player']);
+const MOVE_PROMPT_TOAST_ID = 'player-move-selection';
+const MOVE_MODES = ['walk', 'ride', 'boat', 'fly', 'teleport', 'gm'] as const;
 
 const formatTypeLabel = (type: unknown): string => {
   if (typeof type !== 'string' || type.length === 0) {
@@ -164,7 +223,15 @@ const ROUTE_STYLE_CONFIG: Record<string, { minZoom: number; styles: Style[] }> =
       new Style({
         stroke: new Stroke({
           color: '#FFD700',
-          width: 3,
+          width: 3.5,
+          lineCap: 'round',
+          lineJoin: 'round'
+        })
+      }),
+      new Style({
+        stroke: new Stroke({
+          color: '#ee1a12ff',
+          width: 2.0,
           lineCap: 'round',
           lineJoin: 'round'
         })
@@ -177,7 +244,7 @@ const ROUTE_STYLE_CONFIG: Record<string, { minZoom: number; styles: Style[] }> =
       new Style({
         stroke: new Stroke({
           color: '#FFFFFF',
-          width: 3,
+          width: 3.5,
           lineCap: 'round',
           lineJoin: 'round'
         })
@@ -185,7 +252,7 @@ const ROUTE_STYLE_CONFIG: Record<string, { minZoom: number; styles: Style[] }> =
       new Style({
         stroke: new Stroke({
           color: '#1D4ED8',
-          width: 2,
+          width: 3.0,
           lineCap: 'round',
           lineJoin: 'round'
         })
@@ -198,7 +265,7 @@ const ROUTE_STYLE_CONFIG: Record<string, { minZoom: number; styles: Style[] }> =
       new Style({
         stroke: new Stroke({
           color: '#87CEEB',
-          width: 2,
+          width: 3.0,
           lineCap: 'round',
           lineJoin: 'round'
         })
@@ -211,7 +278,7 @@ const ROUTE_STYLE_CONFIG: Record<string, { minZoom: number; styles: Style[] }> =
       new Style({
         stroke: new Stroke({
           color: '#8B4513',
-          width: 2,
+          width: 3.0,
           lineCap: 'round',
           lineJoin: 'round'
         })
@@ -224,7 +291,7 @@ const ROUTE_STYLE_CONFIG: Record<string, { minZoom: number; styles: Style[] }> =
       new Style({
         stroke: new Stroke({
           color: '#5C4033',
-          width: 1.5,
+          width: 2.5,
           lineCap: 'round',
           lineJoin: 'round',
           lineDash: [8, 6]
@@ -238,7 +305,7 @@ const ROUTE_STYLE_CONFIG: Record<string, { minZoom: number; styles: Style[] }> =
       new Style({
         stroke: new Stroke({
           color: '#D2B48C',
-          width: 1.5,
+          width: 2.0,
           lineCap: 'round',
           lineJoin: 'round',
           lineDash: [1, 8]
@@ -246,6 +313,55 @@ const ROUTE_STYLE_CONFIG: Record<string, { minZoom: number; styles: Style[] }> =
       })
     ]
   }
+};
+
+const parseJsonValue = (value: unknown, fallback: unknown) => {
+  if (value === null || value === undefined) return fallback;
+  if (typeof value === 'object') {
+    return value;
+  }
+
+  if (typeof value === 'string') {
+    const trimmed = value.trim();
+    if (!trimmed) return fallback;
+    try {
+      return JSON.parse(trimmed);
+    } catch (error) {
+      console.warn('[OpenLayersMap] Failed to parse JSON value', error);
+      return fallback;
+    }
+  }
+
+  return fallback;
+};
+
+const computeInitials = (name?: string | null): string => {
+  if (!name) return '?';
+  const parts = name
+    .split(/\s+/)
+    .map((part) => part.trim())
+    .filter(Boolean);
+
+  if (parts.length === 0) return '?';
+  const first = parts[0].charAt(0).toUpperCase();
+  const second = parts.length > 1 ? parts[parts.length - 1].charAt(0).toUpperCase() : '';
+  return `${first}${second}` || first;
+};
+
+const normalizeConditions = (value: unknown): string[] => {
+  const parsed = parseJsonValue(value, []);
+  if (Array.isArray(parsed)) {
+    return parsed
+      .map((entry) => {
+        if (typeof entry === 'string') return entry.trim();
+        if (entry && typeof entry === 'object' && 'name' in entry && typeof entry.name === 'string') {
+          return entry.name.trim();
+        }
+        return String(entry ?? '').trim();
+      })
+      .filter(Boolean);
+  }
+  return [];
 };
 
 const BURG_ZOOM_RULES = [
@@ -289,11 +405,13 @@ const TOGGLEABLE_LAYER_OPTIONS: Array<{
   { key: 'burgs', label: 'Burgs', icon: <Crown className="w-3 h-3" /> },
   { key: 'routes', label: 'Routes', icon: <Navigation className="w-3 h-3" /> },
   { key: 'markers', label: 'Markers', icon: <MapPin className="w-3 h-3" /> },
+  { key: 'playerTokens', label: 'Players', icon: <Users className="w-3 h-3" /> },
+  { key: 'playerTrails', label: 'Trails', icon: <Flag className="w-3 h-3" /> },
 ];
 
 const DEFAULT_TILE_SIZE = 256;
 
-const createGeographicTileSource = (tileSet: any, worldBounds?: WorldMapBounds) => {
+const createGeographicTileSource = (tileSet: TileSetConfig, worldBounds?: WorldMapBounds | null) => {
   const minZoom = Number.isFinite(tileSet?.min_zoom) ? tileSet.min_zoom : 0;
   const maxZoomCandidate = Number.isFinite(tileSet?.max_zoom) ? tileSet.max_zoom : 7;
   const maxZoom = Math.max(minZoom, maxZoomCandidate);
@@ -336,12 +454,24 @@ export function OpenLayersMap() {
 
   // State
   const [mapMode, setMapMode] = useState<'world' | 'encounter'>('world');
-  const [selectedTool, setSelectedTool] = useState<'move' | 'pin' | 'measure' | 'info'>('move');
+  const [selectedTool, setSelectedTool] = useState<'move' | 'measure' | 'info'>('info');
   const [selectedWorldMap, setSelectedWorldMap] = useState<string>('');
   const [selectedTileSet, setSelectedTileSet] = useState<string>(FANTASY_TILESET_ID);
-  const [worldMaps, setWorldMaps] = useState<any[]>([]);
-  const [tileSets, setTileSets] = useState<any[]>(BUILTIN_TILESETS);
-  const [mapPins, setMapPins] = useState<MapPin[]>([]);
+  const [worldMaps, setWorldMaps] = useState<WorldMapSummary[]>([]);
+  const [tileSets, setTileSets] = useState<TileSetConfig[]>(BUILTIN_TILESETS);
+  const [playerTokens, setPlayerTokens] = useState<PlayerToken[]>([]);
+  const [playerLoading, setPlayerLoading] = useState(false);
+  const [playerError, setPlayerError] = useState<string | null>(null);
+  const [trailSelections, setTrailSelections] = useState<Record<string, boolean>>({});
+  const [trailErrors, setTrailErrors] = useState<Record<string, string | null>>({});
+  const [movementDialog, setMovementDialog] = useState<{
+    playerId: string;
+    playerName: string;
+    coordinate: [number, number];
+    currentPosition: [number, number];
+  } | null>(null);
+  const [moveMode, setMoveMode] = useState<string>('walk');
+  const [selectedPlayerId, setSelectedPlayerId] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const [currentZoom, setCurrentZoom] = useState(0);
   const [layerVisibility, setLayerVisibility] = useState<LayerVisibility>({
@@ -351,11 +481,198 @@ export function OpenLayersMap() {
     cells: false,
     markers: false,
     campaignLocations: true,
-    userPins: true
+    playerTokens: true,
+    playerTrails: false
   });
-  const [popupContent, setPopupContent] = useState<any>(null);
+  const [popupContent, setPopupContent] = useState<PopupDetails | null>(null);
 
-  const applyTileSetConstraints = useCallback((tileSet: any) => {
+  const {
+    activeCampaignId,
+    activeCampaign,
+    playerVisibilityRadius,
+    viewerRole,
+    updateVisibilityMetadata,
+  } = useGameSession();
+  const { user } = useUser();
+  const viewerRoles = useMemo(() => new Set((user?.roles ?? []).map((role) => role.toLowerCase())), [user?.roles]);
+  const viewerIsAdmin = viewerRoles.has('admin');
+  const normalizedViewerRole = viewerRole ? viewerRole.toLowerCase() : null;
+  const viewerIsDm = normalizedViewerRole
+    ? viewerRoles.has('admin') || ['dm', 'co-dm'].includes(normalizedViewerRole)
+    : activeCampaign ? activeCampaign.dmUserId === user?.id : false;
+  const { messages: socketMessages, clearMessages: clearSocketMessages, getMessagesByType } = useWebSocket(activeCampaignId ?? '');
+
+  const viewerIsCoDm = useMemo(
+    () => normalizedViewerRole === 'co-dm'
+      || playerTokens.some((token) => token.userId === user?.id && token.role === 'co-dm'),
+    [normalizedViewerRole, playerTokens, user?.id]
+  );
+  const canControlAllTokens = viewerIsAdmin || viewerIsDm || viewerIsCoDm;
+  const canTeleport = canControlAllTokens;
+
+  const canControlPlayer = useCallback(
+    (token: PlayerToken) => {
+      if (canControlAllTokens) return true;
+      if (!user?.id) return false;
+      return token.userId === user.id;
+    },
+    [canControlAllTokens, user?.id]
+  );
+
+  const sortedPlayerTokens = useMemo(
+    () => [...playerTokens].sort((a, b) => a.name.localeCompare(b.name)),
+    [playerTokens]
+  );
+
+  const availableMoveModes = useMemo(
+    () => (canTeleport ? MOVE_MODES : MOVE_MODES.filter((mode) => mode !== 'teleport' && mode !== 'gm')),
+    [canTeleport]
+  );
+
+  const movementDistance = useMemo(() => {
+    if (!movementDialog) return 0;
+    const [targetX, targetY] = movementDialog.coordinate;
+    const [currentX, currentY] = movementDialog.currentPosition;
+    return Math.hypot(targetX - currentX, targetY - currentY);
+  }, [movementDialog]);
+
+  const geoJsonFormat = useMemo(() => new GeoJSON({
+    dataProjection: PIXEL_PROJECTION_CODE,
+    featureProjection: PIXEL_PROJECTION_CODE,
+  }), []);
+  const pendingMoveRef = useRef<{ playerId: string; playerName: string; coordinate?: [number, number] } | null>(null);
+
+  const clearMovementSelection = useCallback(() => {
+    pendingMoveRef.current = null;
+    setSelectedPlayerId(null);
+    toast.dismiss(MOVE_PROMPT_TOAST_ID);
+  }, []);
+
+  const selectPlayerForMovement = useCallback((token: PlayerToken) => {
+    if (!canControlPlayer(token)) {
+      toast.error('You do not have permission to move this token.');
+      return;
+    }
+
+    pendingMoveRef.current = { playerId: token.playerId, playerName: token.name };
+    setSelectedPlayerId(token.playerId);
+    overlayRef.current?.setPosition(undefined);
+    setPopupContent(null);
+    toast.info(`Selected ${token.name}. Click the map to choose a destination.`, {
+      id: MOVE_PROMPT_TOAST_ID,
+    });
+  }, [canControlPlayer]);
+
+  const removeTrailFeature = useCallback((playerId: string) => {
+    const layer = playerTrailLayerRef.current;
+    if (!layer) return;
+    const source = layer.getSource();
+    if (!source) return;
+    source.getFeatures().forEach((feature) => {
+      if (feature.get('playerId') === playerId) {
+        source.removeFeature(feature);
+      }
+    });
+    playerTrailCacheRef.current.delete(playerId);
+  }, []);
+
+  const addTrailFeature = useCallback((playerId: string, feature: Feature) => {
+    const layer = playerTrailLayerRef.current;
+    if (!layer) return;
+    const source = layer.getSource();
+    if (!source) return;
+    removeTrailFeature(playerId);
+    feature.set('playerId', playerId);
+    source.addFeature(feature);
+    playerTrailCacheRef.current.set(playerId, {
+      feature: feature as Feature<LineString>,
+      fetchedAt: Date.now(),
+    });
+  }, [removeTrailFeature]);
+
+  const refreshTrailForPlayer = useCallback(async (playerId: string) => {
+    if (!activeCampaignId) {
+      return { success: false, hidden: false, message: 'No active campaign selected.' };
+    }
+
+    try {
+      const radiusQuery = typeof playerVisibilityRadius === 'number'
+        ? `?radius=${encodeURIComponent(playerVisibilityRadius)}`
+        : '';
+      const response = await apiFetch(`/api/campaigns/${activeCampaignId}/players/${playerId}/trail${radiusQuery}`);
+
+      if (response.status === 403) {
+        const message = await readErrorMessage(response, 'Trail hidden by campaign settings.');
+        return { success: false, hidden: true, message };
+      }
+
+      if (!response.ok) {
+        const message = await readErrorMessage(response, 'Failed to load player trail');
+        return { success: false, hidden: false, message };
+      }
+
+      const payload = await readJsonBody<{ geometry?: unknown }>(response);
+      if (!payload?.geometry) {
+        return { success: false, hidden: false, message: 'Trail geometry is unavailable.' };
+      }
+
+      const feature = geoJsonFormat.readFeature({
+        type: 'Feature',
+        geometry: payload.geometry as any,
+        properties: { playerId },
+      });
+
+      addTrailFeature(playerId, feature);
+      return { success: true, hidden: false };
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Failed to load player trail';
+      return { success: false, hidden: false, message };
+    }
+  }, [activeCampaignId, addTrailFeature, geoJsonFormat, playerVisibilityRadius]);
+
+  const handleTrailToggle = useCallback(async (player: PlayerToken, enabled: boolean) => {
+    const playerId = player.playerId;
+
+    if (!enabled) {
+      setTrailSelections((prev) => ({ ...prev, [playerId]: false }));
+      setTrailErrors((prev) => ({ ...prev, [playerId]: null }));
+      removeTrailFeature(playerId);
+      return;
+    }
+
+    setTrailSelections((prev) => ({ ...prev, [playerId]: true }));
+    setTrailErrors((prev) => ({ ...prev, [playerId]: null }));
+
+    if (!layerVisibility.playerTrails) {
+      setLayerVisibility((prev) => ({ ...prev, playerTrails: true }));
+    }
+
+    const result = await refreshTrailForPlayer(playerId);
+
+    if (!result.success) {
+      setTrailSelections((prev) => ({ ...prev, [playerId]: false }));
+      removeTrailFeature(playerId);
+      if (result.hidden) {
+        const message = result.message ?? 'Trail is hidden for this player.';
+        setTrailErrors((prev) => ({ ...prev, [playerId]: message }));
+        toast.info(message);
+      } else {
+        const message = result.message ?? 'Failed to load player trail';
+        setTrailErrors((prev) => ({ ...prev, [playerId]: message }));
+        toast.error(message);
+      }
+    }
+  }, [layerVisibility.playerTrails, refreshTrailForPlayer, removeTrailFeature, setLayerVisibility]);
+
+  const focusOnPlayer = useCallback((token: PlayerToken) => {
+    const view = mapInstanceRef.current?.getView();
+    if (!view) return;
+    const targetZoom = Math.max(view.getZoom() ?? 0, 6);
+    view.animate({ center: token.coordinates, duration: 300, zoom: targetZoom });
+  }, []);
+
+
+  const applyTileSetConstraints = useCallback((tileSet: TileSetConfig | null) => {
     const view = mapInstanceRef.current?.getView();
     if (!view) return;
 
@@ -433,8 +750,13 @@ export function OpenLayersMap() {
   const cellsLayerRef = useRef<VectorLayer | null>(null);
   const markersLayerRef = useRef<VectorLayer | null>(null);
   const campaignLayerRef = useRef<VectorLayer | null>(null);
-  const pinsLayerRef = useRef<VectorLayer | null>(null);
+  const playerLayerRef = useRef<VectorLayer | null>(null);
+  const playerTrailLayerRef = useRef<VectorLayer | null>(null);
   const encounterLayerRef = useRef<VectorLayer | null>(null);
+  const playerTrailCacheRef = useRef<Map<string, PlayerTrailMeta>>(new Map());
+  const rosterByCharacterRef = useRef<Map<string, any>>(new Map());
+  const rosterByPlayerRef = useRef<Map<string, any>>(new Map());
+  const rosterLoadedForCampaignRef = useRef<string | null>(null);
   const burgStyleCacheRef = useRef<Record<string, Style>>({});
   const markerIconCacheRef = useRef<Record<string, Style>>({});
 
@@ -493,6 +815,20 @@ export function OpenLayersMap() {
       rows = [
         { label: 'Name', value: toText(markerName) },
         { label: 'Note', value: toText(data?.note) }
+      ];
+    } else if (featureType === 'player') {
+      const token = data as PlayerToken | undefined;
+      title = token?.name ?? baseTitle;
+      const hp = token?.hitPoints;
+      const hpLabel = hp ? `${hp.current}/${hp.max}` : '—';
+      rows = [
+        { label: 'Role', value: toText(token?.role ?? 'player') },
+        { label: 'Visibility', value: toText(token?.visibilityState ?? 'visible') },
+        { label: 'HP', value: hpLabel },
+        { label: 'Conditions', value: token?.conditions?.length ? token.conditions.join(', ') : 'None' },
+        token?.lastLocatedAt
+          ? { label: 'Last updated', value: new Date(token.lastLocatedAt).toLocaleString() }
+          : { label: 'Last updated', value: '—' }
       ];
     }
 
@@ -647,26 +983,65 @@ export function OpenLayersMap() {
     });
   }, [getZoomForResolution]);
 
-  const getPinStyle = useCallback((feature: Feature, resolution: number) => {
-    const type = feature.get('type');
+  const getPlayerTokenStyle = useCallback((feature: Feature, resolution: number) => {
+    const data = feature.get('data') as PlayerToken | undefined;
     const zoom = getZoomForResolution(resolution);
     const showLabel = zoom >= LABEL_VISIBILITY.pins;
+    const isSelected = feature.get('id') === selectedPlayerId;
+
+    const visibilityState = data?.visibilityState ?? 'visible';
+    const fillColor = visibilityState === 'hidden'
+      ? 'rgba(148, 163, 184, 0.65)'
+      : visibilityState === 'stealthed'
+        ? 'rgba(59, 130, 246, 0.65)'
+        : '#2563eb';
+    const strokeColor = isSelected ? '#f59e0b' : '#ffffff';
+    const radius = isSelected ? 11 : 9;
+
+    const hp = data?.hitPoints;
+    const hpPercent = hp && hp.max > 0
+      ? Math.max(0, Math.min(100, Math.round((hp.current / hp.max) * 100)))
+      : null;
+    const statusParts: string[] = [];
+    if (hpPercent !== null) {
+      statusParts.push(`${hpPercent}% HP`);
+    }
+    if (data?.conditions.length) {
+      statusParts.push(data.conditions.slice(0, 2).join(', '));
+    }
+    if (visibilityState === 'stealthed') {
+      statusParts.push('Stealth');
+    }
+
+    const statusLabel = statusParts.join(' • ');
+
+    const textLines: string[] = [];
+    textLines.push(data?.initials ?? (data?.name ? data.name.charAt(0).toUpperCase() : '?'));
+    if (showLabel && data?.name) {
+      textLines.push(data.name);
+    }
+    if (showLabel && statusLabel) {
+      textLines.push(statusLabel);
+    }
+
+    const textValue = textLines.filter(Boolean).join('\n');
 
     return new Style({
       image: new CircleStyle({
-        radius: 8,
-        fill: new Fill({ color: getPinColor(type) }),
-        stroke: new Stroke({ color: '#FFF', width: 2 })
+        radius,
+        fill: new Fill({ color: fillColor }),
+        stroke: new Stroke({ color: strokeColor, width: isSelected ? 3 : 2 })
       }),
       text: new Text({
-        text: showLabel ? feature.get('name') || '' : '',
-        offsetY: -20,
-        font: '12px sans-serif',
-        fill: new Fill({ color: '#000' }),
-        stroke: new Stroke({ color: '#FFF', width: 2 })
+        text: textValue,
+        offsetY: -radius - 6,
+        font: '12px "Inter", sans-serif',
+        fill: new Fill({ color: '#111827' }),
+        stroke: new Stroke({ color: '#FFF', width: 3 }),
+        textAlign: 'center',
       })
     });
-  }, [getZoomForResolution]);
+  }, [getZoomForResolution, selectedPlayerId]);
 
   const layerRefMap = useMemo<Record<keyof LayerVisibility, RefObject<VectorLayer | null>>>(() => ({
     burgs: burgsLayerRef,
@@ -675,7 +1050,8 @@ export function OpenLayersMap() {
     cells: cellsLayerRef,
     markers: markersLayerRef,
     campaignLocations: campaignLayerRef,
-    userPins: pinsLayerRef,
+    playerTokens: playerLayerRef,
+    playerTrails: playerTrailLayerRef,
   }), []);
 
   const toggleLayer = useCallback((layerName: keyof LayerVisibility, value?: boolean) => {
@@ -700,17 +1076,43 @@ export function OpenLayersMap() {
       mapDataLoader.loadTileSets()
     ]);
 
-    setWorldMaps(worldMapsData);
-    const sanitizedTileSets = (tileSetsData || []).filter((ts) => ts && ts.id);
+    const normalizedWorldMaps: WorldMapSummary[] = (worldMapsData || [])
+      .map((map: any) => {
+        if (!map?.id || !map?.bounds) {
+          return null;
+        }
+        return {
+          id: String(map.id),
+          name: typeof map.name === 'string' && map.name.trim() ? map.name : 'World Map',
+          bounds: map.bounds as WorldMapBounds,
+        } as WorldMapSummary;
+      })
+      .filter((map): map is WorldMapSummary => Boolean(map));
+
+    setWorldMaps(normalizedWorldMaps);
+
     const builtInIds = new Set(BUILTIN_TILESETS.map((ts) => ts.id));
-    const mergedTileSets = [
+    const additionalTileSets: TileSetConfig[] = (tileSetsData || [])
+      .filter((ts: any) => ts && ts.id && ts.base_url)
+      .map((ts: any) => ({
+        id: String(ts.id),
+        name: typeof ts.name === 'string' && ts.name.trim() ? ts.name : String(ts.id),
+        base_url: ts.base_url,
+        attribution: ts.attribution ?? undefined,
+        min_zoom: Number.isFinite(ts.min_zoom) ? Number(ts.min_zoom) : undefined,
+        max_zoom: Number.isFinite(ts.max_zoom) ? Number(ts.max_zoom) : undefined,
+        tile_size: Number.isFinite(ts.tile_size) ? Number(ts.tile_size) : undefined,
+        wrapX: ts.wrapX ?? false,
+      }));
+
+    const mergedTileSets: TileSetConfig[] = [
       ...BUILTIN_TILESETS,
-      ...sanitizedTileSets.filter((ts) => !builtInIds.has(ts.id))
+      ...additionalTileSets.filter((ts) => !builtInIds.has(ts.id)),
     ];
     setTileSets(mergedTileSets);
 
-    if (worldMapsData.length > 0) {
-      const initialWorldMap = worldMapsData[0];
+    if (normalizedWorldMaps.length > 0) {
+      const initialWorldMap = normalizedWorldMaps[0];
       setSelectedWorldMap(initialWorldMap.id);
 
       if (baseLayerRef.current) {
@@ -719,44 +1121,262 @@ export function OpenLayersMap() {
       }
 
       updateViewExtent(initialWorldMap.bounds);
-
     }
   }, [updateViewExtent]);
 
   // Initialize OpenLayers map
 
   // Update tile source with current world bounds
-  const updateTileSource = useCallback((tileSet: any) => {
+  const updateTileSource = useCallback((tileSet: TileSetConfig | null) => {
     if (!baseLayerRef.current) return;
 
     const currentWorldMap = worldMaps.find(m => m.id === selectedWorldMap);
-    const worldBounds = currentWorldMap?.bounds;
+    const worldBounds = currentWorldMap?.bounds ?? null;
+    const activeTileSet = tileSet ?? FANTASY_TILESET;
 
-    const newSource = createGeographicTileSource(tileSet, worldBounds);
+    const newSource = createGeographicTileSource(activeTileSet, worldBounds);
     baseLayerRef.current.setSource(newSource);
     updateViewExtent(worldBounds);
-    applyTileSetConstraints(tileSet);
+    applyTileSetConstraints(activeTileSet);
   }, [worldMaps, selectedWorldMap, applyTileSetConstraints, updateViewExtent]);
+
+  const loadCampaignRoster = useCallback(async (campaignId: string) => {
+    try {
+      const rows = await fetchJson<CampaignCharacterRow[]>(
+        `/api/campaigns/${campaignId}/characters`,
+        undefined,
+        'Failed to load campaign roster'
+      );
+
+      if (!rows) {
+        rosterByCharacterRef.current.clear();
+        rosterByPlayerRef.current.clear();
+        rosterLoadedForCampaignRef.current = campaignId;
+        return;
+      }
+
+      const byCharacter = new Map<string, any>();
+      const byPlayer = new Map<string, any>();
+
+      rows.forEach((row) => {
+        const hitPointsRaw = parseJsonValue(row.hit_points, { current: 0, max: 0, temporary: 0 }) as {
+          current?: number;
+          max?: number;
+          temporary?: number;
+        };
+        const hitPoints = {
+          current: Number.isFinite(hitPointsRaw.current) ? Number(hitPointsRaw.current) : 0,
+          max: Number.isFinite(hitPointsRaw.max) ? Number(hitPointsRaw.max) : 0,
+          temporary: Number.isFinite(hitPointsRaw.temporary) ? Number(hitPointsRaw.temporary) : 0,
+        };
+
+        const metadata = {
+          characterId: row.id,
+          name: row.name,
+          avatarUrl: row.avatar_url ?? null,
+          userId: row.campaign_user_id ?? row.user_id ?? '',
+          role: row.role ?? 'player',
+          status: row.status ?? 'active',
+          visibilityState: (row.visibility_state ?? 'visible') as PlayerToken['visibilityState'],
+          hitPoints,
+          conditions: normalizeConditions(row.conditions),
+          lastLocatedAt: row.last_located_at ?? null,
+        };
+
+        byCharacter.set(row.id, metadata);
+        if (row.campaign_player_id) {
+          byPlayer.set(row.campaign_player_id, metadata);
+        }
+      });
+
+      rosterByCharacterRef.current = byCharacter;
+      rosterByPlayerRef.current = byPlayer;
+      rosterLoadedForCampaignRef.current = campaignId;
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Failed to load campaign roster';
+      setPlayerError((prev) => {
+        if (prev !== message) {
+          toast.error(message);
+        }
+        return message;
+      });
+    }
+  }, []);
+
+  const loadVisiblePlayers = useCallback(async (campaignId: string) => {
+    if (!campaignId) {
+      setPlayerTokens([]);
+      setPlayerLoading(false);
+      setPlayerError(null);
+      return;
+    }
+
+    if (rosterLoadedForCampaignRef.current !== campaignId) {
+      await loadCampaignRoster(campaignId);
+    }
+
+    setPlayerLoading(true);
+    setPlayerError(null);
+
+    try {
+      const radiusQuery = typeof playerVisibilityRadius === 'number'
+        ? `?radius=${encodeURIComponent(playerVisibilityRadius)}`
+        : '';
+      const response = await fetchJson<{
+        type: string;
+        features: Array<{ geometry: { type: string; coordinates: number[] }; properties: Record<string, any> }>;
+        metadata?: { radius?: number; viewerRole?: string };
+      }>(
+        `/api/campaigns/${campaignId}/players/visible${radiusQuery}`,
+        undefined,
+        'Failed to load player positions'
+      );
+
+      const features = Array.isArray(response?.features) ? response.features : [];
+      const tokens: PlayerToken[] = [];
+
+      features.forEach((feature) => {
+        if (!feature || !feature.geometry || feature.geometry.type !== 'Point') {
+          return;
+        }
+
+        const coords = feature.geometry.coordinates;
+        if (!Array.isArray(coords) || coords.length < 2) {
+          return;
+        }
+
+        const properties = feature.properties ?? {};
+        const playerId: string | undefined = properties.playerId ?? properties.player_id;
+        if (!playerId) return;
+
+        const characterId: string | undefined = properties.characterId ?? properties.character_id;
+        const rosterEntry = rosterByPlayerRef.current.get(playerId)
+          ?? (characterId ? rosterByCharacterRef.current.get(characterId) : undefined)
+          ?? null;
+
+        const name = rosterEntry?.name ?? properties.name ?? `Player ${playerId.slice(0, 6)}`;
+        const visibilityState = (properties.visibilityState ?? properties.visibility_state ?? rosterEntry?.visibilityState ?? 'visible') as PlayerToken['visibilityState'];
+        const token: PlayerToken = {
+          playerId,
+          userId: rosterEntry?.userId ?? properties.userId ?? properties.user_id ?? '',
+          characterId: characterId ?? rosterEntry?.characterId,
+          coordinates: [Number(coords[0]), Number(coords[1])],
+          name,
+          initials: computeInitials(name),
+          avatarUrl: rosterEntry?.avatarUrl ?? properties.avatarUrl ?? properties.avatar_url ?? null,
+          visibilityState,
+          role: properties.role ?? properties.playerRole ?? rosterEntry?.role ?? 'player',
+          canViewHistory: Boolean(properties.canViewHistory ?? properties.can_view_history),
+          lastLocatedAt: properties.lastLocatedAt ?? properties.last_located_at ?? rosterEntry?.lastLocatedAt ?? null,
+          hitPoints: rosterEntry?.hitPoints,
+          conditions: rosterEntry?.conditions ?? [],
+        };
+
+        tokens.push(token);
+      });
+
+      setPlayerTokens(tokens);
+      setPlayerLoading(false);
+      if (response?.metadata) {
+        updateVisibilityMetadata({
+          radius: typeof response.metadata.radius === 'number' ? response.metadata.radius : undefined,
+          viewerRole: typeof response.metadata.viewerRole === 'string' ? response.metadata.viewerRole : undefined,
+        });
+      }
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Failed to load player positions';
+      setPlayerError((prev) => {
+        if (prev !== message) {
+          toast.error(message);
+        }
+        return message;
+      });
+      setPlayerLoading(false);
+    }
+  }, [loadCampaignRoster, playerVisibilityRadius, updateVisibilityMetadata]);
+
+  const handleConfirmMove = useCallback(async () => {
+    if (!movementDialog || !activeCampaignId) {
+      return;
+    }
+
+    const { playerId, playerName, coordinate } = movementDialog;
+
+    try {
+      await fetchJson(
+        `/api/campaigns/${activeCampaignId}/players/${playerId}/move`,
+        {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({
+            target: { x: Number(coordinate[0]), y: Number(coordinate[1]) },
+            mode: moveMode,
+          }),
+        },
+        'Failed to move player token'
+      );
+
+      toast.success(`${playerName} moved successfully.`);
+      clearMovementSelection();
+      setMovementDialog(null);
+      await loadVisiblePlayers(activeCampaignId);
+      if (trailSelections[playerId]) {
+        await refreshTrailForPlayer(playerId);
+      }
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Failed to move player token';
+      toast.error(message);
+    }
+  }, [
+    activeCampaignId,
+    clearMovementSelection,
+    loadVisiblePlayers,
+    moveMode,
+    movementDialog,
+    refreshTrailForPlayer,
+    trailSelections,
+  ]);
 
   const handleMapClick = useCallback((event: any) => {
     const map = mapInstanceRef.current;
     if (!map) return;
 
-    if (selectedTool === 'pin') {
-      const coordinate = event.coordinate as [number, number];
-      const [lon, lat] = coordinate;
-      const newPin: MapPin = {
-        id: Date.now().toString(),
-        coordinates: [lon, lat],
-        type: 'location',
-        name: `Pin ${mapPins.length + 1}`,
-        visible: true
-      };
-      setMapPins(prev => [...prev, newPin]);
-      return;
-    }
-
     const features = map.getFeaturesAtPixel(event.pixel) as Feature[];
+
+    if (selectedTool === 'move') {
+      const playerFeature = features.find((feature) => {
+        const data = feature.get('data') ?? feature.getProperties();
+        return getFeatureType(feature, data) === 'player';
+      });
+
+      if (playerFeature) {
+        const data = playerFeature.get('data') ?? playerFeature.getProperties();
+        const playerId = data?.playerId ?? playerFeature.get('playerId');
+        if (typeof playerId === 'string') {
+          const token = playerTokens.find((p) => p.playerId === playerId);
+          if (token) {
+            selectPlayerForMovement(token);
+          }
+        }
+        return;
+      }
+
+      if (pendingMoveRef.current?.playerId) {
+        const pending = pendingMoveRef.current;
+        const token = playerTokens.find((p) => p.playerId === pending.playerId);
+        if (token) {
+          setMovementDialog({
+            playerId: pending.playerId,
+            playerName: pending.playerName,
+            coordinate: event.coordinate as [number, number],
+            currentPosition: token.coordinates,
+          });
+        }
+        return;
+      }
+    }
 
     if (features.length > 0) {
       const interactiveFeature = features.find((feature) => {
@@ -793,7 +1413,7 @@ export function OpenLayersMap() {
       setPopupContent(null);
       hoveredFeatureIdRef.current = null;
     }
-  }, [buildPopupDetails, getFeatureType, mapPins, selectedTool]);
+  }, [buildPopupDetails, getFeatureType, playerTokens, selectPlayerForMovement, selectedTool]);
 
   const handleZoomChange = useCallback(() => {
     const view = mapInstanceRef.current?.getView();
@@ -988,12 +1608,19 @@ export function OpenLayersMap() {
     });
     campaignLayerRef.current = campaignLayer;
 
-    const pinsLayer = new VectorLayer({
+    const playerTrailLayer = new VectorLayer({
       source: new VectorSource({ wrapX: false }),
-      style: (feature, resolution) => getPinStyle(feature, resolution),
-      visible: layerVisibility.userPins
+      style: getPlayerTrailStyle,
+      visible: layerVisibility.playerTrails
     });
-    pinsLayerRef.current = pinsLayer;
+    playerTrailLayerRef.current = playerTrailLayer;
+
+    const playerLayer = new VectorLayer({
+      source: new VectorSource({ wrapX: false }),
+      style: (feature, resolution) => getPlayerTokenStyle(feature, resolution),
+      visible: layerVisibility.playerTokens
+    });
+    playerLayerRef.current = playerLayer;
 
     const encounterLayer = new VectorLayer({
       source: new VectorSource({ wrapX: false }),
@@ -1024,8 +1651,9 @@ export function OpenLayersMap() {
         burgsLayer,
         markersLayer,
         campaignLayer,
+        playerTrailLayer,
+        playerLayer,
         encounterLayer,
-        pinsLayer        // Top layer
       ],
       overlays: [overlay],
       view: new View({
@@ -1073,7 +1701,7 @@ export function OpenLayersMap() {
       map.dispose();
       mapInstanceRef.current = null;
     };
-  }, [applyTileSetConstraints, loadInitialData, handleMapClick, handleMapMoveEnd, handlePointerMove, handleZoomChange, layerVisibility.burgs, layerVisibility.routes, layerVisibility.rivers, layerVisibility.cells, layerVisibility.markers, layerVisibility.campaignLocations, layerVisibility.userPins, mapMode, getBurgStyle, getRouteStyle, getMarkerStyle, getCampaignLocationStyle, getPinStyle]);
+  }, [applyTileSetConstraints, loadInitialData, handleMapClick, handleMapMoveEnd, handlePointerMove, handleZoomChange, layerVisibility.burgs, layerVisibility.routes, layerVisibility.rivers, layerVisibility.cells, layerVisibility.markers, layerVisibility.campaignLocations, layerVisibility.playerTokens, layerVisibility.playerTrails, mapMode, getBurgStyle, getRouteStyle, getMarkerStyle, getCampaignLocationStyle, getPlayerTokenStyle]);
 
   useEffect(() => {
     const activeTileSet = tileSets.find(ts => ts.id === selectedTileSet);
@@ -1122,8 +1750,23 @@ export function OpenLayersMap() {
       loadEncounterData();
     } else {
       loadWorldMapData();
+      if (activeCampaignId) {
+        void loadVisiblePlayers(activeCampaignId);
+      }
     }
-  }, [mapMode]);
+  }, [activeCampaignId, loadVisiblePlayers, loadWorldMapData, mapMode]);
+
+  useEffect(() => {
+    if (!activeCampaignId) {
+      setPlayerTokens([]);
+      rosterByCharacterRef.current.clear();
+      rosterByPlayerRef.current.clear();
+      rosterLoadedForCampaignRef.current = null;
+      return;
+    }
+
+    void loadCampaignRoster(activeCampaignId).then(() => loadVisiblePlayers(activeCampaignId));
+  }, [activeCampaignId, loadCampaignRoster, loadVisiblePlayers]);
 
   // Handle layer visibility changes
   useEffect(() => {
@@ -1133,7 +1776,8 @@ export function OpenLayersMap() {
     cellsLayerRef.current?.setVisible(layerVisibility.cells && mapMode === 'world');
     markersLayerRef.current?.setVisible(layerVisibility.markers && mapMode === 'world');
     campaignLayerRef.current?.setVisible(layerVisibility.campaignLocations && mapMode === 'world');
-    pinsLayerRef.current?.setVisible(layerVisibility.userPins);
+    playerTrailLayerRef.current?.setVisible(layerVisibility.playerTrails && mapMode === 'world');
+    playerLayerRef.current?.setVisible(layerVisibility.playerTokens && mapMode === 'world');
   }, [layerVisibility, mapMode]);
 
 
@@ -1163,6 +1807,12 @@ export function OpenLayersMap() {
     }
   }, [selectedTool]);
 
+  useEffect(() => {
+    if (selectedTool !== 'move') {
+      clearMovementSelection();
+    }
+  }, [clearMovementSelection, selectedTool]);
+
   // Load encounter data
   const loadEncounterData = useCallback(async () => {
     if (!encounterLayerRef.current) return;
@@ -1176,29 +1826,92 @@ export function OpenLayersMap() {
     }
   }, []);
 
-  // Update pins layer
+  // Update player layer with live tokens
   useEffect(() => {
-    if (!pinsLayerRef.current) return;
+    if (!playerLayerRef.current) return;
+    const source = playerLayerRef.current.getSource();
+    if (!source) return;
 
-    const features = mapPins
-      .filter(pin => pin.visible)
-      .map(pin => {
-        const feature = new Feature({
-          geometry: new Point(pin.coordinates),
-          id: pin.id,
-          type: pin.type,
-          name: pin.name,
-          data: pin
-        });
-        return feature;
+    const features = playerTokens.map((token) => {
+      const feature = new Feature({
+        geometry: new Point(token.coordinates),
+        id: token.playerId,
       });
+      feature.set('type', 'player');
+      feature.set('playerId', token.playerId);
+      feature.set('data', token);
+      return feature;
+    });
 
-    const source = pinsLayerRef.current.getSource();
-    if (source) {
-      source.clear();
+    source.clear();
+    if (features.length > 0) {
       source.addFeatures(features);
     }
-  }, [mapPins]);
+  }, [playerTokens]);
+
+  useEffect(() => {
+    if (!selectedPlayerId) return;
+    const stillVisible = playerTokens.some((token) => token.playerId === selectedPlayerId);
+    if (!stillVisible) {
+      clearMovementSelection();
+    }
+  }, [clearMovementSelection, playerTokens, selectedPlayerId]);
+
+  useEffect(() => {
+    const visibleIds = new Set(playerTokens.map((token) => token.playerId));
+    setTrailSelections((prev) => {
+      const next: Record<string, boolean> = {};
+      Object.entries(prev).forEach(([playerId, enabled]) => {
+        if (visibleIds.has(playerId)) {
+          next[playerId] = enabled;
+        } else if (enabled) {
+          removeTrailFeature(playerId);
+        }
+      });
+      return next;
+    });
+  }, [playerTokens, removeTrailFeature]);
+
+  useEffect(() => {
+    if (!movementDialog || availableMoveModes.length === 0) {
+      return;
+    }
+    setMoveMode((prev) => (
+      availableMoveModes.includes(prev as typeof MOVE_MODES[number])
+        ? prev
+        : availableMoveModes[0]
+    ));
+  }, [availableMoveModes, movementDialog]);
+
+  useEffect(() => {
+    if (!socketMessages.length || !activeCampaignId) {
+      return;
+    }
+
+    const movementEvents = getMessagesByType('player-moved');
+    const teleportEvents = getMessagesByType('player-teleported');
+    const spawnEvents = getMessagesByType('spawn-updated');
+    const spawnDeleted = getMessagesByType('spawn-deleted');
+
+    if (movementEvents.length || teleportEvents.length || spawnEvents.length || spawnDeleted.length) {
+      void loadVisiblePlayers(activeCampaignId);
+      const affectedPlayerIds = new Set<string>();
+      [...movementEvents, ...teleportEvents].forEach((event) => {
+        const playerId = event?.data?.playerId ?? event?.data?.player_id;
+        if (typeof playerId === 'string') {
+          affectedPlayerIds.add(playerId);
+        }
+      });
+
+      affectedPlayerIds.forEach((playerId) => {
+        if (trailSelections[playerId]) {
+          void refreshTrailForPlayer(playerId);
+        }
+      });
+    }
+
+    clearSocketMessages();
+  }, [activeCampaignId, clearSocketMessages, getMessagesByType, loadVisiblePlayers, refreshTrailForPlayer, socketMessages, trailSelections]);
 
   // Zoom functions
   const zoomIn = () => {
@@ -1227,9 +1940,8 @@ export function OpenLayersMap() {
     setSelectedTileSet(tileSetId);
   };
 
-  const tools = [
-    { id: 'move', name: 'Pan', icon: <Move className="w-4 h-4" /> },
-    { id: 'pin', name: 'Add Pin', icon: <MapPin className="w-4 h-4" /> },
+  const tools: Array<{ id: 'move' | 'measure' | 'info'; name: string; icon: ReactNode }> = [
+    { id: 'move', name: 'Move Token', icon: <Move className="w-4 h-4" /> },
     { id: 'measure', name: 'Measure', icon: <Navigation className="w-4 h-4" /> },
     { id: 'info', name: 'Info', icon: <Info className="w-4 h-4" /> }
   ];
@@ -1391,13 +2103,134 @@ export function OpenLayersMap() {
           )}
         </div>
       </CardContent>
+      {mapMode === 'world' && (
+        <div className="border-t bg-muted/20 px-4 py-3 space-y-3">
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-2">
+              <h3 className="text-sm font-semibold text-foreground">
+                Visible Players ({sortedPlayerTokens.length})
+              </h3>
+              {playerLoading && <Badge variant="secondary">Refreshing...</Badge>}
+            </div>
+            <div className="flex items-center gap-2">
+              {playerError && (
+                <Badge variant="destructive" className="text-xs">{playerError}</Badge>
+              )}
+              {activeCampaignId && (
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  className="h-7 px-2 text-xs"
+                  onClick={() => void loadVisiblePlayers(activeCampaignId)}
+                >
+                  Refresh
+                </Button>
+              )}
+            </div>
+          </div>
+
+          <div className="space-y-2">
+            {sortedPlayerTokens.length === 0 && !playerLoading ? (
+              <p className="text-xs text-muted-foreground">
+                No player tokens are currently visible.
+              </p>
+            ) : null}
+
+            {sortedPlayerTokens.map((token) => {
+              const hp = token.hitPoints;
+              const hpLabel = hp ? `${hp.current}/${hp.max}` : '—';
+              const hpPercent = hp && hp.max > 0 ? Math.round((hp.current / hp.max) * 100) : null;
+              const conditionsLabel = token.conditions.length
+                ? token.conditions.slice(0, 3).join(', ')
+                : 'No conditions';
+              const trailEnabled = trailSelections[token.playerId] ?? false;
+
+              return (
+                <div
+                  key={token.playerId}
+                  className="flex flex-col gap-2 rounded-md border bg-background/60 p-3 shadow-sm sm:flex-row sm:items-center sm:justify-between"
+                >
+                  <div className="flex items-start gap-3">
+                    <Avatar className="h-9 w-9 border">
+                      {token.avatarUrl ? (
+                        <AvatarImage src={token.avatarUrl} alt={token.name} />
+                      ) : null}
+                      <AvatarFallback>{token.initials}</AvatarFallback>
+                    </Avatar>
+                    <div className="space-y-1">
+                      <div className="flex items-center gap-2">
+                        <span className="text-sm font-semibold text-foreground">{token.name}</span>
+                        <Badge variant="outline" className="text-[10px] uppercase tracking-wide">
+                          {token.role}
+                        </Badge>
+                        {token.visibilityState !== 'visible' && (
+                          <Badge variant="secondary" className="text-[10px] uppercase tracking-wide">
+                            {token.visibilityState}
+                          </Badge>
+                        )}
+                      </div>
+                      <div className="text-xs text-muted-foreground space-x-3">
+                        <span>HP: {hpLabel}{hpPercent !== null ? ` (${hpPercent}%)` : ''}</span>
+                        <span>Conditions: {conditionsLabel}</span>
+                        {token.lastLocatedAt && (
+                          <span>Updated: {new Date(token.lastLocatedAt).toLocaleTimeString()}</span>
+                        )}
+                      </div>
+                    </div>
+                  </div>
+
+                  <div className="flex flex-wrap items-center gap-2">
+                    <div className="flex items-center gap-2">
+                      <Switch
+                        checked={trailEnabled}
+                        onCheckedChange={(checked) => {
+                          if (checked === 'indeterminate') return;
+                          void handleTrailToggle(token, checked === true);
+                        }}
+                        disabled={!token.canViewHistory && !canControlPlayer(token)}
+                      />
+                      <span className="text-xs text-muted-foreground">Trail</span>
+                    </div>
+                    {trailErrors[token.playerId] && (
+                      <span className="text-[11px] text-destructive">
+                        {trailErrors[token.playerId]}
+                      </span>
+                    )}
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      className="h-7"
+                      onClick={() => focusOnPlayer(token)}
+                    >
+                      Focus
+                    </Button>
+                    {canControlPlayer(token) && (
+                      <Button
+                        variant={selectedPlayerId === token.playerId ? 'default' : 'outline'}
+                        size="sm"
+                        className="h-7"
+                        onClick={() => {
+                          setSelectedTool('move');
+                          selectPlayerForMovement(token);
+                        }}
+                      >
+                        Move
+                      </Button>
+                    )}
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      )}
 
       {/* Map Controls Panel */}
       <div className="border-t p-3 bg-muted/30">
         <div className="flex items-center justify-between">
           <div className="flex items-center gap-4 text-xs text-muted-foreground">
             <span>Zoom: {currentZoom}</span>
-            <span>Pins: {mapPins.filter(p => p.visible).length}</span>
+            <span>Players: {playerTokens.length}</span>
             <span>Mode: {mapMode === 'world' ? 'Exploration' : 'Tactical'}</span>
           </div>
           <div className="flex gap-1">
@@ -1452,8 +2285,80 @@ export function OpenLayersMap() {
               Search
             </Button>
           </div>
-        </div>
       </div>
+    </div>
+      <Dialog
+        open={Boolean(movementDialog)}
+        onOpenChange={(open) => {
+          if (!open) {
+            setMovementDialog(null);
+            clearMovementSelection();
+          }
+        }}
+      >
+        <DialogContent className="max-w-sm">
+          <DialogHeader>
+            <DialogTitle>Confirm Movement</DialogTitle>
+            <DialogDescription>
+              Approve the new destination for this player token.
+            </DialogDescription>
+          </DialogHeader>
+          {movementDialog ? (
+            <div className="space-y-4 text-sm">
+              <div className="text-muted-foreground">
+                Moving <span className="font-semibold text-foreground">{movementDialog.playerName}</span>
+              </div>
+              <div className="grid gap-2">
+                <div className="flex justify-between">
+                  <span>Current position</span>
+                  <span>
+                    {movementDialog.currentPosition[0].toFixed(2)}, {movementDialog.currentPosition[1].toFixed(2)}
+                  </span>
+                </div>
+                <div className="flex justify-between">
+                  <span>Target position</span>
+                  <span>
+                    {movementDialog.coordinate[0].toFixed(2)}, {movementDialog.coordinate[1].toFixed(2)}
+                  </span>
+                </div>
+                <div className="flex justify-between">
+                  <span>Distance</span>
+                  <span>{movementDistance.toFixed(2)} units (SRID-0)</span>
+                </div>
+              </div>
+              <div className="space-y-1">
+                <label className="text-sm font-medium text-foreground">Movement mode</label>
+                <Select value={moveMode} onValueChange={setMoveMode}>
+                  <SelectTrigger className="w-full">
+                    <SelectValue placeholder="Select mode" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {availableMoveModes.map((mode) => (
+                      <SelectItem key={mode} value={mode}>
+                        {mode.charAt(0).toUpperCase() + mode.slice(1)}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+            </div>
+          ) : null}
+          <DialogFooter className="flex justify-end gap-2">
+            <Button
+              variant="outline"
+              onClick={() => {
+                setMovementDialog(null);
+                clearMovementSelection();
+              }}
+            >
+              Cancel
+            </Button>
+            <Button onClick={handleConfirmMove} disabled={!movementDialog}>
+              Move token
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </Card>
   );
 }
@@ -1481,7 +2386,7 @@ function getCellStyle(feature: Feature) {
   });
 }
 
-function getEncounterStyle(feature: Feature) {
+function getEncounterStyle(): Style {
   return new Style({
     fill: new Fill({ color: 'rgba(128,128,128,0.7)' }),
     stroke: new Stroke({ color: '#666', width: 2 })
@@ -1498,15 +2403,15 @@ function getBiomeColor(biome: number): string {
   }
 }
 
-function getPinColor(type: string): string {
-  switch (type) {
-    case 'party': return '#4A90E2';
-    case 'enemy': return '#E74C3C';
-    case 'location': return '#2ECC71';
-    case 'treasure': return '#F39C12';
-    case 'danger': return '#E67E22';
-    case 'town': return '#9B59B6';
-    case 'dungeon': return '#95A5A6';
-    default: return '#7F8C8D';
-  }
+function getPlayerTrailStyle(): Style {
+  const color = '#f97316';
+  return new Style({
+    stroke: new Stroke({
+      color,
+      width: 3,
+      lineDash: [6, 6],
+      lineCap: 'round',
+      lineJoin: 'round',
+    })
+  });
 }

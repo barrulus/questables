@@ -1,8 +1,26 @@
 const ENV_VAR_NAME = "VITE_DATABASE_SERVER_URL";
+export const AUTH_LOGOUT_EVENT = "questables:auth:logout";
 
 function normalizeBaseUrl(rawValue: string): string {
   const trimmed = rawValue.trim();
   return trimmed.replace(/\/+$/, "");
+}
+
+export class HttpError extends Error {
+  status: number;
+
+  constructor(message: string, status: number) {
+    super(message);
+    this.name = 'HttpError';
+    this.status = status;
+  }
+}
+
+function broadcastAuthLogout(detail: { message: string }) {
+  if (typeof window === 'undefined' || typeof window.dispatchEvent !== 'function') {
+    return;
+  }
+  window.dispatchEvent(new CustomEvent(AUTH_LOGOUT_EVENT, { detail }));
 }
 
 export function getApiBaseUrl(): string {
@@ -114,7 +132,10 @@ export async function fetchJson<T>(
       response,
       errorMessage ?? "Request failed",
     );
-    throw new Error(message);
+    if (response.status === 401) {
+      broadcastAuthLogout({ message });
+    }
+    throw new HttpError(message, response.status);
   }
 
   if (response.status === 204 || response.headers.get("content-length") === "0") {

@@ -6,9 +6,10 @@ import { Input } from "./ui/input";
 import { Label } from "./ui/label";
 import { Textarea } from "./ui/textarea";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "./ui/tabs";
-import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from "./ui/dialog";
+import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle, DialogTrigger } from "./ui/dialog";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "./ui/select";
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle, AlertDialogTrigger } from "./ui/alert-dialog";
+import { Switch } from "./ui/switch";
 import { toast } from "sonner";
 import { 
   MapIcon,
@@ -25,24 +26,21 @@ import {
 } from "lucide-react";
 import { useUser } from "../contexts/UserContext";
 import { apiFetch, readErrorMessage, readJsonBody } from "../utils/api-client";
-
-// Database-aligned interface
-interface Campaign {
-  id: string;
-  name: string;
-  description: string;
-  dm_user_id: string;
-  dm_username?: string;
-  system: string;
-  setting: string;
-  status: 'recruiting' | 'active' | 'paused' | 'completed';
-  max_players: number;
-  current_players?: number;
-  level_range: { min: number; max: number };
-  is_public: boolean;
-  created_at: string;
-  updated_at: string;
-}
+import {
+  Campaign,
+  CampaignEditFormState,
+  CampaignSettingsFormState,
+  CampaignStatus,
+  ExperienceType,
+  RestingRules,
+  DeathSaveRules,
+  clampLevelValue,
+  coerceLevelRange,
+  buildEditFormState,
+  buildSettingsFormState,
+  createEditFormDefaults,
+  createSettingsFormDefaults,
+} from "./campaign-shared";
 
 export function CampaignManager() {
   const { user } = useUser();
@@ -65,6 +63,12 @@ export function CampaignManager() {
     levelRange: { min: 1, max: 20 },
     isPublic: false
   });
+  const [editDialogCampaign, setEditDialogCampaign] = useState<Campaign | null>(null);
+  const [editForm, setEditForm] = useState<CampaignEditFormState>(() => createEditFormDefaults());
+  const [editSaving, setEditSaving] = useState(false);
+  const [settingsDialogCampaign, setSettingsDialogCampaign] = useState<Campaign | null>(null);
+  const [settingsForm, setSettingsForm] = useState<CampaignSettingsFormState>(() => createSettingsFormDefaults());
+  const [settingsSaving, setSettingsSaving] = useState(false);
 
   const lastSelectedCampaignIdRef = useRef<string | null>(null);
 
@@ -76,6 +80,26 @@ export function CampaignManager() {
       lastSelectedCampaignIdRef.current = null;
       setSelectedCampaign(null);
     }
+  }, []);
+
+  const openEditDialog = useCallback((campaign: Campaign) => {
+    setEditDialogCampaign(campaign);
+    setEditForm(buildEditFormState(campaign));
+  }, []);
+
+  const closeEditDialog = useCallback(() => {
+    setEditDialogCampaign(null);
+    setEditForm(createEditFormDefaults());
+  }, []);
+
+  const openSettingsDialog = useCallback((campaign: Campaign) => {
+    setSettingsDialogCampaign(campaign);
+    setSettingsForm(buildSettingsFormState(campaign));
+  }, []);
+
+  const closeSettingsDialog = useCallback(() => {
+    setSettingsDialogCampaign(null);
+    setSettingsForm(createSettingsFormDefaults());
   }, []);
 
   // Load all campaign data
@@ -244,6 +268,197 @@ export function CampaignManager() {
     }
   }, [user, newCampaign, loadCampaignData]);
 
+  const handleUpdateCampaign = useCallback(async () => {
+    if (!editDialogCampaign) {
+      return;
+    }
+
+    if (!user || editDialogCampaign.dm_user_id !== user.id) {
+      toast.error("Only the campaign DM can update these details.");
+      return;
+    }
+
+    const trimmedName = editForm.name.trim();
+    if (!trimmedName) {
+      toast.error("Campaign name is required.");
+      return;
+    }
+
+    const maxPlayers = Number(editForm.maxPlayers);
+    if (!Number.isInteger(maxPlayers) || maxPlayers < 1 || maxPlayers > 20) {
+      toast.error("Max players must be an integer between 1 and 20.");
+      return;
+    }
+
+    const minLevel = clampLevelValue(editForm.minLevel);
+    const maxLevel = clampLevelValue(editForm.maxLevel);
+    if (minLevel > maxLevel) {
+      toast.error("Minimum level cannot exceed maximum level.");
+      return;
+    }
+
+    const defaultEditForm = createEditFormDefaults();
+
+    const payload = {
+      name: trimmedName,
+      description: editForm.description,
+      system: editForm.system.trim() || defaultEditForm.system,
+      setting: editForm.setting,
+      status: editForm.status,
+      max_players: maxPlayers,
+      level_range: { min: minLevel, max: maxLevel },
+    };
+
+    try {
+      setEditSaving(true);
+      const response = await apiFetch(`/api/campaigns/${editDialogCampaign.id}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
+      });
+
+      if (response.status === 401) {
+        toast.error("Your session has expired. Please sign in again.");
+        setEditSaving(false);
+        return;
+      }
+
+      if (!response.ok) {
+        throw new Error(await readErrorMessage(response, 'Failed to update campaign'));
+      }
+
+      const mergeUpdate = (campaign: Campaign): Campaign => ({
+        ...campaign,
+        name: payload.name,
+        description: payload.description,
+        system: payload.system,
+        setting: payload.setting,
+        status: payload.status,
+        max_players: payload.max_players,
+        level_range: payload.level_range,
+      });
+
+      setDmCampaigns((campaigns) => campaigns.map((campaign) =>
+        campaign.id === editDialogCampaign.id ? mergeUpdate(campaign) : campaign
+      ));
+      setPlayerCampaigns((campaigns) => campaigns.map((campaign) =>
+        campaign.id === editDialogCampaign.id ? mergeUpdate(campaign) : campaign
+      ));
+      setPublicCampaigns((campaigns) => campaigns.map((campaign) =>
+        campaign.id === editDialogCampaign.id ? mergeUpdate(campaign) : campaign
+      ));
+      setSelectedCampaign((selected) =>
+        selected && selected.id === editDialogCampaign.id ? mergeUpdate(selected) : selected
+      );
+
+      lastSelectedCampaignIdRef.current = editDialogCampaign.id;
+      await loadCampaignData({ mode: 'refresh' });
+
+      toast.success("Campaign details updated.");
+      closeEditDialog();
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'Failed to update campaign');
+    } finally {
+      setEditSaving(false);
+    }
+  }, [
+    editDialogCampaign,
+    editForm.description,
+    editForm.maxLevel,
+    editForm.maxPlayers,
+    editForm.minLevel,
+    editForm.name,
+    editForm.setting,
+    editForm.status,
+    editForm.system,
+    user,
+    loadCampaignData,
+    closeEditDialog,
+  ]);
+
+  const handleUpdateCampaignSettings = useCallback(async () => {
+    if (!settingsDialogCampaign) {
+      return;
+    }
+
+    if (!user || settingsDialogCampaign.dm_user_id !== user.id) {
+      toast.error("Only the campaign DM can update settings.");
+      return;
+    }
+
+    const payload = {
+      is_public: settingsForm.isPublic,
+      allow_spectators: settingsForm.allowSpectators,
+      auto_approve_join_requests: settingsForm.autoApproveJoinRequests,
+      experience_type: settingsForm.experienceType,
+      resting_rules: settingsForm.restingRules,
+      death_save_rules: settingsForm.deathSaveRules,
+    };
+
+    try {
+      setSettingsSaving(true);
+      const response = await apiFetch(`/api/campaigns/${settingsDialogCampaign.id}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
+      });
+
+      if (response.status === 401) {
+        toast.error("Your session has expired. Please sign in again.");
+        setSettingsSaving(false);
+        return;
+      }
+
+      if (!response.ok) {
+        throw new Error(await readErrorMessage(response, 'Failed to update campaign settings'));
+      }
+
+      const mergeUpdate = (campaign: Campaign): Campaign => ({
+        ...campaign,
+        is_public: payload.is_public,
+        allow_spectators: payload.allow_spectators,
+        auto_approve_join_requests: payload.auto_approve_join_requests,
+        experience_type: payload.experience_type,
+        resting_rules: payload.resting_rules,
+        death_save_rules: payload.death_save_rules,
+      });
+
+      setDmCampaigns((campaigns) => campaigns.map((campaign) =>
+        campaign.id === settingsDialogCampaign.id ? mergeUpdate(campaign) : campaign
+      ));
+      setPlayerCampaigns((campaigns) => campaigns.map((campaign) =>
+        campaign.id === settingsDialogCampaign.id ? mergeUpdate(campaign) : campaign
+      ));
+      setPublicCampaigns((campaigns) => campaigns.map((campaign) =>
+        campaign.id === settingsDialogCampaign.id ? mergeUpdate(campaign) : campaign
+      ));
+      setSelectedCampaign((selected) =>
+        selected && selected.id === settingsDialogCampaign.id ? mergeUpdate(selected) : selected
+      );
+
+      lastSelectedCampaignIdRef.current = settingsDialogCampaign.id;
+      await loadCampaignData({ mode: 'refresh' });
+
+      toast.success("Campaign settings updated.");
+      closeSettingsDialog();
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'Failed to update campaign settings');
+    } finally {
+      setSettingsSaving(false);
+    }
+  }, [
+    closeSettingsDialog,
+    loadCampaignData,
+    settingsDialogCampaign,
+    settingsForm.allowSpectators,
+    settingsForm.autoApproveJoinRequests,
+    settingsForm.deathSaveRules,
+    settingsForm.experienceType,
+    settingsForm.isPublic,
+    settingsForm.restingRules,
+    user,
+  ]);
+
   const handleDeleteCampaign = async (campaign: Campaign) => {
     if (!user || campaign.dm_user_id !== user.id) {
       toast.error("You can only delete campaigns you created");
@@ -304,6 +519,8 @@ export function CampaignManager() {
       default: return "bg-gray-500";
     }
   }, []);
+
+  const selectedLevelRange = coerceLevelRange(selectedCampaign?.level_range ?? null);
 
   // Memoized computed values for better performance
   if (!user) {
@@ -533,7 +750,16 @@ export function CampaignManager() {
                       <span className="text-xs text-muted-foreground">{campaign.current_players || 0}/{campaign.max_players}</span>
                     </div>
                     <div className="flex gap-1">
-                      <Button variant="ghost" size="sm" className="h-6 px-2">
+                      <Button
+                        type="button"
+                        variant="ghost"
+                        size="sm"
+                        className="h-6 px-2"
+                        onClick={(event) => {
+                          event.stopPropagation();
+                          openEditDialog(campaign);
+                        }}
+                      >
                         <Edit className="w-3 h-3 mr-1" />
                         Edit
                       </Button>
@@ -658,11 +884,19 @@ export function CampaignManager() {
               <div className="flex gap-2">
                 {selectedCampaign.dm_user_id === user?.id && (
                   <>
-                    <Button variant="outline" size="sm">
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={() => selectedCampaign && openEditDialog(selectedCampaign)}
+                    >
                       <Edit className="w-4 h-4 mr-1" />
                       Edit
                     </Button>
-                    <Button variant="outline" size="sm">
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={() => selectedCampaign && openSettingsDialog(selectedCampaign)}
+                    >
                       <Settings className="w-4 h-4 mr-1" />
                       Settings
                     </Button>
@@ -713,7 +947,7 @@ export function CampaignManager() {
                     <div>
                       <h4 className="font-medium mb-1">Level Range</h4>
                       <p className="text-muted-foreground">
-                        {selectedCampaign.level_range.min} - {selectedCampaign.level_range.max}
+                        {selectedLevelRange.min} - {selectedLevelRange.max}
                       </p>
                     </div>
                     <div>
@@ -727,6 +961,299 @@ export function CampaignManager() {
           </div>
         </div>
       )}
+
+      <Dialog
+        open={Boolean(editDialogCampaign)}
+        onOpenChange={(open) => {
+          if (!open) {
+            closeEditDialog();
+          }
+        }}
+      >
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Edit Campaign</DialogTitle>
+            <DialogDescription>
+              Update the campaign metadata players see across dashboards and discovery surfaces.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-4">
+            <div>
+              <Label htmlFor="edit-campaign-name">Campaign Name *</Label>
+              <Input
+                id="edit-campaign-name"
+                value={editForm.name}
+                onChange={(event) => setEditForm((prev) => ({ ...prev, name: event.target.value }))}
+                placeholder="Enter campaign name"
+              />
+            </div>
+            <div>
+              <Label htmlFor="edit-campaign-description">Description</Label>
+              <Textarea
+                id="edit-campaign-description"
+                value={editForm.description}
+                onChange={(event) => setEditForm((prev) => ({ ...prev, description: event.target.value }))}
+                placeholder="What should players know about this campaign?"
+                rows={4}
+              />
+            </div>
+            <div className="grid gap-4 md:grid-cols-2">
+              <div>
+                <Label htmlFor="edit-campaign-system">Game System</Label>
+                <Select
+                  value={editForm.system}
+                  onValueChange={(value) => setEditForm((prev) => ({ ...prev, system: value }))}
+                >
+                  <SelectTrigger id="edit-campaign-system">
+                    <SelectValue placeholder="Select a ruleset" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="D&D 5e">D&D 5e</SelectItem>
+                    <SelectItem value="Pathfinder 2e">Pathfinder 2e</SelectItem>
+                    <SelectItem value="Call of Cthulhu">Call of Cthulhu</SelectItem>
+                    <SelectItem value="Vampire: The Masquerade">Vampire: The Masquerade</SelectItem>
+                    <SelectItem value="Other">Other</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+              <div>
+                <Label htmlFor="edit-campaign-setting">Setting</Label>
+                <Input
+                  id="edit-campaign-setting"
+                  value={editForm.setting}
+                  onChange={(event) => setEditForm((prev) => ({ ...prev, setting: event.target.value }))}
+                  placeholder="e.g., Homebrew, Eberron, Sci-Fi"
+                />
+              </div>
+            </div>
+            <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4">
+              <div className="lg:col-span-2">
+                <Label htmlFor="edit-campaign-status">Status</Label>
+                <Select
+                  value={editForm.status}
+                  onValueChange={(value) =>
+                    setEditForm((prev) => ({ ...prev, status: value as CampaignStatus }))
+                  }
+                >
+                  <SelectTrigger id="edit-campaign-status">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="recruiting">Recruiting</SelectItem>
+                    <SelectItem value="active">Active</SelectItem>
+                    <SelectItem value="paused">Paused</SelectItem>
+                    <SelectItem value="completed">Completed</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+              <div>
+                <Label htmlFor="edit-campaign-max-players">Max Players</Label>
+                <Input
+                  id="edit-campaign-max-players"
+                  type="number"
+                  min="1"
+                  max="20"
+                  value={editForm.maxPlayers}
+                  onChange={(event) => {
+                    const raw = parseInt(event.target.value, 10);
+                    if (Number.isNaN(raw)) {
+                      return;
+                    }
+                    const clamped = Math.min(20, Math.max(1, raw));
+                    setEditForm((prev) => ({ ...prev, maxPlayers: clamped }));
+                  }}
+                />
+              </div>
+              <div>
+                <Label htmlFor="edit-campaign-min-level">Min Level</Label>
+                <Input
+                  id="edit-campaign-min-level"
+                  type="number"
+                  min="1"
+                  max="20"
+                  value={editForm.minLevel}
+                  onChange={(event) => {
+                    const raw = parseInt(event.target.value, 10);
+                    if (Number.isNaN(raw)) {
+                      return;
+                    }
+                    const clamped = clampLevelValue(raw);
+                    setEditForm((prev) => ({
+                      ...prev,
+                      minLevel: clamped,
+                      maxLevel: prev.maxLevel < clamped ? clamped : prev.maxLevel,
+                    }));
+                  }}
+                />
+              </div>
+              <div>
+                <Label htmlFor="edit-campaign-max-level">Max Level</Label>
+                <Input
+                  id="edit-campaign-max-level"
+                  type="number"
+                  min="1"
+                  max="20"
+                  value={editForm.maxLevel}
+                  onChange={(event) => {
+                    const raw = parseInt(event.target.value, 10);
+                    if (Number.isNaN(raw)) {
+                      return;
+                    }
+                    const clamped = clampLevelValue(raw);
+                    setEditForm((prev) => ({
+                      ...prev,
+                      maxLevel: clamped < prev.minLevel ? prev.minLevel : clamped,
+                    }));
+                  }}
+                />
+              </div>
+            </div>
+          </div>
+          <div className="flex justify-end gap-2 pt-4">
+            <Button variant="outline" onClick={closeEditDialog}>
+              Cancel
+            </Button>
+            <Button onClick={handleUpdateCampaign} disabled={editSaving}>
+              {editSaving && <Loader2 className="w-4 h-4 mr-2 animate-spin" />}
+              Save Changes
+            </Button>
+          </div>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog
+        open={Boolean(settingsDialogCampaign)}
+        onOpenChange={(open) => {
+          if (!open) {
+            closeSettingsDialog();
+          }
+        }}
+      >
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Campaign Settings</DialogTitle>
+            <DialogDescription>
+              Control how players discover and interact with this campaign.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-4">
+            <div className="space-y-3">
+              <div className="flex items-start justify-between gap-3 rounded-md border p-3">
+                <div className="space-y-1">
+                  <p className="text-sm font-medium">Public campaign</p>
+                  <p className="text-xs text-muted-foreground">
+                    Allow players outside your roster to discover this campaign in public listings.
+                  </p>
+                </div>
+                <Switch
+                  id="settings-campaign-public"
+                  checked={settingsForm.isPublic}
+                  onCheckedChange={(checked) =>
+                    setSettingsForm((prev) => ({ ...prev, isPublic: checked }))
+                  }
+                  className="mt-1"
+                />
+              </div>
+              <div className="flex items-start justify-between gap-3 rounded-md border p-3">
+                <div className="space-y-1">
+                  <p className="text-sm font-medium">Allow spectators</p>
+                  <p className="text-xs text-muted-foreground">
+                    Enables view-only seats so non-participants can watch live sessions.
+                  </p>
+                </div>
+                <Switch
+                  id="settings-campaign-spectators"
+                  checked={settingsForm.allowSpectators}
+                  onCheckedChange={(checked) =>
+                    setSettingsForm((prev) => ({ ...prev, allowSpectators: checked }))
+                  }
+                  className="mt-1"
+                />
+              </div>
+              <div className="flex items-start justify-between gap-3 rounded-md border p-3">
+                <div className="space-y-1">
+                  <p className="text-sm font-medium">Auto-approve join requests</p>
+                  <p className="text-xs text-muted-foreground">
+                    When enabled, new requests from authenticated users are approved without manual review.
+                  </p>
+                </div>
+                <Switch
+                  id="settings-campaign-auto-approve"
+                  checked={settingsForm.autoApproveJoinRequests}
+                  onCheckedChange={(checked) =>
+                    setSettingsForm((prev) => ({ ...prev, autoApproveJoinRequests: checked }))
+                  }
+                  className="mt-1"
+                />
+              </div>
+            </div>
+            <div className="grid gap-4 md:grid-cols-2">
+              <div>
+                <Label htmlFor="settings-experience">Experience model</Label>
+                <Select
+                  value={settingsForm.experienceType}
+                  onValueChange={(value) =>
+                    setSettingsForm((prev) => ({ ...prev, experienceType: value as ExperienceType }))
+                  }
+                >
+                  <SelectTrigger id="settings-experience">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="milestone">Milestone progression</SelectItem>
+                    <SelectItem value="experience_points">Experience points</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+              <div>
+                <Label htmlFor="settings-resting">Resting rules</Label>
+                <Select
+                  value={settingsForm.restingRules}
+                  onValueChange={(value) =>
+                    setSettingsForm((prev) => ({ ...prev, restingRules: value as RestingRules }))
+                  }
+                >
+                  <SelectTrigger id="settings-resting">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="standard">Standard (PHB)</SelectItem>
+                    <SelectItem value="gritty">Gritty realism</SelectItem>
+                    <SelectItem value="heroic">Heroic rest variant</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+              <div>
+                <Label htmlFor="settings-death">Death save difficulty</Label>
+                <Select
+                  value={settingsForm.deathSaveRules}
+                  onValueChange={(value) =>
+                    setSettingsForm((prev) => ({ ...prev, deathSaveRules: value as DeathSaveRules }))
+                  }
+                >
+                  <SelectTrigger id="settings-death">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="standard">Standard</SelectItem>
+                    <SelectItem value="hardcore">Hardcore (harder to stabilize)</SelectItem>
+                    <SelectItem value="forgiving">Forgiving (easier stabilization)</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+            </div>
+          </div>
+          <div className="flex justify-end gap-2 pt-4">
+            <Button variant="outline" onClick={closeSettingsDialog}>
+              Cancel
+            </Button>
+            <Button onClick={handleUpdateCampaignSettings} disabled={settingsSaving}>
+              {settingsSaving && <Loader2 className="w-4 h-4 mr-2 animate-spin" />}
+              Save Settings
+            </Button>
+          </div>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

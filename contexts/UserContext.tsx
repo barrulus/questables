@@ -1,7 +1,8 @@
-import React, { createContext, useContext, useState, useEffect, ReactNode } from 'react';
+import React, { createContext, useContext, useState, useEffect, ReactNode, useCallback } from 'react';
 import { User } from '../utils/database/data-structures';
 import { userHelpers } from '../utils/database/production-helpers';
 import { databaseClient } from '../utils/database/client';
+import { AUTH_LOGOUT_EVENT } from '../utils/api-client';
 
 const USER_STORAGE_KEY = 'dnd-user';
 const TOKEN_STORAGE_KEY = 'dnd-auth-token';
@@ -167,7 +168,7 @@ export function UserProvider({ children }: UserProviderProps) {
     }
   };
 
-  const logout = () => {
+  const logout = useCallback(() => {
     setUser(null);
     setAuthToken(null);
     setError(null);
@@ -176,9 +177,9 @@ export function UserProvider({ children }: UserProviderProps) {
       localStorage.removeItem(TOKEN_STORAGE_KEY);
       localStorage.removeItem('dnd-active-campaign');
     }
-  };
+  }, [setAuthToken, setError, setUser]);
 
-  const updateProfile = async (updates: Partial<User>): Promise<void> => {
+  const updateProfile = useCallback(async (updates: Partial<User>): Promise<void> => {
     if (!user) {
       throw new Error('No user logged in');
     }
@@ -202,7 +203,23 @@ export function UserProvider({ children }: UserProviderProps) {
     } finally {
       setLoading(false);
     }
-  };
+  }, [setError, setLoading, setUser, user]);
+
+  useEffect(() => {
+    if (typeof window === 'undefined') {
+      return undefined;
+    }
+
+    const handler = (event: Event) => {
+      const detail = (event as CustomEvent<{ message?: string }>).detail;
+      const message = detail?.message ?? 'Session expired. Please sign in again.';
+      logout();
+      setError(message);
+    };
+
+    window.addEventListener(AUTH_LOGOUT_EVENT, handler as EventListener);
+    return () => window.removeEventListener(AUTH_LOGOUT_EVENT, handler as EventListener);
+  }, [logout, setError]);
 
   const value: UserContextType = {
     user,

@@ -23,6 +23,7 @@ interface CampaignMetadata {
   allowSpectators?: boolean;
   autoApproveJoinRequests?: boolean;
   lastActivity?: string;
+  visibilityRadius?: number;
 }
 
 interface SessionMetadata {
@@ -44,6 +45,9 @@ interface GameSessionContextValue {
   error: string | null;
   selectCampaign: (campaignId: string | null) => Promise<void>;
   refreshActiveCampaign: () => Promise<void>;
+  playerVisibilityRadius: number | null;
+  viewerRole: string | null;
+  updateVisibilityMetadata: (metadata: { radius?: number | null; viewerRole?: string | null } | null) => void;
 }
 
 interface RawCampaignRow {
@@ -90,6 +94,8 @@ type GameSessionState = {
   latestSession: SessionMetadata | null;
   loading: boolean;
   error: string | null;
+  visibilityRadius: number | null;
+  viewerRole: string | null;
 };
 
 const initialState: GameSessionState = {
@@ -98,6 +104,8 @@ const initialState: GameSessionState = {
   latestSession: null,
   loading: false,
   error: null,
+  visibilityRadius: null,
+  viewerRole: null,
 };
 
 const GameSessionContext = createContext<GameSessionContextValue | undefined>(undefined);
@@ -148,6 +156,9 @@ function normalizeCampaign(row: RawCampaignRow): CampaignMetadata {
     allowSpectators: row.allow_spectators ?? undefined,
     autoApproveJoinRequests: row.auto_approve_join_requests ?? undefined,
     lastActivity: row.last_activity ?? undefined,
+    visibilityRadius: typeof (row as Record<string, unknown>).visibility_radius === 'number'
+      ? (row as Record<string, unknown>).visibility_radius as number
+      : undefined,
   };
 }
 
@@ -259,6 +270,8 @@ export function GameSessionProvider({ children }: { children: ReactNode }) {
         latestSession: normalizedSession,
         loading: false,
         error: null,
+        visibilityRadius: normalizedCampaign.visibilityRadius ?? null,
+        viewerRole: null,
       });
     } catch (error) {
       if (controller.signal.aborted) {
@@ -274,6 +287,8 @@ export function GameSessionProvider({ children }: { children: ReactNode }) {
         latestSession: null,
         loading: false,
         error: message,
+        visibilityRadius: null,
+        viewerRole: null,
       });
     }
   }, []);
@@ -301,6 +316,18 @@ export function GameSessionProvider({ children }: { children: ReactNode }) {
       await loadCampaignMetadata(state.activeCampaignId);
     }
   }, [loadCampaignMetadata, state.activeCampaignId]);
+
+  const updateVisibilityMetadata = useCallback((metadata: { radius?: number | null; viewerRole?: string | null } | null) => {
+    setState((prev) => {
+      const hasRadius = metadata ? Object.prototype.hasOwnProperty.call(metadata, 'radius') : false;
+      const hasViewerRole = metadata ? Object.prototype.hasOwnProperty.call(metadata, 'viewerRole') : false;
+      return {
+        ...prev,
+        visibilityRadius: hasRadius ? (metadata?.radius ?? null) : prev.visibilityRadius,
+        viewerRole: hasViewerRole ? (metadata?.viewerRole ?? null) : prev.viewerRole,
+      };
+    });
+  }, []);
 
   useEffect(() => {
     return () => {
@@ -352,6 +379,9 @@ export function GameSessionProvider({ children }: { children: ReactNode }) {
     error: state.error,
     selectCampaign,
     refreshActiveCampaign,
+    playerVisibilityRadius: state.visibilityRadius,
+    viewerRole: state.viewerRole,
+    updateVisibilityMetadata,
   };
 
   return (
