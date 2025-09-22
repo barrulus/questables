@@ -419,7 +419,47 @@ Always append new entries; do not erase or rewrite previous log items except to 
   - Added DM-only teleport helper backed by campaign spawns plus spawn CRUD returning GeoJSON for map overlays (`server/database-server.js:2357`, `server/database-server.js:2414`, `server/database-server.js:2481`).
   - Exposed visibility, trail, and movement audit APIs powered by the new `visible_player_positions` helper (`server/database-server.js:2544`, `server/database-server.js:2611`, `server/database-server.js:2669`; `database/schema.sql:372`).
   - Extended the schema with `visibility_state`, SRID-0 spawns, movement audit log, and visibility function; mirrored changes in migration script for repeatable loads (`database/schema.sql:298`, `database/schema.sql:310`, `database/migration.sql:150`).
+  - Hardened `performPlayerMovement` to lock the campaign player row without `FOR UPDATE` outer-join errors by fetching map bounds in a follow-up query (`server/database-server.js:756`).
 - **Cleanups:** None.
 - **Documentation Updates:** `lint_report.md:40` (captured eslint execution after movement endpoints).
 - **Tests & Verification:** `npx eslint server/database-server.js` (fails: existing Node globals/unused symbol debt; confirms no new errors introduced by Phase 2 slice).
 - **Remaining Gaps / Blockers:** Pending real-time WebSocket broadcasting for token updates and repo-wide lint configuration fix so Node globals are recognised.
+
+## Task – Player Dashboard Token Controls
+- **Date:** 2025-09-23
+- **Engineer(s):** Codex Agent
+- **Work Done:**
+  - Expanded the user character endpoint to bundle active campaign-player tokens, including live coordinates and visibility state (`server/database-server.js:2015`).
+  - Mapped returned token payloads into the player dashboard and surfaced per-character token summaries with visibility badges and last-seen telemetry (`components/player-dashboard.tsx:783`).
+  - Wired the dashboard Edit CTA to reuse Character Manager in targeted edit mode via a simple command channel (`components/player-dashboard.tsx:862`, `components/character-manager.tsx:368`).
+- **Documentation Updates:** None.
+- **Tests & Verification:**
+  - `npx eslint components/player-dashboard.tsx components/character-manager.tsx --ext tsx` (pass)
+  - `npx eslint server/database-server.js --ext js` (fails: legacy Node env/unused binding lint debt; no new issues from token exposure)
+- **Remaining Gaps / Blockers:** Need dedicated integration coverage for `/api/users/:userId/characters` token payloads and a lint baseline cleanup for the server bundle.
+
+## Task – Chat Character Identity Fix
+- **Date:** 2025-09-23
+- **Engineer(s):** Codex Agent
+- **Work Done:**
+  - Updated the chat message insert handler to return user/character joins so client responses include `username` and `character_name` immediately (`server/database-server.js:3164`).
+  - Propagated character names through websocket broadcasts and client payloads so live chat updates display the selected persona without waiting for a refresh (`server/websocket-server.js:74`, `hooks/useWebSocket.tsx:207`, `components/chat-system.tsx:323`).
+- **Documentation Updates:** None.
+- **Tests & Verification:**
+  - `npx eslint components/chat-system.tsx hooks/useWebSocket.tsx --ext ts,tsx` (pass)
+  - `npx eslint server/database-server.js --ext js` (fails: longstanding Node global/unused binding lint debt; chat enrichment introduces no additional errors)
+- **Remaining Gaps / Blockers:** Should add integration coverage for the chat POST/websocket loop and address the shared server lint baseline that masks real regressions.
+
+## Task – Campaign World Map Enforcement
+- **Date:** 2025-09-23
+- **Engineer(s):** Codex Agent
+- **Work Done:**
+  - Required a world map when a campaign is activated and plumbed `worldMapId` through creation/update endpoints so the backend can enforce the constraint (`server/database-server.js:2143`, `server/database-server.js:2262`, `server/database-server.js:3146`).
+  - Auto-positioned newly joined players at the default spawn (or map centre) to ensure tokens render immediately (`server/database-server.js:2328`).
+  - Added world map pickers to the campaign manager create/edit flows with messaging for map-less states (`components/campaign-manager.tsx:233`, `components/campaign-manager.tsx:1000`) and extended shared form helpers to track the selection (`components/campaign-shared.ts:13`).
+  - Surfaced the selected world map in the campaign overview so DMs can verify readiness at a glance (`components/campaign-manager.tsx:917`).
+- **Documentation Updates:** API_DOCUMENTATION.md (campaign create/update payloads); lint_report.md (new eslint runs recorded).
+- **Tests & Verification:**
+  - `npx eslint components/campaign-manager.tsx components/campaign-shared.ts --ext ts,tsx,ts` (pass)
+  - `npx eslint server/database-server.js --ext js` (fails: existing Node/global lint debt; map enforcement introduces no additional errors)
+- **Remaining Gaps / Blockers:** Needs richer tooling to upload/select maps from inside the campaign manager and a migration path for legacy active campaigns lacking `world_map_id`.

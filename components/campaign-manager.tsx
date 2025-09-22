@@ -1,11 +1,10 @@
-import { useState, useEffect, useCallback, useRef, memo } from "react";
+import { useState, useEffect, useCallback, useRef, memo, useMemo } from "react";
 import { Card, CardContent, CardHeader, CardTitle } from "./ui/card";
 import { Button } from "./ui/button";
 import { Badge } from "./ui/badge";
 import { Input } from "./ui/input";
 import { Label } from "./ui/label";
 import { Textarea } from "./ui/textarea";
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "./ui/tabs";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle, DialogTrigger } from "./ui/dialog";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "./ui/select";
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle, AlertDialogTrigger } from "./ui/alert-dialog";
@@ -42,11 +41,17 @@ import {
   createSettingsFormDefaults,
 } from "./campaign-shared";
 
+interface WorldMapSummary {
+  id: string;
+  name: string;
+  description?: string | null;
+}
+
 export function CampaignManager() {
   const { user } = useUser();
   const [dmCampaigns, setDmCampaigns] = useState<Campaign[]>([]);
-  const [playerCampaigns, setPlayerCampaigns] = useState<Campaign[]>([]);
-  const [publicCampaigns, setPublicCampaigns] = useState<Campaign[]>([]);
+  const [worldMaps, setWorldMaps] = useState<WorldMapSummary[]>([]);
+  const [worldMapsLoading, setWorldMapsLoading] = useState(false);
   const [selectedCampaign, setSelectedCampaign] = useState<Campaign | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -61,7 +66,8 @@ export function CampaignManager() {
     setting: "Fantasy",
     maxPlayers: 6,
     levelRange: { min: 1, max: 20 },
-    isPublic: false
+    isPublic: false,
+    worldMapId: '',
   });
   const [editDialogCampaign, setEditDialogCampaign] = useState<Campaign | null>(null);
   const [editForm, setEditForm] = useState<CampaignEditFormState>(() => createEditFormDefaults());
@@ -79,6 +85,44 @@ export function CampaignManager() {
     } else {
       lastSelectedCampaignIdRef.current = null;
       setSelectedCampaign(null);
+    }
+  }, []);
+
+  const loadWorldMaps = useCallback(async ({ signal }: { signal?: AbortSignal } = {}) => {
+    try {
+      setWorldMapsLoading(true);
+      const response = await apiFetch('/api/maps/world', { signal });
+      if (!response.ok) {
+        throw new Error(await readErrorMessage(response, 'Failed to load world maps'));
+      }
+      const payload = await readJsonBody<unknown>(response);
+      if (!Array.isArray(payload)) {
+        setWorldMaps([]);
+        return;
+      }
+      const maps = payload
+        .map((item) => {
+          if (!item || typeof item !== 'object') return null;
+          const record = item as Record<string, unknown>;
+          const id = typeof record.id === 'string' ? record.id : null;
+          const name = typeof record.name === 'string' && record.name.trim() ? record.name : null;
+          if (!id || !name) return null;
+          return {
+            id,
+            name,
+            description: typeof record.description === 'string' ? record.description : null,
+          } satisfies WorldMapSummary;
+        })
+        .filter((value): value is WorldMapSummary => Boolean(value));
+      setWorldMaps(maps);
+    } catch (err) {
+      if (err instanceof DOMException && err.name === 'AbortError') {
+        return;
+      }
+      const message = err instanceof Error ? err.message : 'Failed to load world maps';
+      toast.error(message);
+    } finally {
+      setWorldMapsLoading(false);
     }
   }, []);
 
@@ -107,8 +151,6 @@ export function CampaignManager() {
     if (!user) {
       handleSelectCampaign(null);
       setDmCampaigns([]);
-      setPlayerCampaigns([]);
-      setPublicCampaigns([]);
       setLoading(false);
       setRefreshing(false);
       return;
@@ -130,31 +172,15 @@ export function CampaignManager() {
       if (!userCampaignsResponse.ok) {
         throw new Error(await readErrorMessage(userCampaignsResponse, "Failed to load user campaigns"));
       }
-      const userCampaignsData = await readJsonBody<{ dmCampaigns?: Campaign[]; playerCampaigns?: Campaign[] }>(userCampaignsResponse);
+      const userCampaignsData = await readJsonBody<{ dmCampaigns?: Campaign[] }>(userCampaignsResponse);
 
       const dmCampaignList = userCampaignsData.dmCampaigns ?? [];
-      const playerCampaignList = userCampaignsData.playerCampaigns ?? [];
-
-      const publicResponse = await apiFetch('/api/campaigns/public', { signal });
-      if (!publicResponse.ok) {
-        throw new Error(await readErrorMessage(publicResponse, "Failed to load public campaigns"));
-      }
-      const publicData = await readJsonBody<Campaign[]>(publicResponse);
-
-      const filteredPublicCampaigns = (publicData ?? []).filter((campaign) => {
-        const alreadyDm = dmCampaignList.some((dmCampaign) => dmCampaign.id === campaign.id);
-        const alreadyPlayer = playerCampaignList.some((playerCampaign) => playerCampaign.id === campaign.id);
-        return !alreadyDm && !alreadyPlayer;
-      });
 
       setDmCampaigns(dmCampaignList);
-      setPlayerCampaigns(playerCampaignList);
-      setPublicCampaigns(filteredPublicCampaigns);
 
-      const combinedCampaigns = [...dmCampaignList, ...playerCampaignList];
       const lastSelectedId = lastSelectedCampaignIdRef.current;
       if (lastSelectedId) {
-        const matched = combinedCampaigns.find((campaign) => campaign.id === lastSelectedId);
+        const matched = dmCampaignList.find((campaign) => campaign.id === lastSelectedId);
         if (matched) {
           handleSelectCampaign(matched);
           return;
@@ -163,8 +189,6 @@ export function CampaignManager() {
 
       if (dmCampaignList.length > 0) {
         handleSelectCampaign(dmCampaignList[0]);
-      } else if (playerCampaignList.length > 0) {
-        handleSelectCampaign(playerCampaignList[0]);
       } else {
         handleSelectCampaign(null);
       }
@@ -191,6 +215,23 @@ export function CampaignManager() {
     loadCampaignData({ signal: controller.signal, mode: "initial" });
     return () => controller.abort();
   }, [user, loadCampaignData]);
+
+  useEffect(() => {
+    const controller = new AbortController();
+    loadWorldMaps({ signal: controller.signal });
+    return () => controller.abort();
+  }, [loadWorldMaps]);
+
+  useEffect(() => {
+    if (worldMaps.length === 0) {
+      return;
+    }
+    setNewCampaign((prev) => (
+      prev.worldMapId || worldMaps.length === 0
+        ? prev
+        : { ...prev, worldMapId: worldMaps[0].id }
+    ));
+  }, [worldMaps]);
 
   const handleCreateCampaign = useCallback(async () => {
     if (!user || !newCampaign.name.trim()) {
@@ -229,7 +270,8 @@ export function CampaignManager() {
           status: 'recruiting',
           maxPlayers,
           levelRange: newCampaign.levelRange,
-          isPublic: newCampaign.isPublic
+          isPublic: newCampaign.isPublic,
+          worldMapId: newCampaign.worldMapId || null,
         })
       });
 
@@ -257,7 +299,8 @@ export function CampaignManager() {
         setting: "Fantasy",
         maxPlayers: 6,
         levelRange: { min: 1, max: 20 },
-        isPublic: false
+        isPublic: false,
+        worldMapId: worldMaps[0]?.id ?? '',
       });
       setIsCreating(false);
       toast.success("Campaign created successfully!");
@@ -266,7 +309,7 @@ export function CampaignManager() {
     } finally {
       setCreateLoading(false);
     }
-  }, [user, newCampaign, loadCampaignData]);
+  }, [user, newCampaign, loadCampaignData, worldMaps]);
 
   const handleUpdateCampaign = useCallback(async () => {
     if (!editDialogCampaign) {
@@ -299,6 +342,11 @@ export function CampaignManager() {
 
     const defaultEditForm = createEditFormDefaults();
 
+    if (editForm.status === 'active' && !editForm.worldMapId) {
+      toast.error('Select a world map before activating the campaign.');
+      return;
+    }
+
     const payload = {
       name: trimmedName,
       description: editForm.description,
@@ -307,6 +355,7 @@ export function CampaignManager() {
       status: editForm.status,
       max_players: maxPlayers,
       level_range: { min: minLevel, max: maxLevel },
+      world_map_id: editForm.worldMapId || null,
     };
 
     try {
@@ -336,6 +385,7 @@ export function CampaignManager() {
         status: payload.status,
         max_players: payload.max_players,
         level_range: payload.level_range,
+        world_map_id: payload.world_map_id,
       });
 
       setDmCampaigns((campaigns) => campaigns.map((campaign) =>
@@ -371,6 +421,7 @@ export function CampaignManager() {
     editForm.setting,
     editForm.status,
     editForm.system,
+    editForm.worldMapId,
     user,
     loadCampaignData,
     closeEditDialog,
@@ -487,29 +538,6 @@ export function CampaignManager() {
     }
   };
 
-  const handleJoinCampaign = async (campaign: Campaign, characterId?: string) => {
-    if (!user) return;
-
-    try {
-      const response = await apiFetch(`/api/campaigns/${campaign.id}/players`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ userId: user.id, characterId })
-      });
-
-      if (!response.ok) {
-        throw new Error(await readErrorMessage(response, 'Failed to join campaign'));
-      }
-
-      // Refresh campaign data
-      lastSelectedCampaignIdRef.current = campaign.id;
-      await loadCampaignData({ mode: "refresh" });
-      toast.success("Successfully joined campaign!");
-    } catch (err) {
-      toast.error(err instanceof Error ? err.message : 'Failed to join campaign');
-    }
-  };
-
   const getStatusColor = useCallback((status: string) => {
     switch (status) {
       case "active": return "bg-green-500";
@@ -521,6 +549,13 @@ export function CampaignManager() {
   }, []);
 
   const selectedLevelRange = coerceLevelRange(selectedCampaign?.level_range ?? null);
+  const selectedWorldMapName = useMemo(() => {
+    if (!selectedCampaign?.world_map_id) {
+      return null;
+    }
+    const match = worldMaps.find((map) => map.id === selectedCampaign.world_map_id);
+    return match?.name ?? 'Unknown map';
+  }, [selectedCampaign?.world_map_id, worldMaps]);
 
   // Memoized computed values for better performance
   if (!user) {
@@ -587,8 +622,11 @@ export function CampaignManager() {
               </DialogTrigger>
               <DialogContent>
                 <DialogHeader>
-                  <DialogTitle>Create New Campaign</DialogTitle>
-                </DialogHeader>
+              <DialogTitle>Create New Campaign</DialogTitle>
+              <DialogDescription>
+                Set the core details for your campaign. You can link a world map later, but it becomes mandatory before the campaign goes active.
+              </DialogDescription>
+            </DialogHeader>
                 <div className="space-y-4">
                 <div>
                   <Label htmlFor="name">Campaign Name *</Label>
@@ -637,6 +675,37 @@ export function CampaignManager() {
                       placeholder="e.g., Fantasy, Modern, Sci-fi"
                     />
                   </div>
+                </div>
+                <div>
+                  <Label htmlFor="create-world-map">World Map</Label>
+                  {worldMapsLoading ? (
+                    <p className="text-sm text-muted-foreground">Loading world maps…</p>
+                  ) : worldMaps.length > 0 ? (
+                    <Select
+                      value={newCampaign.worldMapId}
+                      onValueChange={(value) =>
+                        setNewCampaign((prev) => ({ ...prev, worldMapId: value }))
+                      }
+                    >
+                      <SelectTrigger id="create-world-map">
+                        <SelectValue placeholder="Select a world map" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value={undefined as unknown as string} disabled>
+                          No map yet (set later)
+                        </SelectItem>
+                        {worldMaps.map((map) => (
+                          <SelectItem key={map.id} value={map.id}>
+                            {map.name}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  ) : (
+                    <p className="text-sm text-muted-foreground">
+                      No world maps available. Upload one from the Map Manager before activating this campaign.
+                    </p>
+                  )}
                 </div>
                 <div className="grid grid-cols-3 gap-4">
                   <div>
@@ -720,159 +789,84 @@ export function CampaignManager() {
         </div>
 
         {/* Campaign Tabs */}
-        <Tabs defaultValue="my-campaigns" className="w-full">
-          <TabsList>
-            <TabsTrigger value="my-campaigns">My Campaigns ({dmCampaigns.length})</TabsTrigger>
-            <TabsTrigger value="joined-campaigns">Joined ({playerCampaigns.length})</TabsTrigger>
-            <TabsTrigger value="public-campaigns">Public ({publicCampaigns.length})</TabsTrigger>
-          </TabsList>
-
-          <TabsContent value="my-campaigns" className="mt-4">
-            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-              {dmCampaigns.map((campaign) => (
-                <Card 
-                  key={campaign.id}
-                  className={`cursor-pointer transition-colors ${
-                    selectedCampaign?.id === campaign.id ? 'ring-2 ring-primary' : ''
-                  }`}
-                  onClick={() => handleSelectCampaign(campaign)}
-                >
-                  <CardContent className="p-4">
-                    <div className="flex items-center gap-2 mb-2">
-                      <div className={`w-2 h-2 rounded-full ${getStatusColor(campaign.status)}`} />
-                      <h3 className="font-medium text-sm truncate">{campaign.name}</h3>
-                    </div>
-                    <p className="text-xs text-muted-foreground mb-2 line-clamp-2">
-                      {campaign.description || 'No description'}
-                    </p>
-                    <div className="flex items-center justify-between mb-2">
-                      <Badge variant="outline" className="text-xs">{campaign.system}</Badge>
-                      <span className="text-xs text-muted-foreground">{campaign.current_players || 0}/{campaign.max_players}</span>
-                    </div>
-                    <div className="flex gap-1">
-                      <Button
-                        type="button"
-                        variant="ghost"
-                        size="sm"
-                        className="h-6 px-2"
-                        onClick={(event) => {
-                          event.stopPropagation();
-                          openEditDialog(campaign);
-                        }}
-                      >
-                        <Edit className="w-3 h-3 mr-1" />
-                        Edit
-                      </Button>
-                      <AlertDialog>
-                        <AlertDialogTrigger asChild>
-                          <Button variant="ghost" size="sm" className="h-6 px-2 text-destructive">
-                            <Trash2 className="w-3 h-3 mr-1" />
-                            Delete
-                          </Button>
-                        </AlertDialogTrigger>
-                        <AlertDialogContent>
-                          <AlertDialogHeader>
-                            <AlertDialogTitle>Delete Campaign</AlertDialogTitle>
-                            <AlertDialogDescription>
-                              Are you sure you want to delete "{campaign.name}"? This action cannot be undone.
-                            </AlertDialogDescription>
-                          </AlertDialogHeader>
-                          <AlertDialogFooter>
-                            <AlertDialogCancel>Cancel</AlertDialogCancel>
-                            <AlertDialogAction
-                              onClick={() => handleDeleteCampaign(campaign)}
-                              className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
-                            >
-                              Delete
-                            </AlertDialogAction>
-                          </AlertDialogFooter>
-                        </AlertDialogContent>
-                      </AlertDialog>
-                    </div>
-                  </CardContent>
-                </Card>
-              ))}
-              {dmCampaigns.length === 0 && (
-                <div className="col-span-full text-center py-8 text-muted-foreground">
-                  <MapIcon className="w-12 h-12 mx-auto mb-4 opacity-50" />
-                  <p>No campaigns created yet</p>
-                  <p className="text-sm">Create your first campaign to get started</p>
-                </div>
-              )}
-            </div>
-          </TabsContent>
-
-          <TabsContent value="joined-campaigns" className="mt-4">
-            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-              {playerCampaigns.map((campaign) => (
-                <Card key={campaign.id} className="cursor-pointer" onClick={() => handleSelectCampaign(campaign)}>
-                  <CardContent className="p-4">
-                    <div className="flex items-center gap-2 mb-2">
-                      <div className={`w-2 h-2 rounded-full ${getStatusColor(campaign.status)}`} />
-                      <h3 className="font-medium text-sm truncate">{campaign.name}</h3>
-                    </div>
-                    <p className="text-xs text-muted-foreground mb-2">
-                      DM: {campaign.dm_username}
-                    </p>
-                    <div className="flex items-center justify-between">
-                      <Badge variant="outline" className="text-xs">{campaign.system}</Badge>
-                      <span className="text-xs text-muted-foreground capitalize">{campaign.status}</span>
-                    </div>
-                  </CardContent>
-                </Card>
-              ))}
-              {playerCampaigns.length === 0 && (
-                <div className="col-span-full text-center py-8 text-muted-foreground">
-                  <Users className="w-12 h-12 mx-auto mb-4 opacity-50" />
-                  <p>No campaigns joined yet</p>
-                  <p className="text-sm">Join a public campaign or wait for an invitation</p>
-                </div>
-              )}
-            </div>
-          </TabsContent>
-
-          <TabsContent value="public-campaigns" className="mt-4">
-            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-              {publicCampaigns.map((campaign) => (
-                <Card key={campaign.id}>
-                  <CardContent className="p-4">
-                    <div className="flex items-center gap-2 mb-2">
-                      <div className={`w-2 h-2 rounded-full ${getStatusColor(campaign.status)}`} />
-                      <h3 className="font-medium text-sm truncate">{campaign.name}</h3>
-                    </div>
-                    <p className="text-xs text-muted-foreground mb-2">
-                      DM: {campaign.dm_username}
-                    </p>
-                    <p className="text-xs text-muted-foreground mb-2 line-clamp-2">
-                      {campaign.description || 'No description'}
-                    </p>
-                    <div className="flex items-center justify-between mb-2">
-                      <Badge variant="outline" className="text-xs">{campaign.system}</Badge>
-                      <span className="text-xs text-muted-foreground">
-                        {campaign.current_players || 0}/{campaign.max_players} players
-                      </span>
-                    </div>
-                    <Button 
-                      size="sm" 
-                      className="w-full"
-                      onClick={() => handleJoinCampaign(campaign)}
-                      disabled={campaign.current_players >= campaign.max_players}
+                <section className="mt-6">
+          <div className="flex items-center justify-between mb-4">
+            <h3 className="text-sm font-semibold text-muted-foreground">My Campaigns</h3>
+            <span className="text-xs text-muted-foreground">{dmCampaigns.length} total</span>
+          </div>
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+            {dmCampaigns.map((campaign) => (
+              <Card
+                key={campaign.id}
+                className={`cursor-pointer transition-colors ${
+                  selectedCampaign?.id === campaign.id ? 'ring-2 ring-primary' : ''
+                }`}
+                onClick={() => handleSelectCampaign(campaign)}
+              >
+                <CardContent className="p-4">
+                  <div className="flex items-center gap-2 mb-2">
+                    <div className={`w-2 h-2 rounded-full ${getStatusColor(campaign.status)}`} />
+                    <h3 className="font-medium text-sm truncate">{campaign.name}</h3>
+                  </div>
+                  <p className="text-xs text-muted-foreground mb-2 line-clamp-2">
+                    {campaign.description || 'No description'}
+                  </p>
+                  <div className="flex items-center justify-between mb-2">
+                    <Badge variant="outline" className="text-xs">{campaign.system}</Badge>
+                    <span className="text-xs text-muted-foreground">{campaign.current_players || 0}/{campaign.max_players}</span>
+                  </div>
+                  <div className="flex gap-1">
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="sm"
+                      className="h-6 px-2"
+                      onClick={(event) => {
+                        event.stopPropagation();
+                        openEditDialog(campaign);
+                      }}
                     >
-                      {campaign.current_players >= campaign.max_players ? 'Full' : 'Join Campaign'}
+                      <Edit className="w-3 h-3 mr-1" />
+                      Edit
                     </Button>
-                  </CardContent>
-                </Card>
-              ))}
-              {publicCampaigns.length === 0 && (
-                <div className="col-span-full text-center py-8 text-muted-foreground">
-                  <MapIcon className="w-12 h-12 mx-auto mb-4 opacity-50" />
-                  <p>No public campaigns available</p>
-                  <p className="text-sm">Check back later for new campaigns</p>
-                </div>
-              )}
-            </div>
-          </TabsContent>
-        </Tabs>
+                    <AlertDialog>
+                      <AlertDialogTrigger asChild>
+                        <Button variant="ghost" size="sm" className="h-6 px-2 text-destructive">
+                          <Trash2 className="w-3 h-3 mr-1" />
+                          Delete
+                        </Button>
+                      </AlertDialogTrigger>
+                      <AlertDialogContent>
+                        <AlertDialogHeader>
+                          <AlertDialogTitle>Delete Campaign</AlertDialogTitle>
+                          <AlertDialogDescription>
+                            Are you sure you want to delete "{campaign.name}"? This action cannot be undone.
+                          </AlertDialogDescription>
+                        </AlertDialogHeader>
+                        <AlertDialogFooter>
+                          <AlertDialogCancel>Cancel</AlertDialogCancel>
+                          <AlertDialogAction
+                            onClick={() => handleDeleteCampaign(campaign)}
+                            className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+                          >
+                            Delete
+                          </AlertDialogAction>
+                        </AlertDialogFooter>
+                      </AlertDialogContent>
+                    </AlertDialog>
+                  </div>
+                </CardContent>
+              </Card>
+            ))}
+            {dmCampaigns.length === 0 && (
+              <div className="col-span-full text-center py-8 text-muted-foreground">
+                <MapIcon className="w-12 h-12 mx-auto mb-4 opacity-50" />
+                <p>No campaigns created yet</p>
+                <p className="text-sm">Create your first campaign to get started</p>
+              </div>
+            )}
+          </div>
+        </section>
       </div>
 
       {/* Campaign Details */}
@@ -954,6 +948,12 @@ export function CampaignManager() {
                       <h4 className="font-medium mb-1">Status</h4>
                       <Badge className="capitalize">{selectedCampaign.status}</Badge>
                     </div>
+                    <div>
+                      <h4 className="font-medium mb-1">World Map</h4>
+                      <p className="text-muted-foreground">
+                        {selectedWorldMapName ?? 'Not configured'}
+                      </p>
+                    </div>
                   </div>
                 </div>
               </CardContent>
@@ -1026,6 +1026,37 @@ export function CampaignManager() {
                 />
               </div>
             </div>
+            <div>
+              <Label htmlFor="edit-campaign-world-map">World Map</Label>
+              {worldMapsLoading ? (
+                <p className="text-sm text-muted-foreground">Loading world maps…</p>
+              ) : worldMaps.length > 0 ? (
+                <Select
+                  value={editForm.worldMapId || undefined}
+                  onValueChange={(value) =>
+                    setEditForm((prev) => ({ ...prev, worldMapId: value }))
+                  }
+                >
+                  <SelectTrigger id="edit-campaign-world-map">
+                    <SelectValue placeholder="Select a world map" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value={undefined as unknown as string} disabled>
+                      No map yet (set later)
+                    </SelectItem>
+                    {worldMaps.map((map) => (
+                      <SelectItem key={map.id} value={map.id}>
+                        {map.name}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              ) : (
+                <p className="text-sm text-muted-foreground">
+                  No world maps available. Upload one from the Map Manager before activating this campaign.
+                </p>
+              )}
+            </div>
             <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4">
               <div className="lg:col-span-2">
                 <Label htmlFor="edit-campaign-status">Status</Label>
@@ -1040,7 +1071,9 @@ export function CampaignManager() {
                   </SelectTrigger>
                   <SelectContent>
                     <SelectItem value="recruiting">Recruiting</SelectItem>
-                    <SelectItem value="active">Active</SelectItem>
+                    <SelectItem value="active" disabled={worldMaps.length === 0}>
+                      Active (requires world map)
+                    </SelectItem>
                     <SelectItem value="paused">Paused</SelectItem>
                     <SelectItem value="completed">Completed</SelectItem>
                   </SelectContent>

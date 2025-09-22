@@ -50,6 +50,17 @@ import {
 import { Badge } from "./ui/badge";
 import { cn } from "./ui/utils";
 
+export interface CharacterManagerCommand {
+  type: "create" | "edit";
+  token: number;
+  characterId?: string;
+}
+
+interface CharacterManagerProps {
+  command?: CharacterManagerCommand | null;
+  onCharactersChanged?: () => void;
+}
+
 const abilityKeys = [
   "strength",
   "dexterity",
@@ -354,7 +365,7 @@ type SortOption = "updated" | "name" | "level";
 
 type LoadMode = "initial" | "refresh";
 
-export function CharacterManager() {
+export function CharacterManager({ command, onCharactersChanged }: CharacterManagerProps) {
   const { user } = useUser();
   const [characters, setCharacters] = useState<Character[]>([]);
   const [loading, setLoading] = useState(true);
@@ -368,6 +379,7 @@ export function CharacterManager() {
   const [deleteTarget, setDeleteTarget] = useState<Character | null>(null);
   const [searchTerm, setSearchTerm] = useState("");
   const [sortBy, setSortBy] = useState<SortOption>("updated");
+  const [processedCommandToken, setProcessedCommandToken] = useState<number | null>(null);
 
   const loadCharacters = useCallback(async (mode: LoadMode = "initial") => {
     if (!user) {
@@ -489,14 +501,52 @@ export function CharacterManager() {
   const openCreateDialog = () => {
     setFormMode("create");
     setFormState(emptyFormState);
+    setSelectedCharacterId(null);
     setFormOpen(true);
   };
 
   const openEditDialog = (character: Character) => {
     setFormMode("edit");
     setFormState(mapCharacterToForm(character));
+    setSelectedCharacterId(character.id);
     setFormOpen(true);
   };
+
+  useEffect(() => {
+    if (!command) {
+      return;
+    }
+
+    if (processedCommandToken === command.token) {
+      return;
+    }
+
+    if (command.type === "create") {
+      setFormMode("create");
+      setFormState(emptyFormState);
+      setSelectedCharacterId(null);
+      setFormOpen(true);
+      setProcessedCommandToken(command.token);
+      return;
+    }
+
+    if (!command.characterId) {
+      setProcessedCommandToken(command.token);
+      return;
+    }
+
+    const target = characters.find((character) => character.id === command.characterId) ?? null;
+    if (target) {
+      setFormMode("edit");
+      setFormState(mapCharacterToForm(target));
+      setSelectedCharacterId(target.id);
+      setFormOpen(true);
+      setProcessedCommandToken(command.token);
+    } else if (!loading && !refreshing) {
+      toast.error("Unable to locate that character. Please refresh your roster and try again.");
+      setProcessedCommandToken(command.token);
+    }
+  }, [command, characters, loading, processedCommandToken, refreshing]);
 
   const handleSave = async () => {
     if (!user) {
@@ -543,6 +593,7 @@ export function CharacterManager() {
       setFormOpen(false);
       setFormState(emptyFormState);
       await loadCharacters("refresh");
+      onCharactersChanged?.();
     } catch (err) {
       console.error("Failed to save character", err);
       const message =
@@ -561,6 +612,7 @@ export function CharacterManager() {
       toast.success("Character deleted");
       setDeleteTarget(null);
       await loadCharacters("refresh");
+      onCharactersChanged?.();
     } catch (err) {
       console.error("Failed to delete character", err);
       const message = err instanceof Error ? err.message : "Delete failed";

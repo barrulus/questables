@@ -14,6 +14,7 @@ interface OutgoingChatMessagePayload {
   senderId: string;
   senderName: string;
   characterId?: string | null;
+  characterName?: string | null | undefined;
   messageType?: string;
   diceRoll?: unknown;
   createdAt?: string;

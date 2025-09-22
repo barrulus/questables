@@ -30,7 +30,7 @@ import {
   Users,
 } from "lucide-react";
 import { apiFetch, readErrorMessage, readJsonBody } from "../utils/api-client";
-import { CharacterManager } from "./character-manager";
+import { CharacterManager, type CharacterManagerCommand } from "./character-manager";
 import { useGameSession } from "../contexts/GameSessionContext";
 
 interface PlayerDashboardProps {
@@ -45,6 +45,17 @@ type HitPoints = {
   temporary?: number;
 };
 
+type PlayerTokenSummary = {
+  playerId: string;
+  campaignId: string;
+  campaignName: string;
+  role: string;
+  visibilityState: "visible" | "stealthed" | "hidden";
+  lastLocatedAt: string | null;
+  coordinates: { x: number; y: number } | null;
+  campaignStatus?: string | null;
+};
+
 type PlayerCharacter = {
   id: string;
   name: string;
@@ -56,6 +67,7 @@ type PlayerCharacter = {
   armorClass: number;
   avatarUrl?: string;
   lastPlayed?: string | null;
+  playerTokens: PlayerTokenSummary[];
 };
 
 type PlayerCampaign = {
@@ -100,6 +112,8 @@ type RawCharacter = {
   avatar?: string | null;
   last_played?: string | null;
   lastPlayed?: string | null;
+  player_tokens?: unknown;
+  playerTokens?: unknown;
 };
 
 type RawCampaign = {
@@ -128,6 +142,29 @@ type RawCampaign = {
   characterName?: string | null;
 };
 
+type RawPlayerToken = {
+  player_id?: string;
+  playerId?: string;
+  character_id?: string;
+  campaign_id?: string;
+  campaignId?: string;
+  campaign_name?: string | null;
+  campaignName?: string | null;
+  campaign_status?: string | null;
+  campaignStatus?: string | null;
+  role?: string | null;
+  visibility_state?: string | null;
+  visibilityState?: string | null;
+  last_located_at?: string | null;
+  lastLocatedAt?: string | null;
+  loc_geometry?: unknown;
+  locGeometry?: unknown;
+  loc_x?: number | string | null;
+  locX?: number | string | null;
+  loc_y?: number | string | null;
+  locY?: number | string | null;
+};
+
 const isRawCharacter = (value: unknown): value is RawCharacter => {
   return Boolean(value) && typeof value === "object" && "id" in (value as Record<string, unknown>);
 };
@@ -153,10 +190,133 @@ const parseJsonField = <T,>(value: unknown, fallback: T): T => {
   return value as T;
 };
 
+const PLAYER_VISIBILITY_STATES = new Set<PlayerTokenSummary["visibilityState"]>([
+  "visible",
+  "stealthed",
+  "hidden",
+]);
+
+const mapPlayerToken = (raw: RawPlayerToken): PlayerTokenSummary | null => {
+  const playerId = raw.player_id ?? raw.playerId;
+  const campaignId = raw.campaign_id ?? raw.campaignId;
+
+  if (!playerId || !campaignId) {
+    return null;
+  }
+
+  const parseNumber = (value: unknown): number | null => {
+    if (typeof value === "number" && Number.isFinite(value)) {
+      return value;
+    }
+    if (typeof value === "string") {
+      const parsed = Number(value);
+      return Number.isFinite(parsed) ? parsed : null;
+    }
+    return null;
+  };
+
+  let coordinates: { x: number; y: number } | null = null;
+  const geometrySource = raw.loc_geometry ?? raw.locGeometry;
+
+  if (geometrySource) {
+    const parsedGeometry = typeof geometrySource === "string"
+      ? (() => {
+          try {
+            return JSON.parse(geometrySource) as { coordinates?: unknown };
+          } catch (error) {
+            console.warn("Failed to parse player token geometry", { geometrySource, error });
+            return null;
+          }
+        })()
+      : (geometrySource as { coordinates?: unknown } | null);
+
+    const coordinatesArray = parsedGeometry && Array.isArray(parsedGeometry.coordinates)
+      ? parsedGeometry.coordinates
+      : undefined;
+
+    if (Array.isArray(coordinatesArray) && coordinatesArray.length >= 2) {
+      const x = parseNumber(coordinatesArray[0]);
+      const y = parseNumber(coordinatesArray[1]);
+      if (x !== null && y !== null) {
+        coordinates = { x, y };
+      }
+    }
+  }
+
+  if (!coordinates) {
+    const x = parseNumber(raw.loc_x ?? raw.locX);
+    const y = parseNumber(raw.loc_y ?? raw.locY);
+    if (x !== null && y !== null) {
+      coordinates = { x, y };
+    }
+  }
+
+  const visibilityRaw = (raw.visibility_state ?? raw.visibilityState ?? "visible")
+    .toString()
+    .toLowerCase();
+
+  const visibilityState = PLAYER_VISIBILITY_STATES.has(
+    visibilityRaw as PlayerTokenSummary["visibilityState"]
+  )
+    ? (visibilityRaw as PlayerTokenSummary["visibilityState"])
+    : "visible";
+
+  return {
+    playerId,
+    campaignId,
+    campaignName: raw.campaign_name ?? raw.campaignName ?? "Unknown campaign",
+    campaignStatus: raw.campaign_status ?? raw.campaignStatus ?? null,
+    role: raw.role ?? "player",
+    visibilityState,
+    lastLocatedAt: raw.last_located_at ?? raw.lastLocatedAt ?? null,
+    coordinates,
+  };
+};
+
+const formatDateTime = (value?: string | null) => {
+  if (!value) {
+    return null;
+  }
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) {
+    return null;
+  }
+  return date.toLocaleString();
+};
+
+const formatCoordinates = (coordinates: PlayerTokenSummary["coordinates"]) => {
+  if (!coordinates) {
+    return "No location recorded";
+  }
+  return `${coordinates.x.toFixed(1)}, ${coordinates.y.toFixed(1)}`;
+};
+
+const getVisibilityBadgeVariant = (
+  visibilityState: PlayerTokenSummary["visibilityState"]
+): "secondary" | "outline" | "destructive" => {
+  switch (visibilityState) {
+    case "stealthed":
+      return "outline";
+    case "hidden":
+      return "destructive";
+    default:
+      return "secondary";
+  }
+};
+
 const mapCharacter = (raw: RawCharacter): PlayerCharacter => {
   const defaultHitPoints: HitPoints = { current: 0, max: 0 };
   const rawHitPoints = raw.hit_points ?? raw.hitPoints ?? defaultHitPoints;
   const parsedHitPoints = parseJsonField<HitPoints>(rawHitPoints, defaultHitPoints);
+
+  const rawTokens = parseJsonField<RawPlayerToken[]>(
+    raw.player_tokens ?? raw.playerTokens ?? [],
+    []
+  );
+
+  const playerTokens = rawTokens
+    .map(mapPlayerToken)
+    .filter((token): token is PlayerTokenSummary => Boolean(token));
 
   return {
     id: raw.id,
@@ -179,6 +339,7 @@ const mapCharacter = (raw: RawCharacter): PlayerCharacter => {
         : 0,
     avatarUrl: raw.avatar_url ?? raw.avatar ?? undefined,
     lastPlayed: raw.last_played ?? raw.lastPlayed ?? null,
+    playerTokens,
   };
 };
 
@@ -244,6 +405,7 @@ export function PlayerDashboard({ user, onEnterGame, onLogout }: PlayerDashboard
   const [error, setError] = useState<string | null>(null);
   const [joinState, setJoinState] = useState<JoinState>({ campaign: null, selectedCharacterId: null, submitting: false });
   const [characterManagerOpen, setCharacterManagerOpen] = useState(false);
+  const [characterManagerCommand, setCharacterManagerCommand] = useState<CharacterManagerCommand | null>(null);
   const { activeCampaignId, selectCampaign } = useGameSession();
 
   const userId = user.id;
@@ -405,6 +567,20 @@ export function PlayerDashboard({ user, onEnterGame, onLogout }: PlayerDashboard
     },
     [handleSelectCampaign, onEnterGame]
   );
+
+  const handleOpenCharacterCreator = useCallback(() => {
+    setCharacterManagerCommand({ type: "create", token: Date.now() });
+    setCharacterManagerOpen(true);
+  }, []);
+
+  const handleEditCharacter = useCallback((characterId: string) => {
+    setCharacterManagerCommand({ type: "edit", token: Date.now(), characterId });
+    setCharacterManagerOpen(true);
+  }, []);
+
+  const handleCharacterManagerChanged = useCallback(() => {
+    void loadDashboardData();
+  }, [loadDashboardData]);
 
   const totalCharacterLevels = useMemo(
     () => characters.reduce((sum, character) => sum + character.level, 0),
@@ -598,7 +774,7 @@ export function PlayerDashboard({ user, onEnterGame, onLogout }: PlayerDashboard
           <TabsContent value="characters" className="space-y-6">
             <div className="flex items-center justify-between">
               <h2 className="text-xl font-semibold">Your Characters</h2>
-              <Button onClick={() => setCharacterManagerOpen(true)}>
+              <Button onClick={handleOpenCharacterCreator}>
                 <Plus className="w-4 h-4 mr-1" />
                 Create Character
               </Button>
@@ -612,7 +788,7 @@ export function PlayerDashboard({ user, onEnterGame, onLogout }: PlayerDashboard
                     <p className="font-medium">No characters yet</p>
                     <p className="text-sm text-muted-foreground">Create a character to start joining campaigns.</p>
                   </div>
-                  <Button onClick={() => setCharacterManagerOpen(true)}>
+                  <Button onClick={handleOpenCharacterCreator}>
                     <Plus className="w-4 h-4 mr-1" />
                     Create Character
                   </Button>
@@ -679,8 +855,46 @@ export function PlayerDashboard({ user, onEnterGame, onLogout }: PlayerDashboard
                           )}
                         </div>
 
+                        <div className="text-xs space-y-2">
+                          <span className="font-medium text-muted-foreground">Player Tokens:</span>
+                          {character.playerTokens.length > 0 ? (
+                            <div className="space-y-2">
+                              {character.playerTokens.map((token) => {
+                                const lastUpdated = formatDateTime(token.lastLocatedAt);
+                                return (
+                                  <div
+                                    key={`${token.playerId}:${token.campaignId}`}
+                                    className="rounded-md border border-muted-foreground/10 bg-muted/20 px-2 py-1"
+                                  >
+                                    <div className="flex items-center justify-between gap-2">
+                                      <span className="font-medium">{token.campaignName}</span>
+                                      <Badge
+                                        className="capitalize"
+                                        variant={getVisibilityBadgeVariant(token.visibilityState)}
+                                      >
+                                        {token.visibilityState}
+                                      </Badge>
+                                    </div>
+                                    <div className="mt-1 flex flex-wrap items-center justify-between gap-2 text-[0.7rem] text-muted-foreground">
+                                      <span>{formatCoordinates(token.coordinates)}</span>
+                                      <span>{lastUpdated ? `Updated ${lastUpdated}` : "No movement recorded"}</span>
+                                    </div>
+                                  </div>
+                                );
+                              })}
+                            </div>
+                          ) : (
+                            <span className="text-muted-foreground">No tokens recorded</span>
+                          )}
+                        </div>
+
                         <div className="flex gap-2">
-                          <Button variant="outline" size="sm" className="flex-1">
+                          <Button
+                            variant="outline"
+                            size="sm"
+                            className="flex-1"
+                            onClick={() => handleEditCharacter(character.id)}
+                          >
                             <Edit className="w-4 h-4 mr-1" />
                             Edit
                           </Button>
@@ -977,7 +1191,15 @@ export function PlayerDashboard({ user, onEnterGame, onLogout }: PlayerDashboard
         )}
       </Dialog>
 
-      <Dialog open={characterManagerOpen} onOpenChange={setCharacterManagerOpen}>
+      <Dialog
+        open={characterManagerOpen}
+        onOpenChange={(open) => {
+          setCharacterManagerOpen(open);
+          if (!open) {
+            setCharacterManagerCommand(null);
+          }
+        }}
+      >
         <DialogContent className="max-w-[1100px] w-full max-h-[90vh] overflow-hidden p-0">
           <DialogHeader className="px-6 pt-6 pb-4">
             <DialogTitle>Character Manager</DialogTitle>
@@ -986,7 +1208,10 @@ export function PlayerDashboard({ user, onEnterGame, onLogout }: PlayerDashboard
             </DialogDescription>
           </DialogHeader>
           <div className="h-[78vh]">
-            <CharacterManager />
+            <CharacterManager
+              command={characterManagerCommand}
+              onCharactersChanged={handleCharacterManagerChanged}
+            />
           </div>
         </DialogContent>
       </Dialog>

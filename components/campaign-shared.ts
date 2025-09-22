@@ -11,6 +11,7 @@ export interface Campaign {
   current_players?: number;
   level_range: { min: number; max: number } | string | null;
   is_public: boolean;
+  world_map_id: string | null;
   allow_spectators?: boolean;
   auto_approve_join_requests?: boolean;
   experience_type?: 'milestone' | 'experience_points';
@@ -34,6 +35,7 @@ export interface CampaignEditFormState {
   maxPlayers: number;
   minLevel: number;
   maxLevel: number;
+  worldMapId: string;
 }
 
 export interface CampaignSettingsFormState {
@@ -56,6 +58,7 @@ const EDIT_FORM_TEMPLATE: CampaignEditFormState = {
   maxPlayers: 6,
   minLevel: DEFAULT_LEVEL_RANGE.min,
   maxLevel: DEFAULT_LEVEL_RANGE.max,
+  worldMapId: '',
 };
 
 const SETTINGS_FORM_TEMPLATE: CampaignSettingsFormState = {
@@ -137,6 +140,7 @@ export function buildEditFormState(campaign: Campaign): CampaignEditFormState {
     maxPlayers: Number.isFinite(numericMaxPlayers) ? numericMaxPlayers : EDIT_FORM_TEMPLATE.maxPlayers,
     minLevel: levelRange.min,
     maxLevel: levelRange.max,
+    worldMapId: campaign.world_map_id ?? '',
   };
 }
 

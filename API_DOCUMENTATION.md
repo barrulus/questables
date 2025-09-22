@@ -560,7 +560,8 @@ Create a new campaign.
   "max_players": 6,
   "level_range": { "min": 1, "max": 10 },
   "is_public": true,
-  "dm_user_id": "user-uuid"
+  "dm_user_id": "user-uuid",
+  "worldMapId": "world-map-uuid" // optional, required when status is "active"
 }
 ```
 
@@ -579,6 +580,7 @@ Update a campaign (DM only).
 
 **Errors:**
 - `403`: Only the DM can update the campaign
+- `409 world_map_required`: Cannot set status to `active` without a world map
 
 ### DELETE /api/campaigns/:id
 
@@ -612,7 +614,9 @@ Join a campaign as a player.
 **Response:**
 ```json
 {
-  "message": "Successfully joined campaign"
+  "message": "Successfully joined campaign",
+  "playerId": "campaign-player-uuid",
+  "autoPlaced": true
 }
 ```
 
@@ -877,6 +881,45 @@ Returns every character currently attached to a campaign through `campaign_playe
 **Errors:**
 - `404`: Campaign not found
 - `500`: Database error while fetching roster
+
+## Player Movement & Visibility
+
+### GET /api/campaigns/:campaignId/players/:playerId/trail
+
+Return a GeoJSON LineString of the selected player’s recent movement trail when the caller is authorised to see it. Dungeon masters and co-DMs always receive the full trail; players only receive their own trail or party members that are within the configured visibility radius.
+
+**Headers:**
+- `Authorization: Bearer <jwt>`
+
+**Parameters:**
+- `campaignId` (path): Campaign UUID
+- `playerId` (path): Campaign player UUID
+- `radius` (query, optional): Override visibility radius in SRID-0 units (defaults to campaign configuration)
+
+**Response (200 OK):**
+```json
+{
+  "playerId": "campaign-player-uuid",
+  "geometry": {
+    "type": "LineString",
+    "coordinates": [[1234.5, 2345.6], [1236.0, 2348.2]]
+  },
+  "pointCount": 12,
+  "recordedFrom": "2025-09-22T12:34:01.234Z",
+  "recordedTo": "2025-09-22T12:38:47.912Z"
+}
+```
+
+**Cache Behaviour:**
+- Success responses include `Cache-Control: private, max-age=5, must-revalidate` and `Vary: Authorization` so short-lived client caching does not leak trail data between users.
+- Error responses (`403`, `404`, `500`) set `Cache-Control: no-store, must-revalidate` to prevent intermediaries from persisting denial states.
+
+**Errors:**
+- `403`: Viewer is not allowed to see this player’s trail (returned with `trail_hidden` error code)
+- `404`: No trail data has been recorded for the campaign player
+- `500`: Unexpected database failure while generating the trail
+
+**Coordinate system reminder:** All movement, teleport, and spawn coordinates use the SRID-0 “world” space (the same `xworld/yworld` columns exposed on map tables such as `maps_burgs`). If you only have pixel-space values (`x_px/y_px`), convert them with `meters_per_pixel` before calling the API.
 
 ## Encounter API
 

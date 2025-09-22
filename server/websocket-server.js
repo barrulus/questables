@@ -90,8 +90,9 @@ class WebSocketServer {
               message_type: incoming.messageType || 'text',
               sender_id: incoming.senderId || socket.user.id,
               sender_name: incoming.senderName || socket.user.username,
-              username: incoming.senderName || socket.user.username,
+              username: incoming.username || incoming.senderName || socket.user.username,
               character_id: incoming.characterId ?? null,
+              character_name: incoming.characterName || incoming.character_name || null,
               dice_roll: incoming.diceRoll ?? null,
               created_at: incoming.createdAt || now,
             }

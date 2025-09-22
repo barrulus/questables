@@ -196,6 +196,7 @@ const MARKER_TYPE_ICONS: Record<string, string> = {
 const INTERACTIVE_FEATURE_TYPES = new Set(['burg', 'marker', 'player']);
 const MOVE_PROMPT_TOAST_ID = 'player-move-selection';
 const MOVE_MODES = ['walk', 'ride', 'boat', 'fly', 'teleport', 'gm'] as const;
+const TRAIL_CACHE_TTL_MS = 60_000;
 
 const formatTypeLabel = (type: unknown): string => {
   if (typeof type !== 'string' || type.length === 0) {
@@ -500,7 +501,12 @@ export function OpenLayersMap() {
   const viewerIsDm = normalizedViewerRole
     ? viewerRoles.has('admin') || ['dm', 'co-dm'].includes(normalizedViewerRole)
     : activeCampaign ? activeCampaign.dmUserId === user?.id : false;
-  const { messages: socketMessages, clearMessages: clearSocketMessages, getMessagesByType } = useWebSocket(activeCampaignId ?? '');
+  const {
+    connected: socketConnected,
+    messages: socketMessages,
+    clearMessages: clearSocketMessages,
+    getMessagesByType
+  } = useWebSocket(activeCampaignId ?? '');
 
   const viewerIsCoDm = useMemo(
     () => normalizedViewerRole === 'co-dm'
@@ -541,6 +547,8 @@ export function OpenLayersMap() {
     featureProjection: PIXEL_PROJECTION_CODE,
   }), []);
   const pendingMoveRef = useRef<{ playerId: string; playerName: string; coordinate?: [number, number] } | null>(null);
+  const wasSocketConnectedRef = useRef<boolean | null>(null);
+  const refreshOnReconnectRef = useRef(false);
 
   const clearMovementSelection = useCallback(() => {
     pendingMoveRef.current = null;
@@ -563,7 +571,7 @@ export function OpenLayersMap() {
     });
   }, [canControlPlayer]);
 
-  const removeTrailFeature = useCallback((playerId: string) => {
+  const removeTrailFeature = useCallback((playerId: string, options?: { retainCache?: boolean }) => {
     const layer = playerTrailLayerRef.current;
     if (!layer) return;
     const source = layer.getSource();
@@ -573,7 +581,9 @@ export function OpenLayersMap() {
         source.removeFeature(feature);
       }
     });
-    playerTrailCacheRef.current.delete(playerId);
+    if (!options?.retainCache) {
+      playerTrailCacheRef.current.delete(playerId);
+    }
   }, []);
 
   const addTrailFeature = useCallback((playerId: string, feature: Feature) => {
@@ -581,7 +591,7 @@ export function OpenLayersMap() {
     if (!layer) return;
     const source = layer.getSource();
     if (!source) return;
-    removeTrailFeature(playerId);
+    removeTrailFeature(playerId, { retainCache: true });
     feature.set('playerId', playerId);
     source.addFeature(feature);
     playerTrailCacheRef.current.set(playerId, {
@@ -636,7 +646,7 @@ export function OpenLayersMap() {
     if (!enabled) {
       setTrailSelections((prev) => ({ ...prev, [playerId]: false }));
       setTrailErrors((prev) => ({ ...prev, [playerId]: null }));
-      removeTrailFeature(playerId);
+      removeTrailFeature(playerId, { retainCache: true });
       return;
     }
 
@@ -645,6 +655,12 @@ export function OpenLayersMap() {
 
     if (!layerVisibility.playerTrails) {
       setLayerVisibility((prev) => ({ ...prev, playerTrails: true }));
+    }
+
+    const cached = playerTrailCacheRef.current.get(playerId);
+    if (cached && Date.now() - cached.fetchedAt <= TRAIL_CACHE_TTL_MS) {
+      addTrailFeature(playerId, cached.feature);
+      return;
     }
 
     const result = await refreshTrailForPlayer(playerId);
@@ -1319,6 +1335,7 @@ export function OpenLayersMap() {
       );
 
       toast.success(`${playerName} moved successfully.`);
+      setPlayerError(null);
       clearMovementSelection();
       setMovementDialog(null);
       await loadVisiblePlayers(activeCampaignId);
@@ -1327,6 +1344,7 @@ export function OpenLayersMap() {
       }
     } catch (error) {
       const message = error instanceof Error ? error.message : 'Failed to move player token';
+      setPlayerError(message);
       toast.error(message);
     }
   }, [
@@ -1912,6 +1930,32 @@ export function OpenLayersMap() {
 
     clearSocketMessages();
   }, [activeCampaignId, clearSocketMessages, getMessagesByType, loadVisiblePlayers, refreshTrailForPlayer, socketMessages, trailSelections]);
+
+  useEffect(() => {
+    const previous = wasSocketConnectedRef.current;
+
+    if (socketConnected) {
+      if ((previous === false || refreshOnReconnectRef.current) && activeCampaignId) {
+        void loadVisiblePlayers(activeCampaignId);
+        Object.entries(trailSelections).forEach(([playerId, enabled]) => {
+          if (enabled) {
+            void refreshTrailForPlayer(playerId);
+          }
+        });
+      }
+      refreshOnReconnectRef.current = false;
+    } else if (previous) {
+      refreshOnReconnectRef.current = true;
+    }
+
+    wasSocketConnectedRef.current = socketConnected;
+  }, [
+    socketConnected,
+    activeCampaignId,
+    loadVisiblePlayers,
+    refreshTrailForPlayer,
+    trailSelections
+  ]);
 
   // Zoom functions
   const zoomIn = () => {

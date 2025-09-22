@@ -1,0 +1,133 @@
+version: 1
+title: "DM Toolkit — Campaign Manager"
+epics:
+  - id: M0
+    title: "Foundations: DB + API stubs + permissions"
+    stories:
+      - id: M0-DB
+        title: "DB migrations for spawn/objectives/session fields & unique name"
+        tasks:
+          - "Add uq index: (dm_user_id, lower(name)) on campaigns"
+          - "Create table campaign_spawns (Point, SRID 0, is_default unique per campaign, note)"
+          - "Create table campaign_objectives (tree via parent_id, location pin/burg/marker, *_md fields)"
+          - "Add sessions.dm_focus TEXT, sessions.dm_context_md TEXT"
+          - "Add spatial indexes (GIST) for new geometry columns"
+          - "Write migration script + rollback"
+      - id: M0-API
+        title: "API stubs with auth guards"
+        tasks:
+          - "POST /api/campaigns (create)"
+          - "PUT /api/campaigns/:id (update)"
+          - "GET /api/campaigns/:id (details)"
+          - "PUT /api/campaigns/:campaignId/spawn (upsert default spawn)"
+          - "POST /api/campaigns/:campaignId/objectives (create single or parent for tree)"
+          - "GET /api/campaigns/:campaignId/objectives (list/tree)"
+          - "PUT /api/objectives/:objectiveId (update)"
+          - "DELETE /api/objectives/:objectiveId (remove)"
+          - "PUT /api/sessions/:sessionId/focus (set dm_focus)"
+          - "PUT /api/sessions/:sessionId/context (append/replace dm_context_md)"
+          - "POST /api/sessions/:sessionId/unplanned-encounter (stub creation)"
+          - "POST /api/npcs/:npcId/sentiment (update relationship delta)"
+          - "POST /api/campaigns/:campaignId/teleport/player (update loc_current + audit)"
+          - "POST /api/campaigns/:campaignId/teleport/npc (update location)"
+      - id: M0-PERM
+        title: "Permissions"
+        tasks:
+          - "requireAuth on all endpoints"
+          - "Guard with DM/co-DM for campaign modifications"
+          - "Validate session belongs to campaign for sidebar actions"
+
+  - id: M1
+    title: "Campaign CRUD UI"
+    stories:
+      - id: M1-FORMS
+        title: "Create/Edit forms + validation"
+        tasks:
+          - "Form fields: name, description (Markdown), world map select (nullable), max players (1–20), level min/max, public flag"
+          - "Client validation + server validation messages"
+      - id: M1-LIST
+        title: "List & details"
+        tasks:
+          - "My Campaigns view (DM): list with status & players"
+          - "Campaign Details view (admin/DM): shows config & ‘Enter Campaign View’ button"
+
+  - id: M2
+    title: "Campaign View (Prep)"
+    stories:
+      - id: M2-MAP
+        title: "Map + Spawn tool"
+        tasks:
+          - "Render world map (OpenLayers) for selected campaign"
+          - "Spawn mode: click map → set pin → note modal → save via API"
+          - "Show spawn pin (DM-only)"
+      - id: M2-OBJ
+        title: "Objectives panel"
+        tasks:
+          - "Add Single Objective: title + LLM assist for description_md"
+          - "Add Multiple Objectives: parent title + plotline prompt → scaffold children"
+          - "Objective editor: description_md, location picker (pin/burg/marker), treasure_md, combat_md, npcs_md, rumours_md"
+          - "Tree render & reorder (drag/drop) with order_index persistence"
+      - id: M2-LLM
+        title: "LLM assist endpoints"
+        tasks:
+          - "Wire each assist button to corresponding API"
+          - "Persist `llm_narratives` records with request_type mapping"
+
+  - id: M3
+    title: "DM Sidebar (Active Session)"
+    stories:
+      - id: M3-SIDEBAR
+        title: "Sidebar UI + session wiring"
+        tasks:
+          - "Open sidebar for current/selected session"
+          - "Inputs: dm_focus, dm_context_md (append vs replace switch)"
+      - id: M3-ACTIONS
+        title: "Live actions"
+        tasks:
+          - "Unplanned Encounter: quick create → appears in encounters list"
+          - "NPC Sentiment: delta/summary → npc_relationships update"
+          - "Teleport Player: set loc_current; write player_movement_audit"
+          - "Teleport NPC: set location_id or pin"
+      - id: M3-FEEDBACK
+        title: "UX feedback"
+        tasks:
+          - "Toasts for success/failure"
+          - "Disable while pending; optimistic updates where safe"
+
+  - id: M4
+    title: "Polish & QA"
+    stories:
+      - id: M4-AUDIT
+        title: "Audit & logging"
+        tasks:
+          - "Log key actions (create/edit campaign, spawn set, objective CRUD, sidebar actions)"
+      - id: M4-EMPTY
+        title: "Empty & error states"
+        tasks:
+          - "Friendly placeholders in lists/panels"
+      - id: M4-TESTS
+        title: "Testing"
+        tasks:
+          - "API integration tests for new endpoints"
+          - "UI tests for forms, objective tree, sidebar"
+      - id: M4-DOCS
+        title: "Developer docs"
+        tasks:
+          - "README updates + API docs"
+          - "Migration/runbook notes"
+
+risks:
+  - "LLM availability: provide manual text fallbacks."
+  - "Large map layers: ensure spatial indexes; paginate objective lists."
+  - "Permission drift: centralize DM/co-DM checks in middleware helpers."
+
+definitions:
+  objective_location:
+    description: |
+      Exactly one of the following is set per objective:
+      - pin: location_pin (geometry(Point,0))
+      - burg: location_burg_id (maps_burgs.id)
+      - marker: location_marker_id (maps_markers.id)
+    validation:
+      - "location_type must match the populated field."
+      - "Only one location field may be non-null."

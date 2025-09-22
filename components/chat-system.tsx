@@ -339,6 +339,7 @@ export function ChatSystem({ campaignId, campaignName }: ChatSystemProps) {
           senderId: persisted.sender_id,
           senderName: persisted.sender_name,
           characterId: persisted.character_id ?? null,
+          characterName: persisted.character_name ?? undefined,
           messageType: persisted.message_type,
           diceRoll: persisted.dice_roll,
           createdAt: persisted.created_at,

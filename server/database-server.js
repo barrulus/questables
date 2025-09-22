@@ -257,7 +257,11 @@ const validateCampaign = [
   body('system')
     .optional()
     .isLength({ max: 50 })
-    .withMessage('System name cannot exceed 50 characters')
+    .withMessage('System name cannot exceed 50 characters'),
+  body('worldMapId')
+    .optional({ nullable: true })
+    .isUUID()
+    .withMessage('World map ID must be a valid UUID when provided')
 ];
 
 // Chat message validation rules
@@ -786,11 +790,9 @@ const performPlayerMovement = async ({
         c.world_map_id,
         c.dm_user_id,
         cp.visibility_state,
-        mw.bounds,
         ST_Distance(cp.loc_current, ST_SetSRID(ST_MakePoint($3, $4), 0)) AS requested_distance
       FROM public.campaign_players cp
       JOIN public.campaigns c ON cp.campaign_id = c.id
-      LEFT JOIN public.maps_world mw ON c.world_map_id = mw.id
       WHERE cp.id = $1 AND cp.campaign_id = $2
       FOR UPDATE`,
     [playerId, campaignId, targetX, targetY]
@@ -804,6 +806,15 @@ const performPlayerMovement = async ({
   }
 
   const playerRow = movementQuery.rows[0];
+
+  let mapBounds = null;
+  if (playerRow.world_map_id) {
+    const boundsResult = await client.query(
+      'SELECT bounds FROM public.maps_world WHERE id = $1',
+      [playerRow.world_map_id]
+    );
+    mapBounds = boundsResult.rows[0]?.bounds ?? null;
+  }
 
   if (!isDungeonMaster && playerRow.user_id !== requestorUserId) {
     const error = new Error('You may only move your own token');
@@ -819,14 +830,7 @@ const performPlayerMovement = async ({
     throw error;
   }
 
-  if (!playerRow.world_map_id) {
-    const error = new Error('Campaign world map is not configured for movement');
-    error.status = 409;
-    error.code = 'campaign_missing_map';
-    throw error;
-  }
-
-  if (!pointWithinBounds(playerRow.bounds, targetX, targetY)) {
+  if (mapBounds && !pointWithinBounds(mapBounds, targetX, targetY)) {
     const error = new Error('Target coordinates are outside the campaign map bounds');
     error.status = 422;
     error.code = 'movement_out_of_bounds';
@@ -872,7 +876,10 @@ const performPlayerMovement = async ({
         (campaign_id, player_id, moved_by, mode, reason, previous_loc, new_loc)
       VALUES
         ($1, $2, $3, $4, $5,
-         CASE WHEN $6 IS NULL THEN NULL ELSE ST_SetSRID(ST_GeomFromText($6), 0) END,
+         CASE
+           WHEN $6::text IS NULL THEN NULL
+           ELSE ST_SetSRID(ST_GeomFromText($6::text), 0)
+         END,
          ST_SetSRID(ST_MakePoint($7, $8), 0))`,
     [
       campaignId,
@@ -2015,15 +2022,56 @@ app.get('/api/characters/:id', async (req, res) => {
 app.get('/api/users/:userId/characters', async (req, res) => {
   const { userId } = req.params;
 
+  const client = await pool.connect();
   try {
-    const client = await pool.connect();
-    const result = await client.query('SELECT * FROM characters WHERE user_id = $1 ORDER BY created_at DESC', [userId]);
-    client.release();
+    const charactersPromise = client.query(
+      'SELECT * FROM characters WHERE user_id = $1 ORDER BY created_at DESC',
+      [userId]
+    );
 
-    res.json({ characters: result.rows });
+    const tokensPromise = client.query(
+      `SELECT cp.id AS player_id,
+              cp.character_id,
+              cp.campaign_id,
+              cp.role,
+              cp.visibility_state,
+              cp.last_located_at,
+              ST_AsGeoJSON(cp.loc_current)::json AS loc_geometry,
+              ST_X(cp.loc_current) AS loc_x,
+              ST_Y(cp.loc_current) AS loc_y,
+              c.name AS campaign_name,
+              c.status AS campaign_status
+         FROM public.campaign_players cp
+         JOIN public.campaigns c ON c.id = cp.campaign_id
+        WHERE cp.user_id = $1
+          AND cp.status = 'active'`,
+      [userId]
+    );
+
+    const [characterResult, tokenResult] = await Promise.all([charactersPromise, tokensPromise]);
+
+    const tokensByCharacter = tokenResult.rows.reduce((acc, row) => {
+      if (!row.character_id) {
+        return acc;
+      }
+      if (!acc.has(row.character_id)) {
+        acc.set(row.character_id, []);
+      }
+      acc.get(row.character_id)?.push(row);
+      return acc;
+    }, new Map());
+
+    const charactersWithTokens = characterResult.rows.map((character) => ({
+      ...character,
+      player_tokens: tokensByCharacter.get(character.id) ?? [],
+    }));
+
+    res.json({ characters: charactersWithTokens });
   } catch (error) {
     console.error('[Characters] Get user characters error:', error);
     res.status(500).json({ error: 'Failed to fetch characters' });
+  } finally {
+    client.release();
   }
 });
 
@@ -2090,21 +2138,29 @@ app.delete('/api/characters/:id', checkCharacterOwnership, async (req, res) => {
 
 // Campaign management endpoints
 app.post('/api/campaigns', requireAuth, validateCampaign, handleValidationErrors, async (req, res) => {
-  const { name, description, dmUserId, system, setting, status, maxPlayers, levelRange, isPublic } = req.body;
+  const { name, description, dmUserId, system, setting, status, maxPlayers, levelRange, isPublic, worldMapId } = req.body;
 
   if (!name || !dmUserId) {
     return res.status(400).json({ error: 'Campaign name and DM user ID are required' });
   }
 
+  const resolvedStatus = typeof status === 'string' && status.trim() ? status.trim() : 'recruiting';
+  if (resolvedStatus === 'active' && !worldMapId) {
+    return res.status(409).json({
+      error: 'world_map_required',
+      message: 'Active campaigns must specify a world map.',
+    });
+  }
+
   try {
     const client = await pool.connect();
     const result = await client.query(`
-      INSERT INTO campaigns (name, description, dm_user_id, system, setting, status, max_players, level_range, is_public)
-      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+      INSERT INTO campaigns (name, description, dm_user_id, system, setting, status, max_players, level_range, is_public, world_map_id)
+      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
       RETURNING *
     `, [name, description, dmUserId, system || 'D&D 5e', setting || 'Fantasy', 
-        status || 'recruiting', maxPlayers || 6, 
-        JSON.stringify(levelRange || { min: 1, max: 20 }), isPublic || false]);
+        resolvedStatus, maxPlayers || 6, 
+        JSON.stringify(levelRange || { min: 1, max: 20 }), isPublic || false, worldMapId || null]);
     client.release();
 
     res.json({ campaign: result.rows[0] });
@@ -2212,51 +2268,130 @@ app.post('/api/campaigns/:campaignId/players', async (req, res) => {
     return res.status(400).json({ error: 'User ID is required' });
   }
 
+  let client;
   try {
-    const client = await pool.connect();
-    
+    client = await pool.connect();
+    await client.query('BEGIN');
+
     // Check if campaign exists and has space
     const campaignCheck = await client.query(`
-      SELECT c.max_players, COUNT(cp.user_id) as current_players
-      FROM campaigns c
-      LEFT JOIN campaign_players cp ON c.id = cp.campaign_id AND cp.status = 'active'
-      WHERE c.id = $1
-      GROUP BY c.id, c.max_players
+      SELECT c.max_players,
+             c.world_map_id,
+             c.dm_user_id,
+             COUNT(cp.user_id) as current_players
+        FROM campaigns c
+        LEFT JOIN campaign_players cp ON c.id = cp.campaign_id AND cp.status = 'active'
+       WHERE c.id = $1
+       GROUP BY c.id, c.max_players, c.world_map_id, c.dm_user_id
     `, [campaignId]);
-    
+
     if (campaignCheck.rows.length === 0) {
-      client.release();
+      await client.query('ROLLBACK');
       return res.status(404).json({ error: 'Campaign not found' });
     }
-    
-    const { max_players, current_players } = campaignCheck.rows[0];
-    if (current_players >= max_players) {
-      client.release();
+
+    const campaignMeta = campaignCheck.rows[0];
+    if (campaignMeta.current_players >= campaignMeta.max_players) {
+      await client.query('ROLLBACK');
       return res.status(400).json({ error: 'Campaign is full' });
     }
-    
+
     // Check if user is already a player
     const existingPlayer = await client.query(
-      'SELECT * FROM campaign_players WHERE campaign_id = $1 AND user_id = $2',
+      'SELECT 1 FROM campaign_players WHERE campaign_id = $1 AND user_id = $2',
       [campaignId, userId]
     );
-    
+
     if (existingPlayer.rows.length > 0) {
-      client.release();
+      await client.query('ROLLBACK');
       return res.status(400).json({ error: 'User is already in this campaign' });
     }
-    
-    // Add player to campaign
-    await client.query(`
-      INSERT INTO campaign_players (campaign_id, user_id, character_id, status, role)
-      VALUES ($1, $2, $3, 'active', 'player')
-    `, [campaignId, userId, characterId]);
-    
-    client.release();
-    res.json({ message: 'Successfully joined campaign' });
+
+    // Add player to campaign and capture id
+    const insertResult = await client.query(
+      `INSERT INTO campaign_players (campaign_id, user_id, character_id, status, role)
+       VALUES ($1, $2, $3, 'active', 'player')
+       RETURNING id`,
+      [campaignId, userId, characterId]
+    );
+
+    const campaignPlayerId = insertResult.rows[0]?.id;
+    let autoPlacement = null;
+
+    if (campaignPlayerId) {
+      // Prefer default (or latest) spawn
+      const spawnResult = await client.query(
+        `SELECT ST_X(world_position) AS x,
+                ST_Y(world_position) AS y
+           FROM public.campaign_spawns
+          WHERE campaign_id = $1
+          ORDER BY is_default DESC, updated_at DESC
+          LIMIT 1`,
+        [campaignId]
+      );
+
+      if (spawnResult.rowCount > 0) {
+        autoPlacement = {
+          x: Number(spawnResult.rows[0].x),
+          y: Number(spawnResult.rows[0].y),
+          reason: 'Auto-placement to default spawn',
+        };
+      } else if (campaignMeta.world_map_id) {
+        const boundsResult = await client.query(
+          'SELECT bounds FROM public.maps_world WHERE id = $1',
+          [campaignMeta.world_map_id]
+        );
+        const parsed = parseBounds(boundsResult.rows[0]?.bounds);
+        if (parsed) {
+          autoPlacement = {
+            x: (parsed.west + parsed.east) / 2,
+            y: (parsed.south + parsed.north) / 2,
+            reason: 'Auto-placement to map center',
+          };
+        }
+      }
+
+      if (autoPlacement) {
+        await client.query(
+          `UPDATE public.campaign_players
+              SET loc_current = ST_SetSRID(ST_MakePoint($1, $2), 0),
+                  last_located_at = NOW()
+            WHERE id = $3`,
+          [autoPlacement.x, autoPlacement.y, campaignPlayerId]
+        );
+
+        await client.query(
+          `INSERT INTO public.player_movement_audit
+              (campaign_id, player_id, moved_by, mode, reason, previous_loc, new_loc)
+           VALUES
+              ($1, $2, $3, 'gm', $4, NULL, ST_SetSRID(ST_MakePoint($5, $6), 0))`,
+          [
+            campaignId,
+            campaignPlayerId,
+            campaignMeta.dm_user_id ?? null,
+            autoPlacement.reason,
+            autoPlacement.x,
+            autoPlacement.y,
+          ]
+        );
+      }
+    }
+
+    await client.query('COMMIT');
+
+    res.json({
+      message: 'Successfully joined campaign',
+      playerId: campaignPlayerId,
+      autoPlaced: Boolean(autoPlacement),
+    });
   } catch (error) {
+    if (client) {
+      await client.query('ROLLBACK').catch(() => {});
+    }
     console.error('[Campaigns] Join campaign error:', error);
     res.status(500).json({ error: 'Failed to join campaign' });
+  } finally {
+    client?.release();
   }
 });
 
@@ -2896,6 +3031,7 @@ app.get(
       const isDungeonMaster = viewer.isAdmin || ['dm', 'co-dm'].includes(viewer.role);
 
       if (!isDungeonMaster && !isSelf && !canViewHistory) {
+        res.set('Cache-Control', 'no-store, must-revalidate');
         return res.status(403).json({
           error: 'trail_hidden',
           message: 'Trail is not visible to the current user.',
@@ -2913,6 +3049,7 @@ app.get(
       );
 
       if (trailResult.rowCount === 0) {
+        res.set('Cache-Control', 'no-store, must-revalidate');
         return res.status(404).json({
           error: 'trail_not_found',
           message: 'No trail data recorded for this player.',
@@ -2921,6 +3058,8 @@ app.get(
 
       const trail = trailResult.rows[0];
 
+      res.set('Cache-Control', 'private, max-age=5, must-revalidate');
+      res.set('Vary', 'Authorization');
       res.json({
         playerId,
         geometry: trail.geometry,
@@ -2930,6 +3069,7 @@ app.get(
       });
     } catch (error) {
       console.error('[Movement] Trail fetch error:', error);
+      res.set('Cache-Control', 'no-store, must-revalidate');
       res.status(500).json({ error: 'Failed to load player trail' });
     } finally {
       client.release();
@@ -3028,7 +3168,33 @@ app.put('/api/campaigns/:id', async (req, res) => {
 
   try {
     const client = await pool.connect();
-    
+    const existingResult = await client.query('SELECT * FROM campaigns WHERE id = $1 LIMIT 1', [id]);
+    if (existingResult.rowCount === 0) {
+      client.release();
+      return res.status(404).json({ error: 'Campaign not found' });
+    }
+
+    if (Object.prototype.hasOwnProperty.call(updates, 'world_map_id') || Object.prototype.hasOwnProperty.call(updates, 'worldMapId')) {
+      updates.world_map_id = updates.world_map_id ?? updates.worldMapId ?? null;
+      delete updates.worldMapId;
+    }
+
+    const existingCampaign = existingResult.rows[0];
+    const nextStatus = Object.prototype.hasOwnProperty.call(updates, 'status')
+      ? updates.status
+      : existingCampaign.status;
+    const nextWorldMapId = Object.prototype.hasOwnProperty.call(updates, 'world_map_id')
+      ? updates.world_map_id
+      : existingCampaign.world_map_id;
+
+    if (nextStatus === 'active' && !nextWorldMapId) {
+      client.release();
+      return res.status(409).json({
+        error: 'world_map_required',
+        message: 'Active campaigns must have a world map configured before inviting players.',
+      });
+    }
+
     // Build dynamic update query
     const fields = Object.keys(updates);
     const values = Object.values(updates);
@@ -3046,11 +3212,9 @@ app.put('/api/campaigns/:id', async (req, res) => {
     );
     client.release();
 
-    if (result.rows.length === 0) {
-      return res.status(404).json({ error: 'Campaign not found' });
-    }
+    const campaign = result.rows[0];
 
-    res.json({ campaign: result.rows[0] });
+    res.json({ campaign });
   } catch (error) {
     console.error('[Campaigns] Update error:', error);
     res.status(500).json({ error: 'Failed to update campaign' });
@@ -3113,15 +3277,23 @@ app.post('/api/campaigns/:campaignId/messages', requireAuth, requireCampaignPart
     }
 
     const client = await pool.connect();
-    
-    const result = await client.query(`
-      INSERT INTO chat_messages (campaign_id, content, message_type, sender_id, sender_name, character_id, dice_roll)
-      VALUES ($1, $2, $3, $4, $5, $6, $7)
-      RETURNING *
-    `, [campaignId, sanitizedContent, type || 'text', sender_id, sanitizedSenderName, character_id, JSON.stringify(dice_roll)]);
-    
+
+    const result = await client.query(
+      `WITH inserted AS (
+         INSERT INTO chat_messages (campaign_id, content, message_type, sender_id, sender_name, character_id, dice_roll)
+         VALUES ($1, $2, $3, $4, $5, $6, $7)
+         RETURNING *
+       )
+       SELECT inserted.*, up.username, c.name AS character_name
+         FROM inserted
+         JOIN user_profiles up ON inserted.sender_id = up.id
+         LEFT JOIN characters c ON inserted.character_id = c.id`,
+      [campaignId, sanitizedContent, type || 'text', sender_id, sanitizedSenderName, character_id, JSON.stringify(dice_roll)]
+    );
+
+    const message = result.rows[0];
     client.release();
-    res.json({ message: result.rows[0] });
+    res.json({ message });
   } catch (error) {
     console.error('[Chat] Send message error:', error);
     res.status(500).json({ error: 'Failed to send message' });
