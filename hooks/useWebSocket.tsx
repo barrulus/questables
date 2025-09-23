@@ -192,6 +192,38 @@ export const useWebSocket = (campaignId: string) => {
       setMessages((prev) => [...prev, { type: 'spawn-deleted', data }]);
     });
 
+    socket.on('objective-created', (data) => {
+      setMessages((prev) => [...prev, { type: 'objective-created', data }]);
+    });
+
+    socket.on('objective-updated', (data) => {
+      setMessages((prev) => [...prev, { type: 'objective-updated', data }]);
+    });
+
+    socket.on('objective-deleted', (data) => {
+      setMessages((prev) => [...prev, { type: 'objective-deleted', data }]);
+    });
+
+    socket.on('session-focus-updated', (data) => {
+      setMessages((prev) => [...prev, { type: 'session-focus-updated', data }]);
+    });
+
+    socket.on('session-context-updated', (data) => {
+      setMessages((prev) => [...prev, { type: 'session-context-updated', data }]);
+    });
+
+    socket.on('unplanned-encounter-created', (data) => {
+      setMessages((prev) => [...prev, { type: 'unplanned-encounter-created', data }]);
+    });
+
+    socket.on('npc-sentiment-adjusted', (data) => {
+      setMessages((prev) => [...prev, { type: 'npc-sentiment-adjusted', data }]);
+    });
+
+    socket.on('npc-teleported', (data) => {
+      setMessages((prev) => [...prev, { type: 'npc-teleported', data }]);
+    });
+
     socket.on('error', (error) => {
       console.error('[Socket.io] Server error:', error);
     });

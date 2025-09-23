@@ -124,14 +124,24 @@ export function Settings() {
       return;
     }
 
+    if (editForm.maxPlayers === '') {
+      toast.error("Max players must be an integer between 1 and 20.");
+      return;
+    }
+
     const maxPlayers = Number(editForm.maxPlayers);
     if (!Number.isInteger(maxPlayers) || maxPlayers < 1 || maxPlayers > 20) {
       toast.error("Max players must be an integer between 1 and 20.");
       return;
     }
 
-    const minLevel = clampLevelValue(editForm.minLevel);
-    const maxLevel = clampLevelValue(editForm.maxLevel);
+    if (editForm.minLevel === '' || editForm.maxLevel === '') {
+      toast.error("Provide both minimum and maximum levels.");
+      return;
+    }
+
+    const minLevel = clampLevelValue(Number(editForm.minLevel));
+    const maxLevel = clampLevelValue(Number(editForm.maxLevel));
     if (minLevel > maxLevel) {
       toast.error("Minimum level cannot exceed maximum level.");
       return;

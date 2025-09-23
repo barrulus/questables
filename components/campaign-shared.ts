@@ -32,9 +32,9 @@ export interface CampaignEditFormState {
   system: string;
   setting: string;
   status: CampaignStatus;
-  maxPlayers: number;
-  minLevel: number;
-  maxLevel: number;
+  maxPlayers: number | '';
+  minLevel: number | '';
+  maxLevel: number | '';
   worldMapId: string;
 }
 
@@ -52,7 +52,7 @@ export const DEFAULT_LEVEL_RANGE = { min: 1, max: 20 } as const;
 const EDIT_FORM_TEMPLATE: CampaignEditFormState = {
   name: '',
   description: '',
-  system: 'D&D 5e',
+  system: '',
   setting: '',
   status: 'recruiting',
   maxPlayers: 6,
@@ -134,7 +134,7 @@ export function buildEditFormState(campaign: Campaign): CampaignEditFormState {
   return {
     name: campaign.name || '',
     description: campaign.description || '',
-    system: campaign.system || EDIT_FORM_TEMPLATE.system,
+    system: campaign.system || '',
     setting: campaign.setting || '',
     status: (campaign.status as CampaignStatus) ?? EDIT_FORM_TEMPLATE.status,
     maxPlayers: Number.isFinite(numericMaxPlayers) ? numericMaxPlayers : EDIT_FORM_TEMPLATE.maxPlayers,

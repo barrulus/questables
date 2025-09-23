@@ -125,32 +125,6 @@ interface LayerVisibility {
   playerTrails: boolean;
 }
 
-const FANTASY_TILESET_ID = 'fantasy-atlas';
-const FANTASY_TILESET: TileSetConfig = {
-  id: FANTASY_TILESET_ID,
-  name: 'Fantasy Atlas',
-  base_url: '/tiles-states/{z}/{x}/{y}.png',
-  attribution: 'Fantasy Atlas Tiles',
-  min_zoom: 0,
-  max_zoom: 7,
-  tile_size: 256,
-  wrapX: false
-};
-
-const HEIGHTMAP_TILESET_ID = 'fantasy-heightmap-relief';
-const HEIGHTMAP_TILESET: TileSetConfig = {
-  id: HEIGHTMAP_TILESET_ID,
-  name: 'Heightmap Relief',
-  base_url: '/tiles-hm/{z}/{x}/{y}.png',
-  attribution: 'Heightmap Relief Tiles',
-  min_zoom: 0,
-  max_zoom: 14,
-  tile_size: 256,
-  wrapX: false
-};
-
-const BUILTIN_TILESETS: TileSetConfig[] = [FANTASY_TILESET, HEIGHTMAP_TILESET];
-
 const LABEL_VISIBILITY = {
   burgs: 3,
   markers: 6,
@@ -413,10 +387,16 @@ const TOGGLEABLE_LAYER_OPTIONS: Array<{
 const DEFAULT_TILE_SIZE = 256;
 
 const createGeographicTileSource = (tileSet: TileSetConfig, worldBounds?: WorldMapBounds | null) => {
-  const minZoom = Number.isFinite(tileSet?.min_zoom) ? tileSet.min_zoom : 0;
-  const maxZoomCandidate = Number.isFinite(tileSet?.max_zoom) ? tileSet.max_zoom : 7;
+  const minZoom = Number.isFinite(tileSet?.min_zoom)
+    ? Math.max(0, Math.floor(Number(tileSet.min_zoom)))
+    : 0;
+  const maxZoomCandidate = Number.isFinite(tileSet?.max_zoom)
+    ? Math.floor(Number(tileSet.max_zoom))
+    : 20;
   const maxZoom = Math.max(minZoom, maxZoomCandidate);
-  const tileSize = Number.isFinite(tileSet?.tile_size) ? tileSet.tile_size : DEFAULT_TILE_SIZE;
+  const tileSize = Number.isFinite(tileSet?.tile_size)
+    ? Math.max(1, Number(tileSet.tile_size))
+    : DEFAULT_TILE_SIZE;
 
   const extent = updateProjectionExtent(worldBounds ?? null);
   const width = extent[2] - extent[0];
@@ -435,7 +415,7 @@ const createGeographicTileSource = (tileSet: TileSetConfig, worldBounds?: WorldM
     url: tileSet.base_url,
     attributions: tileSet.attribution,
     tileGrid,
-    wrapX: false,
+    wrapX: Boolean(tileSet.wrapX),
     minZoom,
     maxZoom,
     transition: 0
@@ -457,9 +437,9 @@ export function OpenLayersMap() {
   const [mapMode, setMapMode] = useState<'world' | 'encounter'>('world');
   const [selectedTool, setSelectedTool] = useState<'move' | 'measure' | 'info'>('info');
   const [selectedWorldMap, setSelectedWorldMap] = useState<string>('');
-  const [selectedTileSet, setSelectedTileSet] = useState<string>(FANTASY_TILESET_ID);
+  const [tileSets, setTileSets] = useState<TileSetConfig[]>([]);
+  const [selectedTileSetId, setSelectedTileSetId] = useState<string>('');
   const [worldMaps, setWorldMaps] = useState<WorldMapSummary[]>([]);
-  const [tileSets, setTileSets] = useState<TileSetConfig[]>(BUILTIN_TILESETS);
   const [playerTokens, setPlayerTokens] = useState<PlayerToken[]>([]);
   const [playerLoading, setPlayerLoading] = useState(false);
   const [playerError, setPlayerError] = useState<string | null>(null);
@@ -1107,8 +1087,7 @@ export function OpenLayersMap() {
 
     setWorldMaps(normalizedWorldMaps);
 
-    const builtInIds = new Set(BUILTIN_TILESETS.map((ts) => ts.id));
-    const additionalTileSets: TileSetConfig[] = (tileSetsData || [])
+    const dbTileSets: TileSetConfig[] = (tileSetsData || [])
       .filter((ts: any) => ts && ts.id && ts.base_url)
       .map((ts: any) => ({
         id: String(ts.id),
@@ -1121,24 +1100,26 @@ export function OpenLayersMap() {
         wrapX: ts.wrapX ?? false,
       }));
 
-    const mergedTileSets: TileSetConfig[] = [
-      ...BUILTIN_TILESETS,
-      ...additionalTileSets.filter((ts) => !builtInIds.has(ts.id)),
-    ];
-    setTileSets(mergedTileSets);
+    setTileSets(dbTileSets);
 
-    if (normalizedWorldMaps.length > 0) {
-      const initialWorldMap = normalizedWorldMaps[0];
-      setSelectedWorldMap(initialWorldMap.id);
-
-      if (baseLayerRef.current) {
-        const newSource = createGeographicTileSource(FANTASY_TILESET, initialWorldMap.bounds);
-        baseLayerRef.current.setSource(newSource);
-      }
-
+    const initialWorldMap = normalizedWorldMaps[0] ?? null;
+    if (initialWorldMap) {
+      setSelectedWorldMap((prev) => (prev ? prev : initialWorldMap.id));
       updateViewExtent(initialWorldMap.bounds);
+    } else {
+      setSelectedWorldMap('');
+      updateViewExtent(null);
     }
-  }, [updateViewExtent]);
+
+    if (dbTileSets.length === 0) {
+      setSelectedTileSetId('');
+      if (baseLayerRef.current) {
+        baseLayerRef.current.setSource(null);
+      }
+      applyTileSetConstraints(null);
+      toast.error('No active tile sets are configured in the database.');
+    }
+  }, [applyTileSetConstraints, updateViewExtent]);
 
   // Initialize OpenLayers map
 
@@ -1148,12 +1129,18 @@ export function OpenLayersMap() {
 
     const currentWorldMap = worldMaps.find(m => m.id === selectedWorldMap);
     const worldBounds = currentWorldMap?.bounds ?? null;
-    const activeTileSet = tileSet ?? FANTASY_TILESET;
 
-    const newSource = createGeographicTileSource(activeTileSet, worldBounds);
+    if (!tileSet) {
+      baseLayerRef.current.setSource(null);
+      updateViewExtent(worldBounds);
+      applyTileSetConstraints(null);
+      return;
+    }
+
+    const newSource = createGeographicTileSource(tileSet, worldBounds);
     baseLayerRef.current.setSource(newSource);
     updateViewExtent(worldBounds);
-    applyTileSetConstraints(activeTileSet);
+    applyTileSetConstraints(tileSet);
   }, [worldMaps, selectedWorldMap, applyTileSetConstraints, updateViewExtent]);
 
   const loadCampaignRoster = useCallback(async (campaignId: string) => {
@@ -1574,11 +1561,8 @@ export function OpenLayersMap() {
   useEffect(() => {
     if (!mapRef.current || mapInstanceRef.current) return;
 
-    const initialTileSet = FANTASY_TILESET;
-
-    // Base tile layer
+    // Base tile layer; source assigned after database tile sets load
     const baseLayer = new TileLayer({
-      source: createGeographicTileSource(initialTileSet),
       preload: 2
     });
     baseLayerRef.current = baseLayer;
@@ -1681,8 +1665,8 @@ export function OpenLayersMap() {
           (DEFAULT_PIXEL_EXTENT[1] + DEFAULT_PIXEL_EXTENT[3]) / 2
         ],
         zoom: 2,
-        minZoom: initialTileSet.min_zoom ?? 0,
-        maxZoom: initialTileSet.max_zoom ?? 7,
+        minZoom: 0,
+        maxZoom: 20,
         enableRotation: false,
         extent: DEFAULT_PIXEL_EXTENT,
         constrainOnlyCenter: true
@@ -1694,7 +1678,7 @@ export function OpenLayersMap() {
     });
 
     mapInstanceRef.current = map;
-    applyTileSetConstraints(initialTileSet);
+    applyTileSetConstraints(null);
 
     // Event handlers
     const view = map.getView();
@@ -1722,19 +1706,30 @@ export function OpenLayersMap() {
   }, [applyTileSetConstraints, loadInitialData, handleMapClick, handleMapMoveEnd, handlePointerMove, handleZoomChange, layerVisibility.burgs, layerVisibility.routes, layerVisibility.rivers, layerVisibility.cells, layerVisibility.markers, layerVisibility.campaignLocations, layerVisibility.playerTokens, layerVisibility.playerTrails, mapMode, getBurgStyle, getRouteStyle, getMarkerStyle, getCampaignLocationStyle, getPlayerTokenStyle]);
 
   useEffect(() => {
-    const activeTileSet = tileSets.find(ts => ts.id === selectedTileSet);
-    applyTileSetConstraints(activeTileSet ?? null);
-  }, [selectedTileSet, tileSets, applyTileSetConstraints]);
+    if (tileSets.length === 0) {
+      if (selectedTileSetId) {
+        setSelectedTileSetId('');
+      }
+      return;
+    }
+
+    if (!tileSets.some((ts) => ts.id === selectedTileSetId)) {
+      setSelectedTileSetId(tileSets[0].id);
+    }
+  }, [tileSets, selectedTileSetId]);
+
+  useEffect(() => {
+    const activeTileSet = tileSets.find(ts => ts.id === selectedTileSetId) ?? null;
+    applyTileSetConstraints(activeTileSet);
+  }, [selectedTileSetId, tileSets, applyTileSetConstraints]);
 
   // Update tile source when world map or tileset changes
   useEffect(() => {
     if (!selectedWorldMap || worldMaps.length === 0) return;
 
-    const activeTileSet = tileSets.find(ts => ts.id === selectedTileSet);
-    if (activeTileSet) {
-      updateTileSource(activeTileSet);
-    }
-  }, [selectedWorldMap, worldMaps, updateTileSource, selectedTileSet, tileSets]);
+    const activeTileSet = tileSets.find(ts => ts.id === selectedTileSetId) ?? null;
+    updateTileSource(activeTileSet);
+  }, [selectedWorldMap, worldMaps, updateTileSource, selectedTileSetId, tileSets]);
 
   // Handle map mode changes
   useEffect(() => {
@@ -1977,11 +1972,15 @@ export function OpenLayersMap() {
 
   // Change tile set
   const changeTileSet = (tileSetId: string) => {
-    const tileSet = tileSets.find(ts => ts.id === tileSetId);
-    if (!tileSet) return;
+    const tileSet = tileSets.find(ts => ts.id === tileSetId) ?? null;
+    if (!tileSet) {
+      setSelectedTileSetId('');
+      updateTileSource(null);
+      return;
+    }
 
+    setSelectedTileSetId(tileSetId);
     updateTileSource(tileSet);
-    setSelectedTileSet(tileSetId);
   };
 
   const tools: Array<{ id: 'move' | 'measure' | 'info'; name: string; icon: ReactNode }> = [
@@ -2037,18 +2036,24 @@ export function OpenLayersMap() {
 
             {/* Tile Set Selector */}
             {mapMode === 'world' && (
-              <Select value={selectedTileSet} onValueChange={changeTileSet}>
-                <SelectTrigger className="h-8 w-36">
-                  <SelectValue placeholder="Select Tiles" />
-                </SelectTrigger>
-                <SelectContent>
-                  {tileSets.map(tileSet => (
-                    <SelectItem key={tileSet.id} value={tileSet.id}>
-                      {tileSet.name || tileSet.id}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
+              tileSets.length > 0 ? (
+                <Select value={selectedTileSetId} onValueChange={changeTileSet}>
+                  <SelectTrigger className="h-8 w-36">
+                    <SelectValue placeholder="Select Tiles" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {tileSets.map((tileSet) => (
+                      <SelectItem key={tileSet.id} value={tileSet.id}>
+                        {tileSet.name || tileSet.id}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              ) : (
+                <Button variant="outline" size="sm" className="h-8 w-36" disabled>
+                  No tilesets
+                </Button>
+              )
             )}
 
             {/* Tools */}

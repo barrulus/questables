@@ -32,7 +32,7 @@ import {
   sanitizeUserInput,
   sanitizeFilename
 } from './utils/sanitization.js';
-import { 
+import {
   logInfo,
   logError,
   logWarn,
@@ -43,6 +43,11 @@ import {
   logApplicationStart,
   logApplicationShutdown
 } from './utils/logger.js';
+import {
+  sanitizeObjectivePayload,
+  ObjectiveValidationError,
+  MARKDOWN_FIELDS,
+} from './objectives/objective-validation.js';
 import {
   initializeLLMService,
   createContextualLLMService,
@@ -151,8 +156,8 @@ const cacheGet = (key) => {
   return cached.data;
 };
 
-// Cache cleanup interval
-setInterval(() => {
+// Cache cleanup interval; unref so tests/dev shutdowns are not held open
+const cacheCleanupInterval = setInterval(() => {
   const now = Date.now();
   for (const [key, value] of cache) {
     if (now > value.expiresAt) {
@@ -160,6 +165,9 @@ setInterval(() => {
     }
   }
 }, 60000); // Clean up every minute
+if (typeof cacheCleanupInterval.unref === 'function') {
+  cacheCleanupInterval.unref();
+}
 
 // Rate limiting middleware
 const limiter = rateLimit({
@@ -242,6 +250,102 @@ const validateCharacter = [
     .withMessage('Proficiency bonus must be between 2 and 6')
 ];
 
+// Campaign validation helpers/constraints
+const CAMPAIGN_STATUS_VALUES = new Set(['recruiting', 'active', 'paused', 'completed']);
+const EXPERIENCE_TYPE_VALUES = new Set(['milestone', 'experience_points']);
+const RESTING_RULE_VALUES = new Set(['standard', 'gritty', 'heroic']);
+const DEATH_SAVE_RULE_VALUES = new Set(['standard', 'hardcore', 'forgiving']);
+const DEFAULT_LEVEL_RANGE = { min: 1, max: 20 };
+const DEFAULT_MAX_PLAYERS = 6;
+
+const clampLevelValue = (value) => {
+  const numeric = Number(value);
+  if (!Number.isInteger(numeric)) {
+    throw new Error('Level values must be integers');
+  }
+  if (numeric < 1 || numeric > 20) {
+    throw new Error('Level values must be between 1 and 20');
+  }
+  return numeric;
+};
+
+const parseLevelRangeInput = (input, { fallbackToDefault = true } = {}) => {
+  if (input === undefined || input === null || input === '') {
+    if (fallbackToDefault) {
+      return { ...DEFAULT_LEVEL_RANGE };
+    }
+    throw new Error('Level range is required');
+  }
+
+  const candidate = typeof input === 'string'
+    ? (() => {
+        try {
+          return JSON.parse(input);
+        } catch (error) {
+          throw new Error('Level range string must be valid JSON');
+        }
+      })()
+    : input;
+
+  if (!candidate || typeof candidate !== 'object') {
+    throw new Error('Level range must be an object containing min and max values');
+  }
+
+  const min = clampLevelValue(candidate.min ?? candidate.minimum);
+  const max = clampLevelValue(candidate.max ?? candidate.maximum);
+
+  if (min > max) {
+    throw new Error('Level range minimum cannot exceed maximum');
+  }
+
+  return { min, max };
+};
+
+const parseMaxPlayersInput = (value, { fallback = DEFAULT_MAX_PLAYERS, required = false } = {}) => {
+  if (value === undefined || value === null || value === '') {
+    if (required) {
+      throw new Error('Max players is required');
+    }
+    return fallback;
+  }
+
+  const numeric = Number(value);
+  if (!Number.isInteger(numeric) || numeric < 1 || numeric > 20) {
+    throw new Error('Max players must be an integer between 1 and 20');
+  }
+  return numeric;
+};
+
+const normalizeStatusInput = (status, fallback = 'recruiting') => {
+  if (typeof status !== 'string') {
+    return fallback;
+  }
+  const trimmed = status.trim();
+  return CAMPAIGN_STATUS_VALUES.has(trimmed) ? trimmed : fallback;
+};
+
+const coerceNullableString = (value, { trim = true } = {}) => {
+  if (typeof value !== 'string') {
+    return null;
+  }
+  const result = trim ? value.trim() : value;
+  return result.length > 0 ? result : null;
+};
+
+const coerceBooleanInput = (value, defaultValue = false) => {
+  if (typeof value === 'boolean') return value;
+  if (typeof value === 'string') {
+    const normalized = value.trim().toLowerCase();
+    if (['true', '1', 'yes'].includes(normalized)) return true;
+    if (['false', '0', 'no'].includes(normalized)) return false;
+  }
+  if (typeof value === 'number') return value !== 0;
+  if (value === undefined || value === null) return defaultValue;
+  return Boolean(value);
+};
+
+const pickProvided = (...values) => values.find((value) => value !== undefined);
+
 // Campaign validation rules
 const validateCampaign = [
   body('name')
@@ -252,8 +356,16 @@ const validateCampaign = [
     .isLength({ max: 2000 })
     .withMessage('Description cannot exceed 2000 characters'),
   body('maxPlayers')
+    .optional()
     .isInt({ min: 1, max: 20 })
     .withMessage('Max players must be between 1 and 20'),
+  body('levelRange')
+    .optional()
+    .custom((value) => {
+      parseLevelRangeInput(value);
+      return true;
+    })
+    .withMessage('Level range must include integer min/max between 1 and 20'),
   body('system')
     .optional()
     .isLength({ max: 50 })
@@ -654,9 +766,15 @@ setDatabasePool(pool);
 const MOVE_MODES = ['walk', 'ride', 'boat', 'fly', 'teleport', 'gm'];
 const MOVE_MODE_SET = new Set(MOVE_MODES);
 const TELEPORT_MODES = new Set(['teleport', 'gm']);
+const DM_CONTROL_ROLES = new Set(['dm', 'co-dm']);
+const ENCOUNTER_TYPES = new Set(['combat', 'social', 'exploration', 'puzzle', 'rumour']);
+const SIDEBAR_ENCOUNTER_DIFFICULTIES = new Set(['easy', 'medium', 'hard', 'deadly']);
 const DEFAULT_VISIBILITY_RADIUS = Number.parseFloat(process.env.CAMPAIGN_VISIBILITY_RADIUS ?? '') || 500;
 const MAX_MOVE_DISTANCE = Math.max(0, Number.parseFloat(process.env.CAMPAIGN_MAX_MOVE_DISTANCE ?? '') || 500);
 const MIN_MOVE_INTERVAL_MS = Math.max(0, Number.parseFloat(process.env.CAMPAIGN_MIN_MOVE_INTERVAL_MS ?? '') || 1000);
+const MAX_FOCUS_LENGTH = 500;
+const MAX_CONTEXT_LENGTH = 20000;
+const MAX_SENTIMENT_SUMMARY_LENGTH = 1000;
 
 const isAdminUser = (user) => Array.isArray(user?.roles) && user.roles.includes('admin');
 
@@ -709,6 +827,45 @@ const pointWithinBounds = (bounds, x, y) => {
   const parsed = parseBounds(bounds);
   if (!parsed) return false;
   return x >= parsed.west && x <= parsed.east && y >= parsed.south && y <= parsed.north;
+};
+
+const ensureDmControl = (viewer, message = 'Only the campaign DM or co-DM may perform this action') => {
+  if (viewer.isAdmin || DM_CONTROL_ROLES.has(viewer.role)) {
+    return;
+  }
+
+  const error = new Error(message);
+  error.status = 403;
+  error.code = 'dm_action_forbidden';
+  throw error;
+};
+
+const fetchSessionWithCampaign = async (client, sessionId, { forUpdate = false } = {}) => {
+  const lockClause = forUpdate ? 'FOR UPDATE' : '';
+  const { rows } = await client.query(
+    `SELECT id, campaign_id, dm_focus, dm_context_md
+       FROM public.sessions
+      WHERE id = $1
+      ${lockClause}`,
+    [sessionId]
+  );
+  return rows[0] ?? null;
+};
+
+const normalizeEncounterType = (value) => {
+  if (typeof value !== 'string') {
+    return null;
+  }
+  const normalized = value.trim().toLowerCase();
+  return ENCOUNTER_TYPES.has(normalized) ? normalized : null;
+};
+
+const normalizeEncounterDifficulty = (value) => {
+  if (typeof value !== 'string') {
+    return null;
+  }
+  const normalized = value.trim().toLowerCase();
+  return SIDEBAR_ENCOUNTER_DIFFICULTIES.has(normalized) ? normalized : null;
 };
 
 const sanitizeReason = (reason) => {
@@ -903,12 +1060,416 @@ const formatSpawnRow = (row) => ({
   id: row.id,
   campaignId: row.campaign_id,
   name: row.name,
-  description: row.description,
+  note: row.note ?? null,
   isDefault: row.is_default,
   geometry: row.geometry,
   createdAt: row.created_at instanceof Date ? row.created_at.toISOString() : row.created_at,
   updatedAt: row.updated_at instanceof Date ? row.updated_at.toISOString() : row.updated_at,
 });
+
+const OBJECTIVE_RETURNING_FIELDS = `
+  id,
+  campaign_id,
+  parent_id,
+  title,
+  description_md,
+  treasure_md,
+  combat_md,
+  npcs_md,
+  rumours_md,
+  location_type,
+  location_burg_id,
+  location_marker_id,
+  ST_AsGeoJSON(location_pin)::json AS location_pin_geo,
+  order_index,
+  is_major,
+  slug,
+  created_at,
+  updated_at,
+  created_by,
+  updated_by
+`;
+
+const parseJsonColumn = (value) => {
+  if (!value) return null;
+  if (typeof value === 'string') {
+    try {
+      return JSON.parse(value);
+    } catch (error) {
+      logWarn('Failed to parse JSON column', { error: error instanceof Error ? error.message : String(error) });
+      return null;
+    }
+  }
+  return value;
+};
+
+const formatObjectiveRow = (row) => {
+  const locationGeo = parseJsonColumn(row.location_pin_geo);
+  const location = row.location_type
+    ? {
+        type: row.location_type,
+        pin: row.location_type === 'pin' ? locationGeo : null,
+        burgId: row.location_burg_id ?? null,
+        markerId: row.location_marker_id ?? null,
+      }
+    : null;
+
+  const result = {
+    id: row.id,
+    campaignId: row.campaign_id,
+    parentId: row.parent_id ?? null,
+    title: row.title,
+    descriptionMd: row.description_md ?? null,
+    treasureMd: row.treasure_md ?? null,
+    combatMd: row.combat_md ?? null,
+    npcsMd: row.npcs_md ?? null,
+    rumoursMd: row.rumours_md ?? null,
+    location,
+    orderIndex: typeof row.order_index === 'number' ? row.order_index : 0,
+    isMajor: Boolean(row.is_major),
+    slug: row.slug ?? null,
+    createdAt: row.created_at instanceof Date ? row.created_at.toISOString() : row.created_at,
+    updatedAt: row.updated_at instanceof Date ? row.updated_at.toISOString() : row.updated_at,
+    createdBy: row.created_by ?? null,
+    updatedBy: row.updated_by ?? null,
+  };
+
+  return result;
+};
+
+const fetchObjectiveById = async (client, objectiveId) => {
+  const { rows } = await client.query(
+    `SELECT ${OBJECTIVE_RETURNING_FIELDS}
+       FROM public.campaign_objectives
+      WHERE id = $1
+      LIMIT 1`,
+    [objectiveId]
+  );
+  return rows[0] ?? null;
+};
+
+const fetchObjectiveWithCampaign = async (client, objectiveId) => {
+  const { rows } = await client.query(
+    `SELECT o.*, c.dm_user_id
+       FROM public.campaign_objectives o
+       JOIN public.campaigns c ON c.id = o.campaign_id
+      WHERE o.id = $1
+      LIMIT 1`,
+    [objectiveId]
+  );
+  return rows[0] ?? null;
+};
+
+const fetchObjectiveDescendantIds = async (client, objectiveId) => {
+  const { rows } = await client.query(
+    `WITH RECURSIVE tree AS (
+        SELECT id
+          FROM public.campaign_objectives
+         WHERE parent_id = $1
+        UNION ALL
+        SELECT child.id
+          FROM public.campaign_objectives child
+          JOIN tree t ON child.parent_id = t.id
+      )
+      SELECT id FROM tree`,
+    [objectiveId]
+  );
+  return rows.map((row) => row.id);
+};
+
+const OBJECTIVE_ASSIST_FIELDS = {
+  description: {
+    column: 'description_md',
+    narrativeType: NARRATIVE_TYPES.OBJECTIVE_DESCRIPTION,
+    label: 'Objective Description',
+  },
+  treasure: {
+    column: 'treasure_md',
+    narrativeType: NARRATIVE_TYPES.OBJECTIVE_TREASURE,
+    label: 'Treasure Hooks',
+  },
+  combat: {
+    column: 'combat_md',
+    narrativeType: NARRATIVE_TYPES.OBJECTIVE_COMBAT,
+    label: 'Combat Planning',
+  },
+  npcs: {
+    column: 'npcs_md',
+    narrativeType: NARRATIVE_TYPES.OBJECTIVE_NPCS,
+    label: 'NPC Brief',
+  },
+  rumours: {
+    column: 'rumours_md',
+    narrativeType: NARRATIVE_TYPES.OBJECTIVE_RUMOURS,
+    label: 'Rumours',
+  },
+};
+
+const snakeToCamel = (value) => value.replace(/_([a-z])/g, (_, letter) => letter.toUpperCase());
+
+const formatObjectiveLocationSummary = (objective) => {
+  if (!objective.location) {
+    return 'Location: not specified.';
+  }
+
+  if (objective.location.type === 'pin') {
+    const coords = Array.isArray(objective.location.pin?.coordinates)
+      ? objective.location.pin.coordinates.map((coord) => Number(coord).toFixed(2)).join(', ')
+      : 'unknown';
+    return `Location: Pin at [${coords}] (SRID 0).`;
+  }
+
+  if (objective.location.type === 'burg') {
+    return `Location: Linked burg ID ${objective.location.burgId}.`;
+  }
+
+  if (objective.location.type === 'marker') {
+    return `Location: Linked marker ID ${objective.location.markerId}.`;
+  }
+
+  return 'Location: not specified.';
+};
+
+const buildObjectiveAssistSections = ({ objective, parentObjective, fieldConfig }) => {
+  const sections = [];
+
+  const summaryParts = [
+    `Title: ${objective.title}`,
+    objective.isMajor ? 'Flag: Major objective' : null,
+    typeof objective.orderIndex === 'number' ? `Order index: ${objective.orderIndex}` : null,
+  ].filter(Boolean);
+
+  if (parentObjective) {
+    summaryParts.push(`Parent: ${parentObjective.title} (ID: ${parentObjective.id})`);
+  }
+
+  sections.push({
+    title: 'Objective Summary',
+    content: summaryParts.join('\n') || objective.title,
+  });
+
+  sections.push({
+    title: 'Objective Location',
+    content: formatObjectiveLocationSummary(objective),
+  });
+
+  const existingFieldKey = snakeToCamel(fieldConfig.column);
+  const existingFieldValue = objective[existingFieldKey] || 'None recorded yet.';
+  sections.push({
+    title: `Existing ${fieldConfig.label}`,
+    content: existingFieldValue,
+  });
+
+  const otherMarkdown = MARKDOWN_FIELDS
+    .filter((field) => field !== fieldConfig.column)
+    .map((field) => {
+      const key = snakeToCamel(field);
+      const value = objective[key];
+      return `- ${field.replace('_', ' ')}: ${value ? value.slice(0, 160) : 'None'}`;
+    })
+    .join('\n');
+
+  sections.push({
+    title: 'Other Objective Notes',
+    content: otherMarkdown,
+  });
+
+  return sections;
+};
+
+const sanitizeAssistFocus = (value) => {
+  if (typeof value !== 'string') return null;
+  const trimmed = sanitizeUserInput(value, 400).trim();
+  return trimmed.length > 0 ? trimmed : null;
+};
+
+const fetchNpcWithCampaign = async (client, npcId) => {
+  const { rows } = await client.query(
+    `SELECT n.*, c.dm_user_id
+       FROM public.npcs n
+       JOIN public.campaigns c ON c.id = n.campaign_id
+      WHERE n.id = $1
+      LIMIT 1`,
+    [npcId]
+  );
+  return rows[0] ?? null;
+};
+
+const ENCOUNTER_TYPE_CONFIG = {
+  combat: {
+    narrativeType: NARRATIVE_TYPES.ACTION_NARRATIVE,
+    defaultName: 'Unplanned Combat Encounter',
+  },
+  social: {
+    narrativeType: NARRATIVE_TYPES.NPC_DIALOGUE,
+    defaultName: 'Unplanned Social Encounter',
+  },
+  exploration: {
+    narrativeType: NARRATIVE_TYPES.SCENE_DESCRIPTION,
+    defaultName: 'Unplanned Exploration Encounter',
+  },
+  rumour: {
+    narrativeType: NARRATIVE_TYPES.OBJECTIVE_RUMOURS,
+    defaultName: 'Unplanned Rumour Hook',
+  },
+};
+
+const ENCOUNTER_DIFFICULTIES = new Set(['easy', 'medium', 'hard', 'deadly']);
+
+const createObjectiveAssistHandler = (fieldKey) => async (req, res) => {
+  const config = OBJECTIVE_ASSIST_FIELDS[fieldKey];
+  if (!config) {
+    logError('Objective assist configuration missing', new Error('Unknown assist field'), { fieldKey });
+    return res.status(500).json({ error: 'objective_assist_unavailable', message: 'Objective assist is not configured.' });
+  }
+
+  const { objectiveId } = req.params;
+  const client = await pool.connect();
+  let transactionStarted = false;
+  try {
+    const objectiveRow = await fetchObjectiveWithCampaign(client, objectiveId);
+    if (!objectiveRow) {
+      return res.status(404).json({ error: 'Objective not found' });
+    }
+
+    const viewer = await getViewerContextOrThrow(client, objectiveRow.campaign_id, req.user);
+    if (!viewer.isAdmin && !['dm', 'co-dm'].includes(viewer.role)) {
+      return res.status(403).json({
+        error: 'objective_forbidden',
+        message: 'Only DMs can use objective assists.',
+      });
+    }
+
+    const parentObjective = objectiveRow.parent_id
+      ? await fetchObjectiveById(client, objectiveRow.parent_id)
+      : null;
+
+    const formattedObjective = formatObjectiveRow(objectiveRow);
+    const formattedParentObjective = parentObjective ? formatObjectiveRow(parentObjective) : null;
+
+    const focus = sanitizeAssistFocus(req.body?.focus);
+    const extraSections = buildObjectiveAssistSections({
+      objective: formattedObjective,
+      parentObjective: formattedParentObjective,
+      fieldConfig: config,
+    });
+
+    const contextualService = ensureLLMReady(req);
+    const generation = await contextualService.generateFromContext({
+      campaignId: objectiveRow.campaign_id,
+      sessionId: null,
+      type: config.narrativeType,
+      provider: req.body?.provider,
+      parameters: req.body?.parameters,
+      metadata: {
+        objectiveId,
+        assistField: config.column,
+        requestedBy: req.user.id,
+      },
+      request: {
+        focus,
+        extraSections,
+      },
+    });
+
+    const generatedContent = (generation.result?.content || '').trim();
+    if (!generatedContent) {
+      throw new LLMServiceError('LLM returned empty content for objective assist', {
+        type: 'objective_assist_empty',
+      });
+    }
+
+    await client.query('BEGIN');
+    transactionStarted = true;
+
+    const updateResult = await client.query(
+      `UPDATE public.campaign_objectives
+          SET ${config.column} = $1,
+              updated_at = NOW(),
+              updated_by = $2
+        WHERE id = $3
+        RETURNING ${OBJECTIVE_RETURNING_FIELDS}`,
+      [generatedContent, req.user.id, objectiveId]
+    );
+
+    const narrativeRecord = await insertNarrativeRecord(client, {
+      requestId: generation.result?.request?.id ?? randomUUID(),
+      campaignId: objectiveRow.campaign_id,
+      sessionId: null,
+      npcId: null,
+      type: config.narrativeType,
+      requestedBy: req.user.id,
+      cacheKey: generation.result?.cache?.key ?? null,
+      cacheHit: generation.result?.cache?.hit ?? false,
+      provider: generation.result?.provider ?? {},
+      requestMetadata: generation.result?.request ?? null,
+      prompt: generation.prompt.user,
+      systemPrompt: generation.prompt.system,
+      response: generatedContent,
+      metrics: generation.result?.metrics ?? null,
+      metadata: {
+        objectiveId,
+        assistField: config.column,
+        focus,
+        provider: generation.result?.provider ?? null,
+      },
+    });
+
+    await client.query('COMMIT');
+    transactionStarted = false;
+
+    const updatedObjective = formatObjectiveRow(updateResult.rows[0]);
+    logInfo('Objective assist generated', {
+      objectiveId,
+      field: config.column,
+      provider: generation.result?.provider?.name ?? null,
+      narrativeId: narrativeRecord.id,
+    });
+
+    res.json({
+      objective: updatedObjective,
+      assist: {
+        field: config.column,
+        content: generatedContent,
+        provider: generation.result?.provider ?? null,
+        metrics: generation.result?.metrics ?? null,
+        cache: generation.result?.cache ?? null,
+      },
+    });
+  } catch (error) {
+    if (transactionStarted) {
+      await client.query('ROLLBACK').catch(() => {});
+    }
+
+    if (error instanceof ObjectiveValidationError) {
+      return res.status(400).json({
+        error: error.code,
+        message: error.message,
+      });
+    }
+
+    if (error instanceof LLMProviderError || error instanceof LLMServiceError) {
+      logError('Objective assist generation failed', error, {
+        objectiveId,
+        field: config?.column,
+        userId: req.user?.id,
+      });
+      return respondWithNarrativeError(res, error);
+    }
+
+    logError('Objective assist generation failed', error, {
+      objectiveId,
+      field: config?.column,
+      userId: req.user?.id,
+    });
+    res.status(error.status || 500).json({
+      error: error.code || 'objective_assist_failed',
+      message: error.message || 'Failed to generate objective assist content.',
+    });
+  } finally {
+    client.release();
+  }
+};
 
 const loadProviderConfigurations = async () => {
   try {
@@ -1186,7 +1747,7 @@ const applyNpcInteraction = async (client, {
   const trustDelta = clamp(interaction.trustDelta ?? 0, -10, 10);
   const tags = normalizeTags(interaction.tags);
 
-  await client.query(
+  const { rows } = await client.query(
     `INSERT INTO public.npc_memories (
        npc_id,
        campaign_id,
@@ -1196,7 +1757,8 @@ const applyNpcInteraction = async (client, {
        sentiment,
        trust_delta,
       tags
-    ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)` ,
+    ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+    RETURNING *` ,
     [
       npcId,
       campaignId,
@@ -1208,6 +1770,8 @@ const applyNpcInteraction = async (client, {
       tags.length > 0 ? tags : null,
     ]
   );
+
+  const insertedMemory = rows[0] ?? null;
 
   if (Array.isArray(interaction.relationshipChanges)) {
     for (const change of interaction.relationshipChanges) {
@@ -1264,6 +1828,8 @@ const applyNpcInteraction = async (client, {
       );
     }
   }
+
+  return insertedMemory;
 };
 
 const persistNarrative = async ({
@@ -1472,6 +2038,34 @@ const questNarrativeValidators = [
     .withMessage('questSeeds must be an array when provided'),
 ];
 
+const objectiveAssistValidators = [
+  body('focus')
+    .optional()
+    .isString()
+    .isLength({ max: 400 })
+    .withMessage('focus must be a string up to 400 characters when provided'),
+  body('provider')
+    .optional()
+    .isObject()
+    .withMessage('provider must be an object when provided'),
+  body('provider.name')
+    .optional({ checkFalsy: true })
+    .isString()
+    .withMessage('provider.name must be a string when provided'),
+  body('provider.model')
+    .optional({ checkFalsy: true })
+    .isString()
+    .withMessage('provider.model must be a string when provided'),
+  body('provider.options')
+    .optional({ checkFalsy: true })
+    .isObject()
+    .withMessage('provider.options must be an object when provided'),
+  body('parameters')
+    .optional({ checkFalsy: true })
+    .isObject()
+    .withMessage('parameters must be an object when provided'),
+];
+
 const respondWithNarrativeError = (res, error) => {
   if (error instanceof LLMProviderError) {
     return res.status(error.statusCode || 502).json({
@@ -1501,7 +2095,11 @@ pool.connect(async (err, client, release) => {
     console.error('Error connecting to PostgreSQL database:', err);
     console.log('Note: Make sure PostgreSQL is running and the database exists');
     console.log('You can create the database with: createdb dnd_app');
-    process.exit(1);
+    app.locals.databaseUnavailable = true;
+    if (process.env.NODE_ENV !== 'test') {
+      process.exit(1);
+    }
+    return;
   } else {
     console.log('Connected to PostgreSQL database successfully');
 
@@ -2138,35 +2736,130 @@ app.delete('/api/characters/:id', checkCharacterOwnership, async (req, res) => {
 
 // Campaign management endpoints
 app.post('/api/campaigns', requireAuth, validateCampaign, handleValidationErrors, async (req, res) => {
-  const { name, description, dmUserId, system, setting, status, maxPlayers, levelRange, isPublic, worldMapId } = req.body;
-
-  if (!name || !dmUserId) {
-    return res.status(400).json({ error: 'Campaign name and DM user ID are required' });
+  const dmUserId = req.user?.id;
+  if (!dmUserId) {
+    return res.status(401).json({
+      error: 'authentication_required',
+      message: 'You must be signed in to create a campaign.',
+    });
   }
 
-  const resolvedStatus = typeof status === 'string' && status.trim() ? status.trim() : 'recruiting';
-  if (resolvedStatus === 'active' && !worldMapId) {
+  if (req.body?.dmUserId && req.body.dmUserId !== dmUserId) {
+    return res.status(403).json({
+      error: 'dm_mismatch',
+      message: 'Campaigns can only be created for the authenticated DM.',
+    });
+  }
+
+  const trimmedName = typeof req.body.name === 'string' ? req.body.name.trim() : '';
+  if (!trimmedName) {
+    return res.status(400).json({
+      error: 'invalid_name',
+      message: 'Campaign name is required.',
+    });
+  }
+
+  const description = coerceNullableString(req.body.description);
+  let maxPlayers;
+  try {
+    maxPlayers = parseMaxPlayersInput(req.body.maxPlayers, { fallback: DEFAULT_MAX_PLAYERS, required: false });
+  } catch (error) {
+    return res.status(400).json({
+      error: 'invalid_max_players',
+      message: error.message,
+    });
+  }
+
+  let levelRange;
+  try {
+    levelRange = parseLevelRangeInput(req.body.levelRange, { fallbackToDefault: true });
+  } catch (error) {
+    return res.status(400).json({
+      error: 'invalid_level_range',
+      message: error.message,
+    });
+  }
+
+  const status = normalizeStatusInput(req.body.status, 'recruiting');
+  const isPublic = coerceBooleanInput(req.body.isPublic, false);
+  const worldMapId = coerceNullableString(req.body.worldMapId);
+
+  if (status === 'active' && !worldMapId) {
     return res.status(409).json({
       error: 'world_map_required',
       message: 'Active campaigns must specify a world map.',
     });
   }
 
-  try {
-    const client = await pool.connect();
-    const result = await client.query(`
-      INSERT INTO campaigns (name, description, dm_user_id, system, setting, status, max_players, level_range, is_public, world_map_id)
-      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
-      RETURNING *
-    `, [name, description, dmUserId, system || 'D&D 5e', setting || 'Fantasy', 
-        resolvedStatus, maxPlayers || 6, 
-        JSON.stringify(levelRange || { min: 1, max: 20 }), isPublic || false, worldMapId || null]);
-    client.release();
+  const system = coerceNullableString(req.body.system);
+  if (req.body.system !== undefined && system === null) {
+    return res.status(400).json({
+      error: 'invalid_system',
+      message: 'System cannot be empty when provided.',
+    });
+  }
 
-    res.json({ campaign: result.rows[0] });
+  const setting = coerceNullableString(req.body.setting, { trim: true });
+
+  const columns = ['name', 'description', 'dm_user_id', 'status', 'max_players', 'level_range', 'is_public', 'world_map_id'];
+  const values = [
+    trimmedName,
+    description,
+    dmUserId,
+    status,
+    maxPlayers,
+    JSON.stringify(levelRange),
+    isPublic,
+    worldMapId,
+  ];
+
+  const placeholders = [];
+
+  columns.forEach((column, index) => {
+    const position = index + 1;
+    if (column === 'level_range') {
+      placeholders.push(`$${position}::jsonb`);
+    } else {
+      placeholders.push(`$${position}`);
+    }
+  });
+
+  if (system) {
+    columns.push('system');
+    placeholders.push(`$${columns.length}`);
+    values.push(system);
+  }
+
+  // Persist explicit null for setting to avoid resurrecting placeholder defaults
+  columns.push('setting');
+  placeholders.push(`$${columns.length}`);
+  values.push(setting);
+
+  const insertSql = `INSERT INTO campaigns (${columns.join(', ')}) VALUES (${placeholders.join(', ')}) RETURNING *`;
+
+  const client = await pool.connect();
+  try {
+    const result = await client.query(insertSql, values);
+    logInfo('Campaign created', {
+      campaignId: result.rows[0]?.id,
+      dmUserId,
+      status,
+      isPublic,
+    });
+    return res.status(201).json({ campaign: result.rows[0] });
   } catch (error) {
-    console.error('[Campaigns] Create error:', error);
-    res.status(500).json({ error: 'Failed to create campaign' });
+    if (error.code === '23505' && error.constraint === 'uq_campaign_name_per_dm') {
+      logWarn('Campaign name conflict detected', { dmUserId, name: trimmedName });
+      return res.status(409).json({
+        error: 'campaign_name_conflict',
+        message: 'You already have a campaign with that name. Choose a different name.',
+      });
+    }
+
+    logError('Campaign creation failed', error, { dmUserId, name: trimmedName });
+    return res.status(500).json({ error: 'Failed to create campaign' });
+  } finally {
+    client.release();
   }
 });
 
@@ -2546,29 +3239,47 @@ app.post(
 );
 
 app.post(
-  '/api/campaigns/:campaignId/players/:playerId/teleport',
+  '/api/campaigns/:campaignId/teleport/player',
   requireAuth,
   requireCampaignParticipation,
+  [
+    body('playerId')
+      .optional({ checkFalsy: true })
+      .isUUID()
+      .withMessage('playerId must be a valid UUID when provided'),
+    body('player_id')
+      .optional({ checkFalsy: true })
+      .isUUID()
+      .withMessage('player_id must be a valid UUID when provided'),
+    body('spawnId')
+      .optional({ checkFalsy: true })
+      .isUUID()
+      .withMessage('spawnId must be a valid UUID when provided'),
+  ],
+  handleValidationErrors,
   async (req, res) => {
-    const { campaignId, playerId } = req.params;
+    const { campaignId } = req.params;
+    const playerId = req.body?.playerId || req.body?.player_id;
+
+    if (!playerId) {
+      return res.status(400).json({
+        error: 'player_required',
+        message: 'playerId is required to teleport a campaign participant.',
+      });
+    }
+
     const client = await pool.connect();
     try {
       await client.query('BEGIN');
       const viewer = await getViewerContextOrThrow(client, campaignId, req.user);
-
-      if (!viewer.isAdmin && !['dm', 'co-dm'].includes(viewer.role)) {
-        const error = new Error('Teleportation requires DM privileges');
-        error.status = 403;
-        error.code = 'teleport_forbidden';
-        throw error;
-      }
+      ensureDmControl(viewer, 'Teleportation requires DM or co-DM privileges.');
 
       let target = null;
       let spawnMeta = null;
 
       if (req.body?.spawnId) {
         const spawnResult = await client.query(
-          `SELECT id, campaign_id, name, description, is_default,
+          `SELECT id, campaign_id, name, note, is_default,
                   ST_X(world_position) AS x,
                   ST_Y(world_position) AS y,
                   ST_AsGeoJSON(world_position)::json AS geometry
@@ -2605,7 +3316,9 @@ app.post(
         throw error;
       }
 
-      const inferredReason = spawnMeta ? `Teleport to spawn: ${spawnMeta.name}` : null;
+      const inferredReason = spawnMeta
+        ? `Teleport to spawn: ${spawnMeta.name}${spawnMeta.note ? ` – ${spawnMeta.note}` : ''}`
+        : null;
       const reason = sanitizeReason(req.body?.reason ?? inferredReason);
 
       const { player } = await performPlayerMovement({
@@ -2635,7 +3348,7 @@ app.post(
             ? {
                 id: spawnMeta.id,
                 name: spawnMeta.name,
-                description: spawnMeta.description,
+                note: spawnMeta.note,
                 isDefault: spawnMeta.is_default,
               }
             : null,
@@ -2657,7 +3370,7 @@ app.post(
           ? {
               id: spawnMeta.id,
               name: spawnMeta.name,
-              description: spawnMeta.description,
+              note: spawnMeta.note,
               isDefault: spawnMeta.is_default,
               geometry: spawnMeta.geometry,
             }
@@ -2669,6 +3382,159 @@ app.post(
       res.status(error.status || 500).json({
         error: error.code || 'teleport_failed',
         message: error.message || 'Failed to teleport player',
+      });
+    } finally {
+      client.release();
+    }
+  }
+);
+
+app.post(
+  '/api/campaigns/:campaignId/teleport/npc',
+  requireAuth,
+  requireCampaignParticipation,
+  [
+    body('npcId')
+      .optional({ checkFalsy: true })
+      .isUUID()
+      .withMessage('npcId must be a valid UUID when provided'),
+    body('npc_id')
+      .optional({ checkFalsy: true })
+      .isUUID()
+      .withMessage('npc_id must be a valid UUID when provided'),
+    body('locationId')
+      .optional({ checkFalsy: true })
+      .isUUID()
+      .withMessage('locationId must be a valid UUID when provided'),
+    body('location_id')
+      .optional({ checkFalsy: true })
+      .isUUID()
+      .withMessage('location_id must be a valid UUID when provided'),
+  ],
+  handleValidationErrors,
+  async (req, res) => {
+    const { campaignId } = req.params;
+    const npcId = req.body?.npcId || req.body?.npc_id;
+
+    if (!npcId) {
+      return res.status(400).json({
+        error: 'npc_required',
+        message: 'npcId is required to teleport an NPC.',
+      });
+    }
+
+    const client = await pool.connect();
+    try {
+      await client.query('BEGIN');
+
+      const npcResult = await client.query(
+        `SELECT id, campaign_id, name, current_location_id,
+                ST_AsGeoJSON(world_position)::json AS world_position_geo
+           FROM public.npcs
+          WHERE id = $1 AND campaign_id = $2
+          FOR UPDATE`,
+        [npcId, campaignId]
+      );
+
+      if (npcResult.rowCount === 0) {
+        await client.query('ROLLBACK');
+        return res.status(404).json({
+          error: 'npc_not_found',
+          message: 'NPC not found for this campaign.',
+        });
+      }
+
+      const viewer = await getViewerContextOrThrow(client, campaignId, req.user);
+      ensureDmControl(viewer, 'Only the campaign DM or co-DM may teleport NPCs.');
+
+      const locationId = req.body?.locationId || req.body?.location_id || null;
+      const target = normalizeTargetCoordinates(
+        req.body?.target ?? req.body?.position ?? req.body
+      );
+
+      if (!locationId && !target) {
+        await client.query('ROLLBACK');
+        return res.status(400).json({
+          error: 'destination_required',
+          message: 'Provide either locationId or target coordinates to teleport the NPC.',
+        });
+      }
+
+      if (locationId) {
+        const { rowCount } = await client.query(
+          'SELECT 1 FROM public.locations WHERE id = $1 AND campaign_id = $2',
+          [locationId, campaignId]
+        );
+        if (rowCount === 0) {
+          await client.query('ROLLBACK');
+          return res.status(404).json({
+            error: 'location_not_found',
+            message: 'The specified location does not belong to this campaign.',
+          });
+        }
+      }
+
+      const assignments = ['updated_at = NOW()'];
+      const params = [npcId];
+      let paramIndex = 1;
+
+      if (locationId) {
+        paramIndex += 1;
+        assignments.push(`current_location_id = $${paramIndex}`);
+        params.push(locationId);
+      } else if (target) {
+        assignments.push('current_location_id = NULL');
+      }
+
+      if (target) {
+        paramIndex += 2;
+        assignments.push(`world_position = ST_SetSRID(ST_MakePoint($${paramIndex - 1}, $${paramIndex}), 0)`);
+        params.push(target.x, target.y);
+      } else if (locationId) {
+        assignments.push('world_position = NULL');
+      }
+
+      const { rows } = await client.query(
+        `UPDATE public.npcs
+            SET ${assignments.join(', ')}
+          WHERE id = $1
+          RETURNING id, campaign_id, name, current_location_id,
+                    ST_AsGeoJSON(world_position)::json AS world_position_geo`,
+        params
+      );
+
+      await client.query('COMMIT');
+
+      const npc = rows[0];
+      logInfo('NPC teleported', {
+        npcId,
+        campaignId,
+        userId: req.user.id,
+        mode: target ? 'coordinates' : 'location',
+        locationId: npc.current_location_id,
+      });
+
+      const responsePayload = {
+        npcId: npc.id,
+        campaignId: npc.campaign_id,
+        currentLocationId: npc.current_location_id,
+        worldPosition: npc.world_position_geo,
+      };
+
+      if (wsServer) {
+        wsServer.emitNpcTeleported(campaignId, responsePayload, {
+          actorId: req.user.id,
+          mode: target ? 'coordinates' : 'location',
+        });
+      }
+
+      res.json(responsePayload);
+    } catch (error) {
+      await client.query('ROLLBACK').catch(() => {});
+      console.error('[Movement] NPC teleport error:', error);
+      res.status(error.status || 500).json({
+        error: error.code || 'npc_teleport_failed',
+        message: error.message || 'Failed to teleport NPC',
       });
     } finally {
       client.release();
@@ -2693,7 +3559,7 @@ app.get(
       }
 
       const { rows } = await client.query(
-        `SELECT id, campaign_id, name, description, is_default,
+        `SELECT id, campaign_id, name, note, is_default,
                 ST_AsGeoJSON(world_position)::json AS geometry,
                 created_at, updated_at
            FROM public.campaign_spawns
@@ -2712,17 +3578,17 @@ app.get(
   }
 );
 
-app.post(
-  '/api/campaigns/:campaignId/spawns',
-  requireAuth,
-  requireCampaignParticipation,
-  async (req, res) => {
-    const { campaignId } = req.params;
-    const { name } = req.body ?? {};
-    if (typeof name !== 'string' || !name.trim()) {
-      return res.status(400).json({
-        error: 'invalid_spawn_name',
-        message: 'Spawn name is required.',
+app.put('/api/campaigns/:campaignId/spawn', requireAuth, async (req, res) => {
+  const { campaignId } = req.params;
+
+  const client = await pool.connect();
+  let transactionStarted = false;
+  try {
+    const viewer = await getViewerContextOrThrow(client, campaignId, req.user);
+    if (!viewer.isAdmin && !['dm', 'co-dm'].includes(viewer.role)) {
+      return res.status(403).json({
+        error: 'spawn_forbidden',
+        message: 'Only DMs can update the campaign spawn.',
       });
     }
 
@@ -2733,226 +3599,543 @@ app.post(
     if (!target) {
       return res.status(400).json({
         error: 'invalid_target',
-        message: 'Spawn world_position must provide x/y coordinates.',
+        message: 'Spawn coordinates require numeric x and y values.',
       });
     }
 
-    const description = typeof req.body?.description === 'string' ? req.body.description.trim() || null : null;
-    const isDefault = Boolean(req.body?.isDefault);
+    const rawName = typeof req.body?.name === 'string' ? req.body.name.trim() : '';
+    const name = rawName ? rawName : 'Default Spawn';
+    const note = (() => {
+      if (typeof req.body?.note !== 'string') return null;
+      const trimmed = req.body.note.trim();
+      return trimmed.length > 0 ? trimmed : null;
+    })();
 
-    const client = await pool.connect();
-    try {
-      await client.query('BEGIN');
-      const viewer = await getViewerContextOrThrow(client, campaignId, req.user);
-      if (!viewer.isAdmin && !['dm', 'co-dm'].includes(viewer.role)) {
-        const error = new Error('Only DMs can create spawn points');
-        error.status = 403;
-        error.code = 'spawn_forbidden';
-        throw error;
-      }
+    await client.query('BEGIN');
+    transactionStarted = true;
 
-      const insertResult = await client.query(
-        `INSERT INTO public.campaign_spawns
-           (campaign_id, name, description, world_position, is_default, created_by, updated_by)
-         VALUES
-           ($1, $2, $3, ST_SetSRID(ST_MakePoint($4, $5), 0), $6, $7, $7)
-         RETURNING id, campaign_id, name, description, is_default,
-                   ST_AsGeoJSON(world_position)::json AS geometry,
-                   created_at, updated_at`,
-        [campaignId, name.trim(), description, target.x, target.y, isDefault, req.user.id]
-      );
+    const upsertResult = await client.query(
+      `INSERT INTO public.campaign_spawns
+         (campaign_id, name, note, world_position, is_default, created_by, updated_by)
+       VALUES
+         ($1, $2, $3, ST_SetSRID(ST_MakePoint($4, $5), 0), true, $6, $6)
+       ON CONFLICT ON CONSTRAINT uq_campaign_spawns_default
+       DO UPDATE SET
+         name = EXCLUDED.name,
+         note = EXCLUDED.note,
+         world_position = EXCLUDED.world_position,
+         updated_at = NOW(),
+         updated_by = EXCLUDED.updated_by
+       RETURNING id, campaign_id, name, note, is_default,
+                 ST_AsGeoJSON(world_position)::json AS geometry,
+                 created_at, updated_at`,
+      [campaignId, name, note, target.x, target.y, req.user.id]
+    );
 
-      const spawnRow = insertResult.rows[0];
+    await client.query('COMMIT');
+    transactionStarted = false;
 
-      if (isDefault) {
-        await client.query(
-          `UPDATE public.campaign_spawns
-              SET is_default = false, updated_at = NOW(), updated_by = $2
-            WHERE campaign_id = $1 AND id <> $3 AND is_default = true`,
-          [campaignId, req.user.id, spawnRow.id]
-        );
-      }
+    const formatted = formatSpawnRow(upsertResult.rows[0]);
 
-      await client.query('COMMIT');
+    logInfo('Campaign spawn upserted', {
+      campaignId,
+      userId: req.user.id,
+      hasNote: Boolean(formatted.note),
+    });
 
-      if (wsServer) {
-        wsServer.broadcastToCampaign(campaignId, 'spawn-updated', {
-          action: 'created',
-          spawn: formatSpawnRow(spawnRow),
-        });
-      }
+    if (wsServer) {
+      wsServer.emitSpawnUpdated(campaignId, formatted, {
+        action: 'upserted',
+        actorId: req.user.id,
+      });
+    }
 
-      res.status(201).json({ spawn: formatSpawnRow(spawnRow) });
-    } catch (error) {
+    res.json({ spawn: formatted });
+  } catch (error) {
+    if (transactionStarted) {
       await client.query('ROLLBACK').catch(() => {});
-      console.error('[Spawns] Create error:', error);
-      res.status(error.status || 500).json({
-        error: error.code || 'spawn_create_failed',
-        message: error.message || 'Failed to create spawn',
-      });
-    } finally {
-      client.release();
     }
+    logError('Campaign spawn upsert failed', error, {
+      campaignId,
+      userId: req.user?.id,
+    });
+    res.status(error.status || 500).json({
+      error: error.code || 'spawn_upsert_failed',
+      message: error.message || 'Failed to update spawn location.',
+    });
+  } finally {
+    client.release();
   }
-);
+});
 
-app.put(
-  '/api/campaigns/:campaignId/spawns/:spawnId',
+app.get(
+  '/api/campaigns/:campaignId/objectives',
   requireAuth,
   requireCampaignParticipation,
   async (req, res) => {
-    const { campaignId, spawnId } = req.params;
-    const client = await pool.connect();
-    try {
-      await client.query('BEGIN');
-      const viewer = await getViewerContextOrThrow(client, campaignId, req.user);
-      if (!viewer.isAdmin && !['dm', 'co-dm'].includes(viewer.role)) {
-        const error = new Error('Only DMs can update spawn points');
-        error.status = 403;
-        error.code = 'spawn_forbidden';
-        throw error;
-      }
-
-      const target = normalizeTargetCoordinates(
-        req.body?.worldPosition ?? req.body?.position ?? req.body?.target
-      );
-
-      const fields = [];
-      const values = [];
-      let paramIndex = 1;
-
-      if (typeof req.body?.name === 'string' && req.body.name.trim()) {
-        fields.push(`name = $${paramIndex++}`);
-        values.push(req.body.name.trim());
-      }
-
-      if (req.body?.description !== undefined) {
-        fields.push(`description = $${paramIndex++}`);
-        values.push(
-          typeof req.body.description === 'string'
-            ? req.body.description.trim() || null
-            : null
-        );
-      }
-
-      if (target) {
-        fields.push(`world_position = ST_SetSRID(ST_MakePoint($${paramIndex}, $${paramIndex + 1}), 0)`);
-        values.push(target.x, target.y);
-        paramIndex += 2;
-      }
-
-      if (typeof req.body?.isDefault === 'boolean') {
-        fields.push(`is_default = $${paramIndex++}`);
-        values.push(req.body.isDefault);
-      }
-
-      if (fields.length === 0) {
-        const error = new Error('No valid fields provided for update');
-        error.status = 400;
-        error.code = 'spawn_noop';
-        throw error;
-      }
-
-      fields.push(`updated_at = NOW()`);
-      fields.push(`updated_by = $${paramIndex++}`);
-      values.push(req.user.id);
-
-      values.push(campaignId);
-      values.push(spawnId);
-
-      const updateResult = await client.query(
-        `UPDATE public.campaign_spawns
-            SET ${fields.join(', ')}
-          WHERE campaign_id = $${paramIndex - 1} AND id = $${paramIndex}
-          RETURNING id, campaign_id, name, description, is_default,
-                    ST_AsGeoJSON(world_position)::json AS geometry,
-                    created_at, updated_at`,
-        values
-      );
-
-      if (updateResult.rowCount === 0) {
-        const error = new Error('Spawn point not found');
-        error.status = 404;
-        error.code = 'spawn_not_found';
-        throw error;
-      }
-
-      const spawnRow = updateResult.rows[0];
-
-      if (spawnRow.is_default) {
-        await client.query(
-          `UPDATE public.campaign_spawns
-              SET is_default = false, updated_at = NOW(), updated_by = $2
-            WHERE campaign_id = $1 AND id <> $3 AND is_default = true`,
-          [campaignId, req.user.id, spawnRow.id]
-        );
-      }
-
-      await client.query('COMMIT');
-
-      if (wsServer) {
-        wsServer.broadcastToCampaign(campaignId, 'spawn-updated', {
-          action: 'updated',
-          spawn: formatSpawnRow(spawnRow),
-        });
-      }
-
-      res.json({ spawn: formatSpawnRow(spawnRow) });
-    } catch (error) {
-      await client.query('ROLLBACK').catch(() => {});
-      console.error('[Spawns] Update error:', error);
-      res.status(error.status || 500).json({
-        error: error.code || 'spawn_update_failed',
-        message: error.message || 'Failed to update spawn',
-      });
-    } finally {
-      client.release();
-    }
-  }
-);
-
-app.delete(
-  '/api/campaigns/:campaignId/spawns/:spawnId',
-  requireAuth,
-  requireCampaignParticipation,
-  async (req, res) => {
-    const { campaignId, spawnId } = req.params;
+    const { campaignId } = req.params;
     const client = await pool.connect();
     try {
       const viewer = await getViewerContextOrThrow(client, campaignId, req.user);
       if (!viewer.isAdmin && !['dm', 'co-dm'].includes(viewer.role)) {
         return res.status(403).json({
-          error: 'spawn_forbidden',
-          message: 'Only DMs can delete spawn points.',
+          error: 'objective_access_forbidden',
+          message: 'Only DMs can view campaign objectives.',
         });
       }
 
-      const deleteResult = await client.query(
-        'DELETE FROM public.campaign_spawns WHERE campaign_id = $1 AND id = $2 RETURNING id',
-        [campaignId, spawnId]
+      const { rows } = await client.query(
+        `SELECT ${OBJECTIVE_RETURNING_FIELDS}
+           FROM public.campaign_objectives
+          WHERE campaign_id = $1
+          ORDER BY parent_id NULLS FIRST, order_index ASC, created_at ASC`,
+        [campaignId]
       );
 
-      if (deleteResult.rowCount === 0) {
-        return res.status(404).json({
-          error: 'spawn_not_found',
-          message: 'Spawn point not found.',
-        });
-      }
-
-      if (wsServer) {
-        wsServer.broadcastToCampaign(campaignId, 'spawn-deleted', {
-          spawnId,
-        });
-      }
-
-      res.json({ success: true });
+      res.json({ objectives: rows.map(formatObjectiveRow) });
     } catch (error) {
-      console.error('[Spawns] Delete error:', error);
-      res.status(500).json({ error: 'Failed to delete spawn' });
+      console.error('[Objectives] List error:', error);
+      res.status(500).json({ error: 'Failed to fetch objectives' });
     } finally {
       client.release();
     }
   }
+);
+
+app.post(
+  '/api/campaigns/:campaignId/objectives',
+  requireAuth,
+  requireCampaignParticipation,
+  async (req, res) => {
+    const { campaignId } = req.params;
+    const client = await pool.connect();
+    let transactionStarted = false;
+    try {
+      const viewer = await getViewerContextOrThrow(client, campaignId, req.user);
+      if (!viewer.isAdmin && !['dm', 'co-dm'].includes(viewer.role)) {
+        return res.status(403).json({
+          error: 'objective_forbidden',
+          message: 'Only DMs can create campaign objectives.',
+        });
+      }
+
+      const parentCandidateId = req.body?.parentId ?? req.body?.parent_id ?? null;
+      let parentObjective = null;
+      if (parentCandidateId) {
+        parentObjective = await fetchObjectiveById(client, parentCandidateId);
+        if (!parentObjective || parentObjective.campaign_id !== campaignId) {
+          return res.status(404).json({
+            error: 'parent_not_found',
+            message: 'Parent objective not found in this campaign.',
+          });
+        }
+      }
+
+      const sanitized = sanitizeObjectivePayload(req.body ?? {}, {
+        requireTitle: true,
+        campaignId,
+        parentObjective,
+      });
+
+      await client.query('BEGIN');
+      transactionStarted = true;
+
+      const columns = ['campaign_id', 'title', 'created_by', 'updated_by'];
+      const placeholders = ['$1', '$2', '$3', '$4'];
+      const values = [campaignId, sanitized.title, req.user.id, req.user.id];
+      let paramIndex = values.length + 1;
+
+      if (Object.prototype.hasOwnProperty.call(sanitized, 'parentId')) {
+        columns.push('parent_id');
+        placeholders.push(`$${paramIndex}`);
+        values.push(sanitized.parentId);
+        paramIndex += 1;
+      }
+
+      if (Object.prototype.hasOwnProperty.call(sanitized, 'orderIndex')) {
+        columns.push('order_index');
+        placeholders.push(`$${paramIndex}`);
+        values.push(sanitized.orderIndex);
+        paramIndex += 1;
+      }
+
+      if (Object.prototype.hasOwnProperty.call(sanitized, 'isMajor')) {
+        columns.push('is_major');
+        placeholders.push(`$${paramIndex}`);
+        values.push(Boolean(sanitized.isMajor));
+        paramIndex += 1;
+      }
+
+      if (Object.prototype.hasOwnProperty.call(sanitized, 'slug')) {
+        columns.push('slug');
+        placeholders.push(`$${paramIndex}`);
+        values.push(sanitized.slug);
+        paramIndex += 1;
+      }
+
+      if (sanitized.markdown) {
+        for (const field of MARKDOWN_FIELDS) {
+          if (Object.prototype.hasOwnProperty.call(sanitized.markdown, field)) {
+            columns.push(field);
+            placeholders.push(`$${paramIndex}`);
+            values.push(sanitized.markdown[field]);
+            paramIndex += 1;
+          }
+        }
+      }
+
+      if (sanitized.location) {
+        columns.push('location_type');
+        placeholders.push(`$${paramIndex}`);
+        values.push(sanitized.location.type);
+        paramIndex += 1;
+
+        if (sanitized.location.type === 'pin') {
+          columns.push('location_pin');
+          placeholders.push(`ST_SetSRID(ST_MakePoint($${paramIndex}, $${paramIndex + 1}), 0)`);
+          values.push(sanitized.location.pin.x, sanitized.location.pin.y);
+          paramIndex += 2;
+        } else if (sanitized.location.type === 'burg') {
+          columns.push('location_burg_id');
+          placeholders.push(`$${paramIndex}`);
+          values.push(sanitized.location.burgId);
+          paramIndex += 1;
+        } else if (sanitized.location.type === 'marker') {
+          columns.push('location_marker_id');
+          placeholders.push(`$${paramIndex}`);
+          values.push(sanitized.location.markerId);
+          paramIndex += 1;
+        }
+      }
+
+      const insertSql = `INSERT INTO public.campaign_objectives (${columns.join(', ')}) VALUES (${placeholders.join(', ')}) RETURNING ${OBJECTIVE_RETURNING_FIELDS}`;
+      const insertResult = await client.query(insertSql, values);
+
+      await client.query('COMMIT');
+      transactionStarted = false;
+
+      const objective = formatObjectiveRow(insertResult.rows[0]);
+      logInfo('Objective created', {
+        campaignId,
+        objectiveId: objective.id,
+        userId: req.user.id,
+      });
+
+      if (wsServer) {
+        wsServer.emitObjectiveCreated(campaignId, objective, {
+          actorId: req.user.id,
+        });
+      }
+
+      res.status(201).json({ objective });
+    } catch (error) {
+      if (transactionStarted) {
+        await client.query('ROLLBACK').catch(() => {});
+      }
+
+      if (error instanceof ObjectiveValidationError) {
+        return res.status(400).json({
+          error: error.code,
+          message: error.message,
+        });
+      }
+
+      logError('Objective creation failed', error, {
+        campaignId,
+        userId: req.user?.id,
+      });
+      res.status(error.status || 500).json({
+        error: error.code || 'objective_create_failed',
+        message: error.message || 'Failed to create objective',
+      });
+    } finally {
+      client.release();
+    }
+  }
+);
+
+app.put('/api/objectives/:objectiveId', requireAuth, async (req, res) => {
+  const { objectiveId } = req.params;
+  const client = await pool.connect();
+  let transactionStarted = false;
+  try {
+    await client.query('BEGIN');
+    transactionStarted = true;
+
+    const existing = await fetchObjectiveWithCampaign(client, objectiveId);
+    if (!existing) {
+      await client.query('ROLLBACK');
+      return res.status(404).json({ error: 'Objective not found' });
+    }
+
+    const viewer = await getViewerContextOrThrow(client, existing.campaign_id, req.user);
+    if (!viewer.isAdmin && !['dm', 'co-dm'].includes(viewer.role)) {
+      await client.query('ROLLBACK');
+      return res.status(403).json({
+        error: 'objective_forbidden',
+        message: 'Only DMs can update objectives.',
+      });
+    }
+
+    const parentCandidateId = req.body?.parentId ?? req.body?.parent_id ?? undefined;
+    let parentObjective = null;
+    if (parentCandidateId) {
+      parentObjective = await fetchObjectiveById(client, parentCandidateId);
+      if (!parentObjective || parentObjective.campaign_id !== existing.campaign_id) {
+        await client.query('ROLLBACK');
+        return res.status(404).json({
+          error: 'parent_not_found',
+          message: 'Parent objective not found in this campaign.',
+        });
+      }
+    }
+
+    const descendantIds = await fetchObjectiveDescendantIds(client, objectiveId);
+
+    const sanitized = sanitizeObjectivePayload(req.body ?? {}, {
+      requireTitle: false,
+      campaignId: existing.campaign_id,
+      parentObjective,
+      ancestorIds: descendantIds,
+      selfId: objectiveId,
+    });
+
+    const updates = [];
+    const values = [];
+    let paramIndex = 1;
+
+    if (Object.prototype.hasOwnProperty.call(sanitized, 'title')) {
+      updates.push(`title = $${paramIndex}`);
+      values.push(sanitized.title);
+      paramIndex += 1;
+    }
+
+    if (Object.prototype.hasOwnProperty.call(sanitized, 'parentId')) {
+      updates.push(`parent_id = $${paramIndex}`);
+      values.push(sanitized.parentId);
+      paramIndex += 1;
+    }
+
+    if (Object.prototype.hasOwnProperty.call(sanitized, 'orderIndex')) {
+      updates.push(`order_index = $${paramIndex}`);
+      values.push(sanitized.orderIndex);
+      paramIndex += 1;
+    }
+
+    if (Object.prototype.hasOwnProperty.call(sanitized, 'isMajor')) {
+      updates.push(`is_major = $${paramIndex}`);
+      values.push(Boolean(sanitized.isMajor));
+      paramIndex += 1;
+    }
+
+    if (Object.prototype.hasOwnProperty.call(sanitized, 'slug')) {
+      updates.push(`slug = $${paramIndex}`);
+      values.push(sanitized.slug);
+      paramIndex += 1;
+    }
+
+    if (sanitized.markdown) {
+      for (const field of MARKDOWN_FIELDS) {
+        if (Object.prototype.hasOwnProperty.call(sanitized.markdown, field)) {
+          updates.push(`${field} = $${paramIndex}`);
+          values.push(sanitized.markdown[field]);
+          paramIndex += 1;
+        }
+      }
+    }
+
+    if (sanitized.location) {
+      updates.push(`location_type = $${paramIndex}`);
+      values.push(sanitized.location.type);
+      paramIndex += 1;
+
+      if (sanitized.location.type === 'pin') {
+        updates.push(`location_pin = ST_SetSRID(ST_MakePoint($${paramIndex}, $${paramIndex + 1}), 0)`);
+        values.push(sanitized.location.pin.x, sanitized.location.pin.y);
+        paramIndex += 2;
+        updates.push('location_burg_id = NULL');
+        updates.push('location_marker_id = NULL');
+      } else if (sanitized.location.type === 'burg') {
+        updates.push(`location_burg_id = $${paramIndex}`);
+        values.push(sanitized.location.burgId);
+        paramIndex += 1;
+        updates.push('location_marker_id = NULL');
+        updates.push('location_pin = NULL');
+      } else if (sanitized.location.type === 'marker') {
+        updates.push(`location_marker_id = $${paramIndex}`);
+        values.push(sanitized.location.markerId);
+        paramIndex += 1;
+        updates.push('location_burg_id = NULL');
+        updates.push('location_pin = NULL');
+      } else {
+        updates.push('location_burg_id = NULL');
+        updates.push('location_marker_id = NULL');
+        updates.push('location_pin = NULL');
+      }
+    }
+
+    if (updates.length === 0) {
+      await client.query('ROLLBACK');
+      return res.status(400).json({
+        error: 'no_changes',
+        message: 'No valid fields were provided for update.',
+      });
+    }
+
+    updates.push('updated_at = NOW()');
+    updates.push(`updated_by = $${paramIndex}`);
+    values.push(req.user.id);
+    paramIndex += 1;
+
+    values.push(objectiveId);
+
+    const updateQuery = `UPDATE public.campaign_objectives SET ${updates.join(', ')} WHERE id = $${paramIndex} RETURNING ${OBJECTIVE_RETURNING_FIELDS}`;
+    const updateResult = await client.query(updateQuery, values);
+
+    await client.query('COMMIT');
+    transactionStarted = false;
+
+    const objective = formatObjectiveRow(updateResult.rows[0]);
+    logInfo('Objective updated', { objectiveId, campaignId: existing.campaign_id, userId: req.user.id });
+
+    if (wsServer) {
+      wsServer.emitObjectiveUpdated(existing.campaign_id, objective, {
+        actorId: req.user.id,
+      });
+    }
+
+    res.json({ objective });
+  } catch (error) {
+    if (transactionStarted) {
+      await client.query('ROLLBACK').catch(() => {});
+    }
+
+    if (error instanceof ObjectiveValidationError) {
+      return res.status(400).json({
+        error: error.code,
+        message: error.message,
+      });
+    }
+
+    logError('Objective update failed', error, { objectiveId, userId: req.user?.id });
+    res.status(error.status || 500).json({
+      error: error.code || 'objective_update_failed',
+      message: error.message || 'Failed to update objective',
+    });
+  } finally {
+    client.release();
+  }
+});
+
+app.delete('/api/objectives/:objectiveId', requireAuth, async (req, res) => {
+  const { objectiveId } = req.params;
+  const client = await pool.connect();
+  let transactionStarted = false;
+  try {
+    await client.query('BEGIN');
+    transactionStarted = true;
+
+    const existing = await fetchObjectiveWithCampaign(client, objectiveId);
+    if (!existing) {
+      await client.query('ROLLBACK');
+      return res.status(404).json({ error: 'Objective not found' });
+    }
+
+    const viewer = await getViewerContextOrThrow(client, existing.campaign_id, req.user);
+    if (!viewer.isAdmin && !['dm', 'co-dm'].includes(viewer.role)) {
+      await client.query('ROLLBACK');
+      return res.status(403).json({
+        error: 'objective_forbidden',
+        message: 'Only DMs can delete objectives.',
+      });
+    }
+
+    const deleteResult = await client.query(
+      `WITH RECURSIVE tree AS (
+         SELECT id FROM public.campaign_objectives WHERE id = $1
+         UNION ALL
+         SELECT child.id
+           FROM public.campaign_objectives child
+           JOIN tree t ON child.parent_id = t.id
+       )
+       DELETE FROM public.campaign_objectives
+       WHERE id IN (SELECT id FROM tree)
+       RETURNING id`,
+      [objectiveId]
+    );
+
+    await client.query('COMMIT');
+    transactionStarted = false;
+
+    const deletedObjectiveIds = deleteResult.rows.map((row) => row.id);
+
+    logInfo('Objective deleted', {
+      objectiveId,
+      deletedCount: deleteResult.rowCount,
+      campaignId: existing.campaign_id,
+      userId: req.user.id,
+    });
+
+    if (wsServer) {
+      wsServer.emitObjectiveDeleted(existing.campaign_id, deletedObjectiveIds, {
+        actorId: req.user.id,
+      });
+    }
+
+    res.json({ deletedObjectiveIds });
+  } catch (error) {
+    if (transactionStarted) {
+      await client.query('ROLLBACK').catch(() => {});
+    }
+
+    logError('Objective delete failed', error, { objectiveId, userId: req.user?.id });
+    res.status(error.status || 500).json({
+      error: error.code || 'objective_delete_failed',
+      message: error.message || 'Failed to delete objective',
+    });
+  } finally {
+    client.release();
+  }
+});
+
+app.post(
+  '/api/objectives/:objectiveId/assist/description',
+  requireAuth,
+  objectiveAssistValidators,
+  handleValidationErrors,
+  createObjectiveAssistHandler('description')
+);
+
+app.post(
+  '/api/objectives/:objectiveId/assist/treasure',
+  requireAuth,
+  objectiveAssistValidators,
+  handleValidationErrors,
+  createObjectiveAssistHandler('treasure')
+);
+
+app.post(
+  '/api/objectives/:objectiveId/assist/combat',
+  requireAuth,
+  objectiveAssistValidators,
+  handleValidationErrors,
+  createObjectiveAssistHandler('combat')
+);
+
+app.post(
+  '/api/objectives/:objectiveId/assist/npcs',
+  requireAuth,
+  objectiveAssistValidators,
+  handleValidationErrors,
+  createObjectiveAssistHandler('npcs')
+);
+
+app.post(
+  '/api/objectives/:objectiveId/assist/rumours',
+  requireAuth,
+  objectiveAssistValidators,
+  handleValidationErrors,
+  createObjectiveAssistHandler('rumours')
 );
 
 app.get(
@@ -3157,29 +4340,139 @@ app.get(
   }
 );
 
-app.put('/api/campaigns/:id', async (req, res) => {
+app.put('/api/campaigns/:id', requireAuth, requireCampaignOwnership, async (req, res) => {
   const { id } = req.params;
-  const updates = req.body;
 
-  // Remove id and timestamps from updates
-  delete updates.id;
-  delete updates.created_at;
-  updates.updated_at = new Date().toISOString();
-
+  const client = await pool.connect();
   try {
-    const client = await pool.connect();
     const existingResult = await client.query('SELECT * FROM campaigns WHERE id = $1 LIMIT 1', [id]);
     if (existingResult.rowCount === 0) {
-      client.release();
       return res.status(404).json({ error: 'Campaign not found' });
     }
 
-    if (Object.prototype.hasOwnProperty.call(updates, 'world_map_id') || Object.prototype.hasOwnProperty.call(updates, 'worldMapId')) {
-      updates.world_map_id = updates.world_map_id ?? updates.worldMapId ?? null;
-      delete updates.worldMapId;
+    const existingCampaign = existingResult.rows[0];
+    const updates = {};
+
+    if (Object.prototype.hasOwnProperty.call(req.body, 'name')) {
+      const trimmed = typeof req.body.name === 'string' ? req.body.name.trim() : '';
+      if (!trimmed) {
+        return res.status(400).json({
+          error: 'invalid_name',
+          message: 'Campaign name cannot be empty.',
+        });
+      }
+      updates.name = trimmed;
     }
 
-    const existingCampaign = existingResult.rows[0];
+    if (Object.prototype.hasOwnProperty.call(req.body, 'description')) {
+      updates.description = coerceNullableString(req.body.description);
+    }
+
+    if (Object.prototype.hasOwnProperty.call(req.body, 'system')) {
+      updates.system = coerceNullableString(req.body.system);
+    }
+
+    if (Object.prototype.hasOwnProperty.call(req.body, 'setting')) {
+      updates.setting = coerceNullableString(req.body.setting);
+    }
+
+    const maxPlayersInput = pickProvided(req.body.max_players, req.body.maxPlayers);
+    if (maxPlayersInput !== undefined) {
+      try {
+        updates.max_players = parseMaxPlayersInput(maxPlayersInput, { required: true });
+      } catch (error) {
+        return res.status(400).json({
+          error: 'invalid_max_players',
+          message: error.message,
+        });
+      }
+    }
+
+    const levelRangeInput = pickProvided(req.body.level_range, req.body.levelRange);
+    if (levelRangeInput !== undefined) {
+      try {
+        updates.level_range = JSON.stringify(parseLevelRangeInput(levelRangeInput, { fallbackToDefault: false }));
+      } catch (error) {
+        return res.status(400).json({
+          error: 'invalid_level_range',
+          message: error.message,
+        });
+      }
+    }
+
+    if (Object.prototype.hasOwnProperty.call(req.body, 'status')) {
+      const candidateStatus = typeof req.body.status === 'string' ? req.body.status.trim() : '';
+      if (!CAMPAIGN_STATUS_VALUES.has(candidateStatus)) {
+        return res.status(400).json({
+          error: 'invalid_status',
+          message: 'Status must be one of recruiting, active, paused, or completed.',
+        });
+      }
+      updates.status = candidateStatus;
+    }
+
+    const isPublicInput = pickProvided(req.body.is_public, req.body.isPublic);
+    if (isPublicInput !== undefined) {
+      updates.is_public = coerceBooleanInput(isPublicInput);
+    }
+
+    const worldMapInput = pickProvided(req.body.world_map_id, req.body.worldMapId);
+    if (worldMapInput !== undefined) {
+      updates.world_map_id = worldMapInput === null ? null : coerceNullableString(worldMapInput);
+    }
+
+    const allowSpectatorsInput = pickProvided(req.body.allow_spectators, req.body.allowSpectators);
+    if (allowSpectatorsInput !== undefined) {
+      updates.allow_spectators = coerceBooleanInput(allowSpectatorsInput);
+    }
+
+    const autoApproveInput = pickProvided(req.body.auto_approve_join_requests, req.body.autoApproveJoinRequests);
+    if (autoApproveInput !== undefined) {
+      updates.auto_approve_join_requests = coerceBooleanInput(autoApproveInput);
+    }
+
+    const experienceTypeInput = pickProvided(req.body.experience_type, req.body.experienceType);
+    if (experienceTypeInput !== undefined) {
+      if (typeof experienceTypeInput !== 'string' || !EXPERIENCE_TYPE_VALUES.has(experienceTypeInput)) {
+        return res.status(400).json({
+          error: 'invalid_experience_type',
+          message: 'Experience type must be "milestone" or "experience_points".',
+        });
+      }
+      updates.experience_type = experienceTypeInput;
+    }
+
+    const restingRulesInput = pickProvided(req.body.resting_rules, req.body.restingRules);
+    if (restingRulesInput !== undefined) {
+      if (typeof restingRulesInput !== 'string' || !RESTING_RULE_VALUES.has(restingRulesInput)) {
+        return res.status(400).json({
+          error: 'invalid_resting_rules',
+          message: 'Resting rules must be one of standard, gritty, or heroic.',
+        });
+      }
+      updates.resting_rules = restingRulesInput;
+    }
+
+    const deathSaveRulesInput = pickProvided(req.body.death_save_rules, req.body.deathSaveRules);
+    if (deathSaveRulesInput !== undefined) {
+      if (typeof deathSaveRulesInput !== 'string' || !DEATH_SAVE_RULE_VALUES.has(deathSaveRulesInput)) {
+        return res.status(400).json({
+          error: 'invalid_death_save_rules',
+          message: 'Death save rules must be one of standard, hardcore, or forgiving.',
+        });
+      }
+      updates.death_save_rules = deathSaveRulesInput;
+    }
+
+    if (Object.keys(updates).length === 0) {
+      return res.status(400).json({
+        error: 'no_changes',
+        message: 'No valid fields were provided for update.',
+      });
+    }
+
+    updates.updated_at = new Date().toISOString();
+
     const nextStatus = Object.prototype.hasOwnProperty.call(updates, 'status')
       ? updates.status
       : existingCampaign.status;
@@ -3188,36 +4481,48 @@ app.put('/api/campaigns/:id', async (req, res) => {
       : existingCampaign.world_map_id;
 
     if (nextStatus === 'active' && !nextWorldMapId) {
-      client.release();
       return res.status(409).json({
         error: 'world_map_required',
         message: 'Active campaigns must have a world map configured before inviting players.',
       });
     }
 
-    // Build dynamic update query
-    const fields = Object.keys(updates);
-    const values = Object.values(updates);
-    const setClause = fields.map((field, index) => {
-      // Handle JSONB fields
-      if (['level_range', 'campaign_settings'].includes(field)) {
-        return `${field} = $${index + 1}::jsonb`;
-      }
-      return `${field} = $${index + 1}`;
-    }).join(', ');
+    const entries = Object.entries(updates);
+    const setClause = entries
+      .map(([column], index) => {
+        const placeholder = `$${index + 1}`;
+        if (column === 'level_range') {
+          return `${column} = ${placeholder}::jsonb`;
+        }
+        return `${column} = ${placeholder}`;
+      })
+      .join(', ');
+
+    const values = entries.map(([, value]) => value);
+    values.push(id);
 
     const result = await client.query(
-      `UPDATE campaigns SET ${setClause} WHERE id = $${fields.length + 1} RETURNING *`,
-      [...values, id]
+      `UPDATE campaigns SET ${setClause} WHERE id = $${entries.length + 1} RETURNING *`,
+      values
     );
-    client.release();
 
     const campaign = result.rows[0];
+    logInfo('Campaign updated', { campaignId: id, dmUserId: existingCampaign.dm_user_id });
 
-    res.json({ campaign });
+    return res.json({ campaign });
   } catch (error) {
-    console.error('[Campaigns] Update error:', error);
-    res.status(500).json({ error: 'Failed to update campaign' });
+    if (error.code === '23505' && error.constraint === 'uq_campaign_name_per_dm') {
+      logWarn('Campaign name conflict detected during update', { campaignId: id });
+      return res.status(409).json({
+        error: 'campaign_name_conflict',
+        message: 'You already have a campaign with that name. Choose a different name.',
+      });
+    }
+
+    logError('Campaign update failed', error, { campaignId: id });
+    return res.status(500).json({ error: 'Failed to update campaign' });
+  } finally {
+    client.release();
   }
 });
 
@@ -4192,6 +5497,393 @@ app.get('/api/sessions/:sessionId/participants', async (req, res) => {
   }
 });
 
+app.put(
+  '/api/sessions/:sessionId/focus',
+  requireAuth,
+  [
+    param('sessionId')
+      .isUUID()
+      .withMessage('sessionId must be a valid UUID'),
+    body('focus')
+      .optional({ nullable: true })
+      .custom((value) => value === null || typeof value === 'string')
+      .withMessage('focus must be a string or null')
+      .custom((value) => {
+        if (typeof value === 'string' && value.length > MAX_FOCUS_LENGTH) {
+          throw new Error(`focus must be ${MAX_FOCUS_LENGTH} characters or fewer`);
+        }
+        return true;
+      }),
+  ],
+  handleValidationErrors,
+  async (req, res) => {
+    const { sessionId } = req.params;
+    const requested = req.body;
+
+    const client = await pool.connect();
+    try {
+      await client.query('BEGIN');
+      const sessionRow = await fetchSessionWithCampaign(client, sessionId, { forUpdate: true });
+      if (!sessionRow) {
+        await client.query('ROLLBACK');
+        return res.status(404).json({
+          error: 'session_not_found',
+          message: 'Session not found',
+        });
+      }
+
+      const viewer = await getViewerContextOrThrow(client, sessionRow.campaign_id, req.user);
+      ensureDmControl(viewer);
+
+      let normalizedFocus = null;
+      if (Object.prototype.hasOwnProperty.call(requested, 'focus')) {
+        if (typeof requested.focus === 'string') {
+          normalizedFocus = sanitizeUserInput(requested.focus, MAX_FOCUS_LENGTH) || null;
+        } else if (requested.focus === null) {
+          normalizedFocus = null;
+        }
+      }
+
+      const updateResult = await client.query(
+        `UPDATE public.sessions
+            SET dm_focus = $2,
+                updated_at = NOW()
+          WHERE id = $1
+          RETURNING campaign_id, updated_at`,
+        [sessionId, normalizedFocus]
+      );
+
+      await client.query('COMMIT');
+
+      const updatedRow = updateResult.rows[0] ?? null;
+      const campaignId = sessionRow.campaign_id;
+      const updatedAtIso = updatedRow?.updated_at
+        ? new Date(updatedRow.updated_at).toISOString()
+        : new Date().toISOString();
+
+      logInfo('Session focus updated', {
+        sessionId,
+        campaignId,
+        userId: req.user.id,
+      });
+
+      if (wsServer) {
+        wsServer.emitSessionFocusUpdated(campaignId, {
+          sessionId,
+          dmFocus: normalizedFocus,
+          actorId: req.user.id,
+          updatedAt: updatedAtIso,
+        });
+      }
+
+      res.json({ sessionId, dmFocus: normalizedFocus });
+    } catch (error) {
+      await client.query('ROLLBACK').catch(() => {});
+      console.error('[Sidebar] Session focus update error:', error);
+      res.status(error.status || 500).json({
+        error: error.code || 'session_focus_update_failed',
+        message: error.message || 'Failed to update session focus',
+      });
+    } finally {
+      client.release();
+    }
+  }
+);
+
+app.put(
+  '/api/sessions/:sessionId/context',
+  requireAuth,
+  [
+    param('sessionId')
+      .isUUID()
+      .withMessage('sessionId must be a valid UUID'),
+    body('context_md')
+      .optional({ nullable: true })
+      .custom((value) => value === null || typeof value === 'string')
+      .withMessage('context_md must be a string or null')
+      .custom((value) => {
+        if (typeof value === 'string' && value.length > MAX_CONTEXT_LENGTH) {
+          throw new Error(`context_md must be ${MAX_CONTEXT_LENGTH} characters or fewer`);
+        }
+        return true;
+      }),
+    body('mode')
+      .optional({ checkFalsy: true })
+      .isString()
+      .withMessage('mode must be a string when provided')
+      .custom((value) => ['append', 'replace'].includes(value.trim().toLowerCase()))
+      .withMessage('mode must be one of append or replace'),
+    body('append')
+      .optional()
+      .isBoolean()
+      .withMessage('append must be a boolean when provided'),
+  ],
+  handleValidationErrors,
+  async (req, res) => {
+    const { sessionId } = req.params;
+    const bodyPayload = req.body ?? {};
+
+    const client = await pool.connect();
+    try {
+      await client.query('BEGIN');
+      const sessionRow = await fetchSessionWithCampaign(client, sessionId, { forUpdate: true });
+      if (!sessionRow) {
+        await client.query('ROLLBACK');
+        return res.status(404).json({
+          error: 'session_not_found',
+          message: 'Session not found',
+        });
+      }
+
+      const viewer = await getViewerContextOrThrow(client, sessionRow.campaign_id, req.user);
+      ensureDmControl(viewer);
+
+      const modeRaw = typeof bodyPayload.mode === 'string'
+        ? bodyPayload.mode.trim().toLowerCase()
+        : undefined;
+      const appendFlag = typeof bodyPayload.append === 'boolean' ? bodyPayload.append : undefined;
+      const mode = modeRaw || (appendFlag ? 'append' : 'replace');
+
+      const contextSource = Object.prototype.hasOwnProperty.call(bodyPayload, 'context_md')
+        ? bodyPayload.context_md
+        : Object.prototype.hasOwnProperty.call(bodyPayload, 'contextMd')
+          ? bodyPayload.contextMd
+          : bodyPayload.context;
+
+      const normalizeMarkdown = (value) => (typeof value === 'string' ? value.replace(/\r\n/g, '\n') : value);
+      const incomingContext = normalizeMarkdown(contextSource);
+
+      let nextContext = null;
+
+      if (mode === 'append') {
+        if (typeof incomingContext !== 'string' || incomingContext.trim().length === 0) {
+          await client.query('ROLLBACK');
+          return res.status(400).json({
+            error: 'context_append_invalid',
+            message: 'context_md must be a non-empty string when appending.',
+          });
+        }
+        const existing = normalizeMarkdown(sessionRow.dm_context_md ?? '') || '';
+        const combined = existing.trim().length > 0
+          ? `${existing.replace(/[\s]+$/, '')}\n\n${incomingContext}`
+          : incomingContext;
+        if (combined.length > MAX_CONTEXT_LENGTH) {
+          await client.query('ROLLBACK');
+          return res.status(422).json({
+            error: 'context_too_long',
+            message: `Resulting context exceeds ${MAX_CONTEXT_LENGTH} characters. Reduce the appended content.`,
+          });
+        }
+        nextContext = combined;
+      } else {
+        if (typeof incomingContext === 'string') {
+          nextContext = incomingContext;
+        } else if (incomingContext === null || Object.prototype.hasOwnProperty.call(bodyPayload, 'context_md') || Object.prototype.hasOwnProperty.call(bodyPayload, 'contextMd') || Object.prototype.hasOwnProperty.call(bodyPayload, 'context')) {
+          nextContext = null;
+        } else {
+          nextContext = sessionRow.dm_context_md;
+        }
+      }
+
+      const updateResult = await client.query(
+        `UPDATE public.sessions
+            SET dm_context_md = $2,
+                updated_at = NOW()
+          WHERE id = $1
+          RETURNING campaign_id, updated_at`,
+        [sessionId, nextContext]
+      );
+
+      await client.query('COMMIT');
+
+      const updatedRow = updateResult.rows[0] ?? null;
+      const campaignId = sessionRow.campaign_id;
+      const updatedAtIso = updatedRow?.updated_at
+        ? new Date(updatedRow.updated_at).toISOString()
+        : new Date().toISOString();
+      const contextLength = typeof nextContext === 'string' ? nextContext.length : 0;
+
+      logInfo('Session context updated', {
+        sessionId,
+        campaignId,
+        userId: req.user.id,
+        mode,
+        contextLength,
+      });
+
+      if (wsServer) {
+        wsServer.emitSessionContextUpdated(campaignId, {
+          sessionId,
+          mode,
+          hasContext: Boolean(nextContext && nextContext.length > 0),
+          contextLength,
+          actorId: req.user.id,
+          updatedAt: updatedAtIso,
+        });
+      }
+
+      res.json({ sessionId, mode, dmContextMd: nextContext });
+    } catch (error) {
+      await client.query('ROLLBACK').catch(() => {});
+      console.error('[Sidebar] Session context update error:', error);
+      res.status(error.status || 500).json({
+        error: error.code || 'session_context_update_failed',
+        message: error.message || 'Failed to update session context',
+      });
+    } finally {
+      client.release();
+    }
+  }
+);
+
+app.post(
+  '/api/sessions/:sessionId/unplanned-encounter',
+  requireAuth,
+  [
+    param('sessionId')
+      .isUUID()
+      .withMessage('sessionId must be a valid UUID'),
+    body('type')
+      .isString()
+      .withMessage('type is required')
+      .custom((value) => Boolean(normalizeEncounterType(value)))
+      .withMessage(`type must be one of: ${Array.from(ENCOUNTER_TYPES).join(', ')}`),
+    body('seed')
+      .isString()
+      .withMessage('seed is required')
+      .isLength({ min: 1, max: 4000 })
+      .withMessage('seed must be between 1 and 4000 characters'),
+    body('difficulty')
+      .optional({ checkFalsy: true })
+      .isString()
+      .withMessage('difficulty must be a string when provided')
+      .custom((value) => Boolean(normalizeEncounterDifficulty(value)))
+      .withMessage(`difficulty must be one of: ${Array.from(SIDEBAR_ENCOUNTER_DIFFICULTIES).join(', ')}`),
+    body('locationId')
+      .optional({ checkFalsy: true })
+      .isUUID()
+      .withMessage('locationId must be a valid UUID when provided'),
+    body('location_id')
+      .optional({ checkFalsy: true })
+      .isUUID()
+      .withMessage('location_id must be a valid UUID when provided'),
+    body('llm')
+      .optional()
+      .isBoolean()
+      .withMessage('llm must be a boolean when provided'),
+  ],
+  handleValidationErrors,
+  async (req, res) => {
+    const { sessionId } = req.params;
+    const payload = req.body ?? {};
+
+    const client = await pool.connect();
+    try {
+      await client.query('BEGIN');
+      const sessionRow = await fetchSessionWithCampaign(client, sessionId, { forUpdate: false });
+      if (!sessionRow) {
+        await client.query('ROLLBACK');
+        return res.status(404).json({
+          error: 'session_not_found',
+          message: 'Session not found',
+        });
+      }
+
+      const viewer = await getViewerContextOrThrow(client, sessionRow.campaign_id, req.user);
+      ensureDmControl(viewer);
+
+      if (payload.llm === true) {
+        await client.query('ROLLBACK');
+        return res.status(409).json({
+          error: 'llm_generation_unavailable',
+          message: 'LLM-assisted synthesis is not available for unplanned encounters. Provide manual details instead.',
+        });
+      }
+
+      const type = normalizeEncounterType(payload.type);
+      const difficulty = normalizeEncounterDifficulty(payload.difficulty) || 'medium';
+      const locationId = payload.locationId || payload.location_id || null;
+
+      if (locationId) {
+        const { rowCount } = await client.query(
+          'SELECT 1 FROM public.locations WHERE id = $1 AND campaign_id = $2',
+          [locationId, sessionRow.campaign_id]
+        );
+        if (rowCount === 0) {
+          await client.query('ROLLBACK');
+          return res.status(404).json({
+            error: 'location_not_found',
+            message: 'The specified location does not belong to this campaign.',
+          });
+        }
+      }
+
+      const seed = typeof payload.seed === 'string' ? payload.seed.trim() : '';
+      if (seed.length === 0) {
+        await client.query('ROLLBACK');
+        return res.status(400).json({
+          error: 'seed_required',
+          message: 'seed is required to describe the unplanned encounter.',
+        });
+      }
+
+      const encounterName = sanitizeUserInput(seed, 120) || 'Unplanned Encounter';
+
+      const { rows } = await client.query(
+        `INSERT INTO public.encounters (
+            campaign_id,
+            session_id,
+            location_id,
+            name,
+            description,
+            type,
+            difficulty,
+            status
+         ) VALUES ($1, $2, $3, $4, $5, $6, $7, 'active')
+         RETURNING id, campaign_id, session_id, location_id, name, description, type, difficulty, status, created_at, updated_at`,
+        [
+          sessionRow.campaign_id,
+          sessionId,
+          locationId,
+          encounterName,
+          seed,
+          type,
+          difficulty,
+        ]
+      );
+
+      await client.query('COMMIT');
+
+      const encounter = rows[0];
+      logInfo('Unplanned encounter created', {
+        encounterId: encounter.id,
+        sessionId,
+        campaignId: sessionRow.campaign_id,
+        userId: req.user.id,
+        type,
+        difficulty,
+      });
+
+      if (wsServer) {
+        wsServer.emitUnplannedEncounterCreated(sessionRow.campaign_id, encounter, {
+          actorId: req.user.id,
+        });
+      }
+
+      res.status(201).json({ encounter });
+    } catch (error) {
+      await client.query('ROLLBACK').catch(() => {});
+      console.error('[Sidebar] Unplanned encounter creation error:', error);
+      res.status(error.status || 500).json({
+        error: error.code || 'unplanned_encounter_failed',
+        message: error.message || 'Failed to create unplanned encounter',
+      });
+    } finally {
+      client.release();
+    }
+  }
+);
+
 // Combat Encounter System API Endpoints (Phase 3 - Task 4)
 
 // POST /api/campaigns/:campaignId/encounters - Create encounter
@@ -4519,6 +6211,160 @@ app.delete('/api/encounter-participants/:participantId', async (req, res) => {
 // Start server
 // ===== NPC MANAGEMENT ENDPOINTS =====
 
+app.post(
+  '/api/npcs/:npcId/sentiment',
+  requireAuth,
+  [
+    param('npcId')
+      .isUUID()
+      .withMessage('npcId must be a valid UUID'),
+    body('delta')
+      .exists()
+      .withMessage('delta is required')
+      .isInt({ min: -10, max: 10 })
+      .withMessage('delta must be an integer between -10 and 10'),
+    body('summary')
+      .isString()
+      .withMessage('summary is required')
+      .isLength({ min: 1, max: MAX_SENTIMENT_SUMMARY_LENGTH })
+      .withMessage(`summary must be between 1 and ${MAX_SENTIMENT_SUMMARY_LENGTH} characters`),
+    body('sentiment')
+      .optional({ checkFalsy: true })
+      .isString()
+      .withMessage('sentiment must be a string when provided')
+      .custom((value) => VALID_SENTIMENTS.has(value.trim().toLowerCase()))
+      .withMessage(`sentiment must be one of: ${Array.from(VALID_SENTIMENTS).join(', ')}`),
+    body('sessionId')
+      .optional({ checkFalsy: true })
+      .isUUID()
+      .withMessage('sessionId must be a valid UUID when provided'),
+    body('session_id')
+      .optional({ checkFalsy: true })
+      .isUUID()
+      .withMessage('session_id must be a valid UUID when provided'),
+    body('tags')
+      .optional({ checkFalsy: true })
+      .isArray()
+      .withMessage('tags must be an array when provided'),
+    body('tags.*')
+      .optional({ checkFalsy: true })
+      .isString()
+      .withMessage('tags must be strings'),
+  ],
+  handleValidationErrors,
+  async (req, res) => {
+    const { npcId } = req.params;
+    const payload = req.body ?? {};
+
+    const client = await pool.connect();
+    try {
+      await client.query('BEGIN');
+
+      const npcResult = await client.query(
+        'SELECT id, campaign_id FROM public.npcs WHERE id = $1 FOR UPDATE',
+        [npcId]
+      );
+
+      if (npcResult.rowCount === 0) {
+        await client.query('ROLLBACK');
+        return res.status(404).json({
+          error: 'npc_not_found',
+          message: 'NPC not found.',
+        });
+      }
+
+      const campaignId = npcResult.rows[0].campaign_id;
+      const viewer = await getViewerContextOrThrow(client, campaignId, req.user);
+      ensureDmControl(viewer, 'Only the campaign DM or co-DM may adjust NPC sentiment.');
+
+      const sessionId = payload.sessionId || payload.session_id || null;
+      if (sessionId) {
+        const sessionRow = await fetchSessionWithCampaign(client, sessionId, { forUpdate: false });
+        if (!sessionRow || sessionRow.campaign_id !== campaignId) {
+          await client.query('ROLLBACK');
+          return res.status(404).json({
+            error: 'session_not_found',
+            message: 'Session not found for this campaign.',
+          });
+        }
+      }
+
+      const trustDelta = clamp(Number(payload.delta) || 0, -10, 10);
+      const sentimentOverride = typeof payload.sentiment === 'string'
+        ? payload.sentiment.trim().toLowerCase()
+        : null;
+      const sentiment = sentimentOverride
+        || (trustDelta > 0 ? 'positive' : trustDelta < 0 ? 'negative' : 'neutral');
+
+      const summary = sanitizeUserInput(payload.summary, MAX_SENTIMENT_SUMMARY_LENGTH);
+      if (!summary) {
+        await client.query('ROLLBACK');
+        return res.status(400).json({
+          error: 'summary_required',
+          message: 'summary must contain descriptive text for the sentiment adjustment.',
+        });
+      }
+
+      const tags = Array.isArray(payload.tags)
+        ? payload.tags
+            .filter((tag) => typeof tag === 'string' && tag.trim().length > 0)
+            .map((tag) => sanitizeUserInput(tag, 50))
+        : null;
+
+      const { rows } = await client.query(
+        `INSERT INTO public.npc_memories (
+            npc_id,
+            campaign_id,
+            session_id,
+            narrative_id,
+            memory_summary,
+            sentiment,
+            trust_delta,
+            tags
+         ) VALUES ($1, $2, $3, NULL, $4, $5, $6, $7)
+         RETURNING id, npc_id, campaign_id, session_id, memory_summary, sentiment, trust_delta, tags, created_at`,
+        [
+          npcId,
+          campaignId,
+          sessionId ?? null,
+          summary,
+          sentiment,
+          trustDelta,
+          tags && tags.length > 0 ? tags : null,
+        ]
+      );
+
+      await client.query('COMMIT');
+
+      const memory = rows[0];
+      logInfo('NPC sentiment adjusted', {
+        npcId,
+        campaignId,
+        userId: req.user.id,
+        sentiment,
+        trustDelta,
+      });
+
+      if (wsServer) {
+        wsServer.emitNpcSentimentAdjusted(campaignId, memory, {
+          actorId: req.user.id,
+        });
+      }
+
+      res.status(201).json({ memory });
+    } catch (error) {
+      await client.query('ROLLBACK').catch(() => {});
+      console.error('[Sidebar] NPC sentiment update error:', error);
+      res.status(error.status || 500).json({
+        error: error.code || 'npc_sentiment_failed',
+        message: error.message || 'Failed to adjust NPC sentiment',
+      });
+    } finally {
+      client.release();
+    }
+  }
+);
+
 // POST /api/campaigns/:campaignId/npcs - Create NPC
 app.post('/api/campaigns/:campaignId/npcs', async (req, res) => {
   try {
@@ -4785,6 +6631,7 @@ app.get('/api/campaigns/:campaignId/assets', async (req, res) => {
 });
 
 // Create HTTP(S) server for both Express and WebSocket
+const shouldStartServer = process.env.NODE_ENV !== 'test';
 const server = httpsOptions ? createHttpsServer(httpsOptions, app) : createHttpServer(app);
 const accessProtocol = httpsOptions ? 'https' : 'http';
 const websocketProtocol = httpsOptions ? 'wss' : 'ws';
@@ -4793,12 +6640,15 @@ const portSegment = (port === 80 || port === 443) ? '' : `:${port}`;
 const healthCheckUrl = `${accessProtocol}://${publicHost}${portSegment}/health`;
 const websocketUrl = `${websocketProtocol}://${publicHost}${portSegment}/socket.io/`;
 
-// Initialize Socket.io WebSocket server
-const wsServer = new WebSocketServerClass(server);
+// Initialize Socket.io WebSocket server when running normally
+const wsServer = shouldStartServer ? new WebSocketServerClass(server) : null;
 app.locals.wsServer = wsServer;
 
 // Add WebSocket health check endpoint
 app.get('/api/websocket/status', (req, res) => {
+  if (!wsServer) {
+    return res.json({ status: 'inactive', connected: 0 });
+  }
   const status = wsServer.getStatus();
   res.json({
     status: 'active',
@@ -4806,77 +6656,81 @@ app.get('/api/websocket/status', (req, res) => {
   });
 });
 
-// Start server with WebSocket support
-server.listen(port, () => {
-  const config = {
-    port,
-    protocol: accessProtocol,
-    tlsEnabled: Boolean(httpsOptions),
-    databaseHost: process.env.DATABASE_HOST || 'localhost',
-    databasePort: process.env.DATABASE_PORT || '5432',
-    databaseName: process.env.DATABASE_NAME || 'dnd_app',
-    frontendUrl: process.env.FRONTEND_URL || 'http://localhost:3000',
-    nodeEnv: process.env.NODE_ENV || 'development',
-  };
-  if (tlsMetadata) {
-    config.tls = tlsMetadata;
-  }
-  
-  logApplicationStart(config);
-  
-  console.log(`Local database server running on port ${port}`);
-  console.log(`Health check: ${healthCheckUrl}`);
-  console.log(`WebSocket available at ${websocketUrl}`);
-  const wsStatus = wsServer.getStatus();
-  console.log(`WebSocket connections: ${wsStatus.connected}`);
-  
-  logInfo('Database server ready', {
-    port,
-    healthCheck: healthCheckUrl,
-    webSocketUrl: websocketUrl,
-    connections: wsStatus.connected
-  });
-});
+if (shouldStartServer) {
+  // Start server with WebSocket support
+  server.listen(port, () => {
+    const config = {
+      port,
+      protocol: accessProtocol,
+      tlsEnabled: Boolean(httpsOptions),
+      databaseHost: process.env.DATABASE_HOST || 'localhost',
+      databasePort: process.env.DATABASE_PORT || '5432',
+      databaseName: process.env.DATABASE_NAME || 'dnd_app',
+      frontendUrl: process.env.FRONTEND_URL || 'http://localhost:3000',
+      nodeEnv: process.env.NODE_ENV || 'development',
+    };
+    if (tlsMetadata) {
+      config.tls = tlsMetadata;
+    }
 
-// Graceful shutdown handling
-const gracefulShutdown = (signal) => {
-  logApplicationShutdown(`Received ${signal}`);
-  
-  logInfo('Closing HTTP server...');
-  server.close(() => {
-    logInfo('HTTP server closed.');
-    
-    logInfo('Closing database connections...');
-    pool.end(() => {
-      logInfo('Database pool closed.');
-      process.exit(0);
+    logApplicationStart(config);
+
+    console.log(`Local database server running on port ${port}`);
+    console.log(`Health check: ${healthCheckUrl}`);
+    console.log(`WebSocket available at ${websocketUrl}`);
+    const wsStatus = wsServer ? wsServer.getStatus() : { connected: 0 };
+    console.log(`WebSocket connections: ${wsStatus.connected}`);
+
+    logInfo('Database server ready', {
+      port,
+      healthCheck: healthCheckUrl,
+      webSocketUrl: websocketUrl,
+      connections: wsStatus.connected
     });
   });
-  
-  // Force exit after 30 seconds
-  setTimeout(() => {
-    logError('Could not close connections in time, forcefully shutting down');
-    process.exit(1);
-  }, 30000);
-};
 
-// Handle different shutdown signals
-process.on('SIGTERM', () => gracefulShutdown('SIGTERM'));
-process.on('SIGINT', () => gracefulShutdown('SIGINT'));
-process.on('SIGUSR2', () => gracefulShutdown('SIGUSR2')); // nodemon restart
+  // Graceful shutdown handling
+  const gracefulShutdown = (signal) => {
+    logApplicationShutdown(`Received ${signal}`);
 
-// Handle uncaught exceptions
-process.on('uncaughtException', (error) => {
-  logError('Uncaught Exception', error, { 
-    stack: error.stack,
-    pid: process.pid
+    logInfo('Closing HTTP server...');
+    server.close(() => {
+      logInfo('HTTP server closed.');
+
+      logInfo('Closing database connections...');
+      pool.end(() => {
+        logInfo('Database pool closed.');
+        process.exit(0);
+      });
+    });
+
+    // Force exit after 30 seconds
+    setTimeout(() => {
+      logError('Could not close connections in time, forcefully shutting down');
+      process.exit(1);
+    }, 30000);
+  };
+
+  // Handle different shutdown signals
+  process.on('SIGTERM', () => gracefulShutdown('SIGTERM'));
+  process.on('SIGINT', () => gracefulShutdown('SIGINT'));
+  process.on('SIGUSR2', () => gracefulShutdown('SIGUSR2')); // nodemon restart
+
+  // Handle uncaught exceptions
+  process.on('uncaughtException', (error) => {
+    logError('Uncaught Exception', error, {
+      stack: error.stack,
+      pid: process.pid
+    });
+    gracefulShutdown('uncaughtException');
   });
-  gracefulShutdown('uncaughtException');
-});
 
-// Handle unhandled promise rejections
-process.on('unhandledRejection', (reason, promise) => {
-  logError('Unhandled Rejection at Promise', reason, {
-    promise: promise.toString()
+  // Handle unhandled promise rejections
+  process.on('unhandledRejection', (reason, promise) => {
+    logError('Unhandled Rejection at Promise', reason, {
+      promise: promise.toString()
+    });
   });
-});
+}
+
+export { app, pool, server };

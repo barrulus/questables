@@ -7,6 +7,11 @@ const typeInstruction = {
   [NARRATIVE_TYPES.NPC_DIALOGUE]: 'Write dialogue for the requested NPC that reflects their personality, recent history with the party, and relationship status. Include stage direction or tone only when helpful.',
   [NARRATIVE_TYPES.ACTION_NARRATIVE]: 'Narrate the action outcome with dramatic flair appropriate to the success level. Mention mechanical consequences, status changes, and follow-up hooks the DM can offer.',
   [NARRATIVE_TYPES.QUEST]: 'Outline a quest using the provided campaign state. Include objective, key obstacles, and rewards drawn from existing factions or locations. Do not fabricate unrelated plotlines.',
+  [NARRATIVE_TYPES.OBJECTIVE_DESCRIPTION]: 'Draft an evocative Markdown description for the specified objective. Keep to 2-3 tight paragraphs, reference only people/places present in the context, and offer actionable hooks the DM can use immediately.',
+  [NARRATIVE_TYPES.OBJECTIVE_TREASURE]: 'List authentic treasure rewards for the specified objective. Provide 2-4 bullet items with short justifications and mechanical notes; do not invent items that contradict the campaign context.',
+  [NARRATIVE_TYPES.OBJECTIVE_COMBAT]: 'Summarise likely combat encounters for the specified objective. Provide 1-2 markdown sections covering enemy composition, tactics, and environmental hazards strictly derived from the context.',
+  [NARRATIVE_TYPES.OBJECTIVE_NPCS]: 'List notable NPCs relevant to the specified objective. Use bullet points with name, disposition, and a sentence of guidance. Only mention NPCs present in the supplied context.',
+  [NARRATIVE_TYPES.OBJECTIVE_RUMOURS]: 'Generate 2-3 rumours that characters could learn about the specified objective. Each rumour should be a single sentence, tagged with its reliability (truthful, partial, false) and rooted in the campaign context.',
 };
 
 const typeLabel = {
@@ -15,6 +20,11 @@ const typeLabel = {
   [NARRATIVE_TYPES.NPC_DIALOGUE]: 'NPC Dialogue',
   [NARRATIVE_TYPES.ACTION_NARRATIVE]: 'Action Narrative',
   [NARRATIVE_TYPES.QUEST]: 'Quest Generation',
+  [NARRATIVE_TYPES.OBJECTIVE_DESCRIPTION]: 'Objective Description',
+  [NARRATIVE_TYPES.OBJECTIVE_TREASURE]: 'Objective Treasure Hooks',
+  [NARRATIVE_TYPES.OBJECTIVE_COMBAT]: 'Objective Combat Planning',
+  [NARRATIVE_TYPES.OBJECTIVE_NPCS]: 'Objective NPC Brief',
+  [NARRATIVE_TYPES.OBJECTIVE_RUMOURS]: 'Objective Rumours',
 };
 
 const sanitize = (value) => {
@@ -155,6 +165,20 @@ export function buildStructuredPrompt({ type, context, providerConfig, request =
   }
   promptSections.push('### Game Context Snapshot');
   promptSections.push(contextSummary);
+
+  if (Array.isArray(request.extraSections)) {
+    request.extraSections
+      .map((section) => ({
+        title: sanitize(section?.title) || 'Additional Details',
+        content: sanitize(section?.content),
+      }))
+      .filter((section) => section.content)
+      .forEach((section) => {
+        promptSections.push(`### ${section.title}`);
+        promptSections.push(section.content);
+      });
+  }
+
   promptSections.push('### Directives');
   promptSections.push(instruction);
 

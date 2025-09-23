@@ -170,9 +170,9 @@ $$;
 
   - Performs validated move (rate limit + audit).
 
-- `POST /campaigns/:id/spawns` / `PUT /.../spawns/:spawnId`
+- `GET /campaigns/:id/spawns` / `PUT /campaigns/:id/spawn`
 
-  - DM-only spawn CRUD.
+  - DM-only spawn retrieval & upsert (single default spawn in SRID-0 coordinates).
 
 - `WS /campaigns/:id/stream`
 

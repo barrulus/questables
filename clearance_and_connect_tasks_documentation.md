@@ -463,3 +463,245 @@ Always append new entries; do not erase or rewrite previous log items except to 
   - `npx eslint components/campaign-manager.tsx components/campaign-shared.ts --ext ts,tsx,ts` (pass)
   - `npx eslint server/database-server.js --ext js` (fails: existing Node/global lint debt; map enforcement introduces no additional errors)
 - **Remaining Gaps / Blockers:** Needs richer tooling to upload/select maps from inside the campaign manager and a migration path for legacy active campaigns lacking `world_map_id`.
+
+## Task – DM Toolkit Task Planning & Documentation Governance Refresh
+- **Date:** 2025-09-23
+- **Engineer(s):** Codex Agent
+- **Work Done:**
+  - Reviewed `dmtoolkit.md` against the current backend/API surface to reaffirm scope for Wave 2 and captured recurring safeguards at the top of `dmtoolkit_tasks_2.md`.
+  - Replaced the migration placeholder with an explicit `database/schema.sql` authoring checklist and threaded API documentation alignment requirements through the DM Toolkit tasks (`dmtoolkit_tasks_2.md`).
+  - Added governance and status sections to `API_DOCUMENTATION.md` so every DM Toolkit slice records verified contracts and keeps the live endpoint list honest.
+- **Cleanups:** None.
+- **Documentation Updates:** `dmtoolkit_tasks_2.md` (recurring requirements + schema plan), `API_DOCUMENTATION.md` (documentation governance), `lint_report.md` (new eslint attempt logged).
+- **Tests & Verification:** `npx eslint --ext md dmtoolkit_tasks_2.md API_DOCUMENTATION.md` (fails: ESLint configuration lacks Markdown parsing support; halts with a line-1 error for each file).
+- **Remaining Gaps / Blockers:** Pending implementation work will need to fill in task numbers 4–7/21–22 and apply the documented governance once new endpoints land; Markdown-aware lint tooling is still absent.
+
+## Task 1 – Environment Verification & Charter Alignment
+- **Date:** 2025-09-23
+- **Engineer(s):** Codex Agent
+- **Work Done:**
+  - Loaded `.env.local` to capture database host/user/port without exposing secrets and connected to the live PostgreSQL instance via `psql`.
+  - Executed `SELECT version();` and `SELECT PostGIS_Full_Version();` to confirm PostgreSQL 17.6 + PostGIS 3.5.3 availability.
+  - Documented the successful verification and zero-dummy commitment in `docs/dmtoolkit_environment_check.md`.
+- **Cleanups:** None.
+- **Documentation Updates:** `docs/dmtoolkit_environment_check.md` (added connection log and charter acknowledgement).
+- **Tests & Verification:**
+  - `psql -h localhost -p 5432 -U ******** questables -c 'SELECT version();'` (pass)
+  - `psql -h localhost -p 5432 -U ******** questables -c 'SELECT PostGIS_Full_Version();'` (pass)
+- **Remaining Gaps / Blockers:** None; proceed to Task 2.
+
+## Task 2 – Schema Gap Analysis Blueprint
+- **Date:** 2025-09-23
+- **Engineer(s):** Codex Agent
+- **Work Done:**
+  - Inspected canonical schema (`database/schema.sql`) and live tables via `\d+` to compare against `dmtoolkit.md` / `dmtoolkit.yaml` requirements.
+  - Reviewed campaign/spawn handlers in `server/database-server.js` and existing API docs to catalogue DM Toolkit contract gaps.
+  - Authored `docs/dmtoolkit_schema_gaps.md` summarizing discrepancies, remediation steps, and the order of execution for subsequent tasks.
+- **Cleanups:** None.
+- **Documentation Updates:** `docs/dmtoolkit_schema_gaps.md` (new gap analysis).
+- **Tests & Verification:**
+  - `psql -h localhost -p 5432 -U ******** questables -c '\d+ public.campaigns'`
+  - `psql -h localhost -p 5432 -U ******** questables -c '\d+ public.campaign_spawns'`
+  - `psql -h localhost -p 5432 -U ******** questables -c "SELECT to_regclass('public.campaign_objectives');"`
+  - `psql -h localhost -p 5432 -U ******** questables -c '\d+ public.sessions'`
+- **Remaining Gaps / Blockers:** Schema realignment (Task 3) must update `database/schema.sql` and rebuild the empty database to incorporate the documented fixes.
+
+## Task 3 – Schema.sql Authoring & Verification
+- **Date:** 2025-09-23
+- **Engineer(s):** Codex Agent
+- **Work Done:**
+  - Added the DM Toolkit unique name constraint for campaigns, spawn column alignment (`note`, default flags, SRID check), and new `campaign_objectives` table with hierarchy/location constraints inside `database/schema.sql`.
+  - Extended the sessions table with `dm_focus` and `dm_context_md` columns to support DM Sidebar state.
+  - Executed the updated schema against a fresh database (`questables_dmtoolkit_tmp`) to confirm clean creation without migrations; documented the verification in `docs/dmtoolkit_schema_gaps.md`.
+- **Cleanups:** Dropped temporary database `questables_dmtoolkit_tmp` after verification.
+- **Documentation Updates:** `docs/dmtoolkit_schema_gaps.md` (added verification note).
+- **Tests & Verification:**
+  - `psql -h localhost -p 5432 -U ******** questables_dmtoolkit_tmp -f database/schema.sql` (pass; idempotency notices only)
+  - `dropdb --if-exists -h localhost -p 5432 -U ******** questables_dmtoolkit_tmp` (cleanup)
+- **Remaining Gaps / Blockers:** API handlers and client code must be updated (Tasks 8–20) to respect the new schema definitions before the refreshed database is used in production.
+
+## Task 8 – Campaign API Hardening & Constraint Handling
+- **Date:** 2025-09-23
+- **Engineer(s):** Codex Agent
+- **Work Done:**
+  - Reworked campaign creation to derive the DM from `req.user.id`, validate max player and level range bounds, enforce the `(dm_user_id, lower(name))` unique index with 409 responses, and surface honest logger output (`server/database-server.js:2243-2355`).
+  - Tightened campaign update routing behind `requireAuth`/`requireCampaignOwnership`, normalised payload validation (status, booleans, enums), and added structured error handling for world-map requirements and name conflicts (`server/database-server.js:3359-3549`).
+  - Removed the stale `dmUserId` payload from the campaign creation flow and kept the UI aligned with the hardened endpoints (`components/campaign-manager.tsx:247-271`).
+  - Updated API docs to document the authenticated workflow, new error codes, and accepted payload shapes for both creation and update operations (`API_DOCUMENTATION.md:556-621`).
+- **Cleanups:** None (behavioural hardening only).
+- **Documentation Updates:** `API_DOCUMENTATION.md` (campaign create/update contracts), `lint_report.md` (new eslint runs recorded).
+- **Tests & Verification:**
+  - `npx eslint components/campaign-manager.tsx --ext ts,tsx` (pass)
+  - `npx eslint server/database-server.js --ext js` (fails: longstanding server lint baseline marks unused vars across legacy code; campaign API changes add no new issues)
+- **Remaining Gaps / Blockers:** Legacy server lint debt still needs to be paid down; DELETE `/api/campaigns/:id` continues to rely on body-supplied DM IDs and should be migrated to the new auth pattern in a follow-up task.
+
+## Task 9 – Spawn Endpoint Realignment
+- **Date:** 2025-09-23
+- **Engineer(s):** Codex Agent
+- **Work Done:**
+  - Replaced the plural spawn CRUD routes with a single idempotent `PUT /api/campaigns/:campaignId/spawn` upsert that writes SRID-0 coordinates, honours the DM/co-DM guard, and emits structured logs/websocket updates (`server/database-server.js:2894-2982`).
+  - Updated spawn list responses, websocket payloads, and teleport helpers to surface the new `note` field returned from `campaign_spawns` (`server/database-server.js:2894-2992`, `server/database-server.js:2768-2863`).
+  - Added API documentation for the new spawn contract (GET + PUT), including request examples and error codes, and confirmed schema alignment with the `note` column (`API_DOCUMENTATION.md:603-659`).
+- **Cleanups:** Removed the legacy POST/PUT/DELETE spawn routes to prevent accidental divergence from the zero-dummy contract.
+- **Documentation Updates:** `API_DOCUMENTATION.md` (spawn endpoint docs), `ttg.md` (route reference), `lint_report.md` (recorded eslint execution).
+- **Tests & Verification:** `npx eslint server/database-server.js --ext js` (fails: legacy unused-variable debt in the server bundle persists; Task 9 introduces no additional violations)
+- **Remaining Gaps / Blockers:** Deletion of spawns is no longer exposed via API; confirm whether future DM Toolkit requirements call for a dedicated disable route or UI affordance.
+
+## Task 10 – Objective Domain Utilities
+- **Date:** 2025-09-23
+- **Engineer(s):** Codex Agent
+- **Work Done:**
+  - Added reusable objective validation helpers that normalise titles, markdown fields, optional flags, and enforce the single-location rule (`server/objectives/objective-validation.js`).
+  - Introduced parent/ancestor cycle guards and campaign ownership checks to be shared by upcoming objective CRUD endpoints.
+  - Created Jest coverage that exercises pin/burg/marker pathways, optional payload handling, and error cases for invalid parents/locations (`tests/objectives/objective-validation.test.js`).
+- **Cleanups:** None.
+- **Documentation Updates:** `lint_report.md` (eslint run logged).
+- **Tests & Verification:**
+  - `npm test -- --runTestsByPath tests/objectives/objective-validation.test.js --runInBand` (pass)
+  - `npx eslint server/objectives/objective-validation.js tests/objectives/objective-validation.test.js --ext js` (pass)
+- **Remaining Gaps / Blockers:** Objective endpoints still need to integrate the helpers (Task 11) and apply database-backed cycle detection once persistence logic lands.
+
+## Task 11 – Objective CRUD Endpoints
+- **Date:** 2025-09-23
+- **Engineer(s):** Codex Agent
+- **Work Done:**
+  - Implemented DM-only objective CRUD routes with full validation, parent-cycle protection, and recursive deletes (`server/database-server.js:2916-3128`).
+  - Wired the teleport/spawn flows to surface objective notes and ensured GeoJSON responses stay SRID-0.
+  - Documented GET/POST/PUT/DELETE contracts for objectives so the frontend can stabilise on the new payloads (`API_DOCUMENTATION.md:660-739`).
+- **Cleanups:** None.
+- **Documentation Updates:** `API_DOCUMENTATION.md` (objective endpoints), `lint_report.md` (eslint run recorded).
+- **Tests & Verification:**
+  - `npm test -- --runTestsByPath tests/objectives/objective-validation.test.js --runInBand` (pass – validation helper coverage reused)
+  - `npx eslint server/objectives/objective-validation.js tests/objectives/objective-validation.test.js --ext js` (pass)
+- **Remaining Gaps / Blockers:** Express endpoint integration tests (Supertest) remain outstanding; the repository lacks Supertest and supporting harness—follow-up work should add those once the backend testing stack is extended.
+
+## Task 12 – Objective LLM Assist Routes
+- **Date:** 2025-09-23
+- **Engineer(s):** Codex Agent
+- **Work Done:**
+  - Added objective-assist narrative types/instructions and support for extra prompt sections in the contextual LLM service (`server/llm/narrative-types.js`, `server/llm/context/prompt-builder.js`).
+  - Implemented the five assist endpoints that generate live content, persist outputs to `llm_narratives`, and atomically update objective markdown fields (`server/database-server.js:3129-3568`).
+  - Documented the new assist API surface with sample payloads and error semantics so the frontend can consume it without guesswork (`API_DOCUMENTATION.md:739-921`).
+- **Cleanups:** None.
+- **Documentation Updates:** `API_DOCUMENTATION.md`, `lint_report.md` (eslint entries appended).
+- **Tests & Verification:**
+  - `npm test -- --runTestsByPath tests/objectives/objective-validation.test.js --runInBand` (pass; validation logic reused by assists)
+  - `npx eslint server/objectives/objective-validation.js tests/objectives/objective-validation.test.js --ext js` (pass)
+  - `npx eslint server/database-server.js --ext js` (fails: longstanding unused-variable debt in the server bundle; assists introduce no new violations beyond the baseline)
+- **Remaining Gaps / Blockers:** End-to-end Express tests for assist routes still need a Supertest harness, and frontend wiring must integrate the live endpoints.
+
+## Task 13 – DM Sidebar Endpoint Suite
+- **Date:** 2025-09-24
+- **Engineer(s):** Codex Agent
+- **Work Done:**
+  - Audited existing sidebar routes and confirmed focus/context, unplanned encounter, sentiment, and teleport handlers aligned with DM Toolkit spec (`server/database-server.js:5400-6285`).
+  - Eliminated the lingering cache cleanup interval leak by holding the timer handle and calling `unref()` so Jest and live shutdowns are not blocked (`server/database-server.js:160-166`).
+  - Marked the schema gap analysis as closed for the sidebar suite (`docs/dmtoolkit_schema_gaps.md`).
+- **Cleanups:** None (timer lifecycle adjustment only).
+- **Documentation Updates:** `docs/dmtoolkit_schema_gaps.md` (Task 13 closure), `lint_report.md` (eslint command logged).
+- **Tests & Verification:**
+  - `npm test -- --runTestsByPath tests/server/dm-sidebar.integration.test.js --runInBand` (pass locally; initial run confirmed APIs succeed and now exit cleanly. Subsequent sandboxed rerun blocked from reaching PostgreSQL due to EPERM, noted in findings.)
+- **Remaining Gaps / Blockers:** Shared ESLint debt in `server/database-server.js` still reports longstanding unused-variable violations; timer cleanup does not introduce new issues.
+
+## Task 13 – Dev Watcher Load Shedding
+- **Date:** 2025-09-24
+- **Engineer(s):** Codex Agent
+- **Work Done:**
+  - Configured Vite to skip file-watching for heavy static tile assets so dev startup no longer exhausts inotify handles (`vite.config.ts:111-118`).
+- **Cleanups:** None.
+- **Documentation Updates:** `lint_report.md` (eslint run logged).
+- **Tests & Verification:**
+  - `npx eslint vite.config.ts --ext ts` (pass)
+- **Remaining Gaps / Blockers:** Recommend restarting `npm run dev` to confirm watcher counts drop as expected; no functional regressions anticipated because assets stay available via static serve.
+
+## Task 14 – Realtime & Logging Hooks
+- **Date:** 2025-09-24
+- **Engineer(s):** Codex Agent
+- **Work Done:**
+  - Replaced ad-hoc console logging with structured logger usage and added campaign-scoped emit helpers for spawn/objective/sidebar events (`server/websocket-server.js:1-230`).
+  - Broadcast objective CRUD, session focus/context, unplanned encounter, NPC sentiment, and NPC teleport events through the new websocket helpers while keeping logs free of narrative content (`server/database-server.js:3600-6260`).
+  - Subscribed the frontend WebSocket hook to the new event types so downstream UI slices can react without polling (`hooks/useWebSocket.tsx:170-210`).
+- **Cleanups:** None beyond consolidating websocket logging.
+- **Documentation Updates:**
+  - `API_DOCUMENTATION.md` gained a realtime events section that documents event names and payloads.
+  - `lint_report.md` appended the eslint runs for this slice.
+- **Tests & Verification:**
+  - `npx eslint server/websocket-server.js server/database-server.js hooks/useWebSocket.tsx --ext js,ts,tsx` (fails: longstanding unused-variable debt in `server/database-server.js`; new realtime hooks introduce no additional violations)
+  - `npx eslint server/websocket-server.js hooks/useWebSocket.tsx --ext js,tsx` (pass)
+- **Remaining Gaps / Blockers:** The server file still carries baseline eslint debt; addressing it remains outside the scope of Task 14.
+
+## Tileset Source Realignment
+- **Date:** 2025-09-24
+- **Engineer(s):** Codex Agent
+- **Work Done:**
+  - Dropped the hardcoded heightmap fallback and now hydrate the OpenLayers base layer exclusively from `tile_sets` records (`components/openlayers-map.tsx:372-2050`).
+  - Added resilient state/selection handling so the UI and map source respond only to live database tilesets; blank state now exposes a visible warning toast.
+- **Cleanups:** Normalised tileset resolution calculations and wrapped tile source creation around database-provided zoom/tile size values.
+- **Documentation Updates:** `lint_report.md` (eslint command logged).
+- **Tests & Verification:**
+  - `npx eslint components/openlayers-map.tsx --ext ts,tsx` (pass)
+- **Remaining Gaps / Blockers:** None; database must continue supplying at least one active tileset for the map to render.
+
+## Task 15 – API Client Expansion
+- **Date:** 2025-09-24
+- **Engineer(s):** Codex Agent
+- **Work Done:**
+  - Introduced typed client utilities covering campaign CRUD, spawn management, objectives CRUD, objective assists, and DM sidebar actions so frontend code can call live endpoints with shared types (`utils/api-client.ts:1-670`).
+  - Adopted the new campaign client in the game session context, preserving abort handling while tightening type guarantees for session headers (`contexts/GameSessionContext.tsx:1-320`).
+- **Cleanups:** Consolidated request payload mapping helpers and normalised GeoJSON typing to avoid duplicate parsing logic across the app.
+- **Documentation Updates:** `API_DOCUMENTATION.md` now documents the objective assist endpoints; `lint_report.md` logs the new eslint run.
+- **Tests & Verification:**
+  - `npx eslint utils/api-client.ts contexts/GameSessionContext.tsx --ext ts,tsx` (pass)
+- **Remaining Gaps / Blockers:** Follow-up UI slices must migrate to the new helpers to remove remaining direct `fetchJson` usages for sidebar flows.
+
+## Task 16 – Campaign CRUD UI Enhancements
+- **Date:** 2025-09-23
+- **Engineer(s):** Codex Agent
+- **Work Done:**
+  - Added numeric input unions and the `parseIntegerInput` helper so create/edit forms can be cleared while keeping max player and level validations honest (`components/campaign-manager.tsx:60-114`, `components/campaign-manager.tsx:311-370`).
+  - Reworked create dialog controls to clamp player/level inputs, surface validation toasts, and keep world map/public toggles in sync with API expectations (`components/campaign-manager.tsx:731-839`).
+  - Reset edit dialog optional fields to blank, enforced level range presence, and ensured sanitized payloads send `null` for optional strings when the DM has not supplied live values (`components/campaign-manager.tsx:174-183`, `components/campaign-manager.tsx:394-457`, `components/campaign-manager.tsx:732-816`, `components/campaign-manager.tsx:932-1090`).
+  - Removed the stale `'D&D 5e'` default and allowed numeric inputs to hold blank state in shared form templates (`components/campaign-shared.ts:29-144`).
+  - Updated the legacy settings dialog to respect the new numeric unions so DM overview edits stay aligned with backend validation (`components/settings.tsx:1-160`).
+  - Permitted the campaign update endpoint to accept `null` for optional fields so the UI can clear legacy placeholders without API errors (`server/database-server.js:4343-4377`).
+- **Cleanups:** Dropped the hardcoded `'D&D 5e'` fallback from `EDIT_FORM_TEMPLATE` to comply with the zero-dummy charter (`components/campaign-shared.ts:52-61`).
+- **Documentation Updates:**
+  - `API_DOCUMENTATION.md:603-626` (noted that optional fields accept `null` to clear values).
+  - `lint_report.md` (recorded eslint runs for the touched files).
+- **Tests & Verification:**
+  - `npm test -- --runTestsByPath tests/campaign-manager.test.tsx --runInBand`
+  - `npx eslint components/campaign-manager.tsx components/campaign-shared.ts --ext ts,tsx`
+  - `npx eslint server/database-server.js --ext js` (fails: longstanding unused-variable baseline; new updates introduce no additional warnings)
+- **Remaining Gaps / Blockers:** Server lint debt remains unresolved; otherwise the campaign create/edit dialog now mirrors live backend constraints.
+
+## Task 17 – Campaign Prep Map & Spawn Tooling
+- **Date:** 2025-09-24
+- **Engineer(s):** Codex Agent
+- **Work Done:**
+  - Introduced `CampaignPrep` to render the DM-facing prep panel with world-map bounds, spawn state, and editing workflows backed by the live spawn endpoints (`components/campaign-prep.tsx:20-318`).
+  - Built `CampaignSpawnMap` using OpenLayers to display the selected tile set, draw the persisted default spawn, and collect map clicks for DM-only spawn placement (`components/campaign-spawn-map.tsx:1-268`).
+  - Wired the prep card into `CampaignManager` so selected campaigns now expose the prep map alongside campaign metadata (`components/campaign-manager.tsx:936-1104`).
+  - Mirrored DM spawn actions in the settings dialog to respect the new numeric unions, ensuring legacy form interactions remain aligned (`components/settings.tsx:92-147`).
+  - Documented the prep map’s reliance on the spawn contract directly in `API_DOCUMENTATION.md:603-626`.
+- **Cleanups:** None beyond removing the legacy `'D&D 5e'` default in shared form templates.
+- **Documentation Updates:** `API_DOCUMENTATION.md:603-626` (noted the prep map’s usage of the spawn endpoint), `lint_report.md` (added lint command for the new files).
+- **Tests & Verification:**
+  - `npm test -- --runTestsByPath tests/campaign-prep.test.tsx --runInBand`
+  - `npm test -- --runTestsByPath tests/campaign-manager.test.tsx --runInBand`
+  - `npx eslint components/campaign-prep.tsx components/campaign-spawn-map.tsx components/campaign-manager.tsx components/settings.tsx tests/campaign-prep.test.tsx --ext ts,tsx`
+- **Remaining Gaps / Blockers:** The prep panel currently surfaces the default spawn only; future work may extend the UI to show full spawn history when multiple records are introduced.
+
+## Task 18 – Objectives Panel & Tree Management
+- **Date:** 2025-09-24
+- **Engineer(s):** Codex Agent
+- **Work Done:**
+  - Implemented the DM Objectives panel with tree rendering, dialog-driven CRUD, drag/drop reordering, and honest backend error surfacing (`components/objectives-panel.tsx:1-1118`).
+  - Added the OpenLayers-powered pin picker used by objective forms to select SRID 0 coordinates directly from the configured tile set (`components/objective-pin-map.tsx:1-204`).
+  - Wired the objectives card into the prep grid so campaign prep now exposes spawn controls alongside live objective management (`components/campaign-prep.tsx:1-420`).
+  - Authored focused Jest coverage to exercise objective creation, reordering, deletion, and marker gating with live API mocks (`tests/objectives-panel.test.tsx:1-264`).
+- **Cleanups:** Removed the previous marker-select disablement so the UI now shows an explicit `/api/maps/:worldId/markers` gating alert while leaving the rest of the form interactive (`components/objectives-panel.tsx:517-553`).
+- **Documentation Updates:** None required; existing objective and map endpoint docs already describe the contracts consumed by the new panel.
+- **Tests & Verification:**
+  - `npm test -- tests/objectives-panel.test.tsx --runInBand`
+  - `npx eslint components/objective-pin-map.tsx components/objectives-panel.tsx components/campaign-prep.tsx tests/objectives-panel.test.tsx --ext ts,tsx`
+- **Remaining Gaps / Blockers:** The UI surfaces a warning when map markers are unavailable; unblockers depend on the backend exposing `/api/maps/:worldId/markers` for production use.

@@ -282,6 +282,8 @@ CREATE TABLE IF NOT EXISTS public.campaigns (
 CREATE INDEX IF NOT EXISTS idx_campaigns_dm_user_id ON public.campaigns(dm_user_id);
 CREATE INDEX IF NOT EXISTS idx_campaigns_status ON public.campaigns(status);
 CREATE INDEX IF NOT EXISTS idx_campaigns_is_public ON public.campaigns(is_public);
+CREATE UNIQUE INDEX IF NOT EXISTS uq_campaign_name_per_dm
+    ON public.campaigns (dm_user_id, lower(name));
 DROP TRIGGER IF EXISTS _touch_campaigns ON public.campaigns;
 CREATE TRIGGER _touch_campaigns
 BEFORE UPDATE ON public.campaigns
@@ -367,10 +369,11 @@ GROUP BY ranked.campaign_id, ranked.player_id;
 CREATE TABLE IF NOT EXISTS public.campaign_spawns (
     id UUID DEFAULT uuid_generate_v4() PRIMARY KEY,
     campaign_id UUID REFERENCES public.campaigns(id) ON DELETE CASCADE NOT NULL,
-    name TEXT NOT NULL,
-    description TEXT,
+    name TEXT NOT NULL DEFAULT 'Default Spawn',
+    note TEXT,
     world_position geometry(Point, 0) NOT NULL,
-    is_default BOOLEAN DEFAULT false,
+    is_default BOOLEAN DEFAULT true,
+    CONSTRAINT campaign_spawns_world_position_srid CHECK (ST_SRID(world_position) = 0),
     created_by UUID REFERENCES public.user_profiles(id) ON DELETE SET NULL,
     updated_by UUID REFERENCES public.user_profiles(id) ON DELETE SET NULL,
     created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW() NOT NULL,
@@ -383,6 +386,46 @@ CREATE INDEX IF NOT EXISTS idx_campaign_spawns_world_position_gix ON public.camp
 DROP TRIGGER IF EXISTS _touch_campaign_spawns ON public.campaign_spawns;
 CREATE TRIGGER _touch_campaign_spawns
 BEFORE UPDATE ON public.campaign_spawns
+FOR EACH ROW EXECUTE FUNCTION public.tg_touch_updated_at();
+
+-- campaign objectives tree (DM Toolkit)
+CREATE TABLE IF NOT EXISTS public.campaign_objectives (
+    id UUID DEFAULT uuid_generate_v4() PRIMARY KEY,
+    campaign_id UUID REFERENCES public.campaigns(id) ON DELETE CASCADE NOT NULL,
+    parent_id UUID REFERENCES public.campaign_objectives(id) ON DELETE SET NULL,
+    title TEXT NOT NULL,
+    description_md TEXT,
+    location_type TEXT CHECK (location_type IN ('pin', 'burg', 'marker')),
+    location_burg_id UUID REFERENCES public.maps_burgs(id) ON DELETE SET NULL,
+    location_marker_id UUID REFERENCES public.maps_markers(id) ON DELETE SET NULL,
+    location_pin geometry(Point, 0),
+    treasure_md TEXT,
+    combat_md TEXT,
+    npcs_md TEXT,
+    rumours_md TEXT,
+    order_index INTEGER DEFAULT 0,
+    created_by UUID REFERENCES public.user_profiles(id) ON DELETE SET NULL,
+    updated_by UUID REFERENCES public.user_profiles(id) ON DELETE SET NULL,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW() NOT NULL,
+    updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW() NOT NULL,
+    CONSTRAINT campaign_objectives_location_choice CHECK (
+        (location_type IS NULL AND location_burg_id IS NULL AND location_marker_id IS NULL AND location_pin IS NULL)
+        OR (location_type = 'pin' AND location_pin IS NOT NULL AND location_burg_id IS NULL AND location_marker_id IS NULL)
+        OR (location_type = 'burg' AND location_burg_id IS NOT NULL AND location_marker_id IS NULL AND location_pin IS NULL)
+        OR (location_type = 'marker' AND location_marker_id IS NOT NULL AND location_burg_id IS NULL AND location_pin IS NULL)
+    ),
+    CONSTRAINT campaign_objectives_location_pin_srid CHECK (location_pin IS NULL OR ST_SRID(location_pin) = 0)
+);
+CREATE INDEX IF NOT EXISTS idx_campaign_objectives_campaign_id ON public.campaign_objectives(campaign_id);
+CREATE INDEX IF NOT EXISTS idx_campaign_objectives_parent_id ON public.campaign_objectives(parent_id);
+CREATE INDEX IF NOT EXISTS idx_campaign_objectives_order ON public.campaign_objectives(campaign_id, order_index);
+CREATE INDEX IF NOT EXISTS idx_campaign_objectives_location_burg ON public.campaign_objectives(location_burg_id);
+CREATE INDEX IF NOT EXISTS idx_campaign_objectives_location_marker ON public.campaign_objectives(location_marker_id);
+CREATE INDEX IF NOT EXISTS idx_campaign_objectives_location_pin_gix
+    ON public.campaign_objectives USING GIST (location_pin) WHERE location_pin IS NOT NULL;
+DROP TRIGGER IF EXISTS _touch_campaign_objectives ON public.campaign_objectives;
+CREATE TRIGGER _touch_campaign_objectives
+BEFORE UPDATE ON public.campaign_objectives
 FOR EACH ROW EXECUTE FUNCTION public.tg_touch_updated_at();
 
 -- movement audit log
@@ -501,6 +544,8 @@ CREATE TABLE IF NOT EXISTS public.sessions (
     title TEXT NOT NULL,
     summary TEXT,
     dm_notes TEXT,
+    dm_focus TEXT,
+    dm_context_md TEXT,
     scheduled_at TIMESTAMP WITH TIME ZONE,
     started_at TIMESTAMP WITH TIME ZONE,
     ended_at TIMESTAMP WITH TIME ZONE,
@@ -590,11 +635,15 @@ CREATE TABLE IF NOT EXISTS public.npcs (
     secrets TEXT,
     stats JSONB,
     current_location_id UUID REFERENCES public.locations(id) ON DELETE SET NULL,
+    world_position geometry(Point, 0),
+    CONSTRAINT npc_world_position_srid CHECK (world_position IS NULL OR ST_SRID(world_position) = 0),
     created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW() NOT NULL,
     updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW() NOT NULL
 );
 CREATE INDEX IF NOT EXISTS idx_npcs_campaign_id ON public.npcs(campaign_id);
 CREATE INDEX IF NOT EXISTS idx_npcs_location_id ON public.npcs(current_location_id);
+CREATE INDEX IF NOT EXISTS idx_npcs_world_position_gix
+    ON public.npcs USING GIST (world_position) WHERE world_position IS NOT NULL;
 DROP TRIGGER IF EXISTS _touch_npcs ON public.npcs;
 CREATE TRIGGER _touch_npcs
 BEFORE UPDATE ON public.npcs
@@ -689,7 +738,7 @@ CREATE TABLE IF NOT EXISTS public.encounters (
     location_id UUID REFERENCES public.locations(id) ON DELETE SET NULL,
     name TEXT NOT NULL,
     description TEXT,
-    type TEXT NOT NULL CHECK (type IN ('combat', 'social', 'exploration', 'puzzle')),
+    type TEXT NOT NULL CHECK (type IN ('combat', 'social', 'exploration', 'puzzle', 'rumour')),
     difficulty TEXT NOT NULL CHECK (difficulty IN ('easy', 'medium', 'hard', 'deadly')),
     initiative_order JSONB,
     current_round INTEGER DEFAULT 0,

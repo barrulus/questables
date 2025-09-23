@@ -1,5 +1,6 @@
 import { createContext, ReactNode, useCallback, useContext, useEffect, useRef, useState } from 'react';
-import { fetchJson } from '../utils/api-client';
+import { fetchJson, getCampaign } from '../utils/api-client';
+import type { CampaignRecord } from '../utils/api-client';
 import { useUser } from './UserContext';
 
 const ACTIVE_CAMPAIGN_STORAGE_KEY = 'dnd-active-campaign';
@@ -43,32 +44,14 @@ interface GameSessionContextValue {
   latestSession: SessionMetadata | null;
   loading: boolean;
   error: string | null;
-  selectCampaign: (campaignId: string | null) => Promise<void>;
+  selectCampaign: (_campaignId: string | null) => Promise<void>;
   refreshActiveCampaign: () => Promise<void>;
   playerVisibilityRadius: number | null;
   viewerRole: string | null;
-  updateVisibilityMetadata: (metadata: { radius?: number | null; viewerRole?: string | null } | null) => void;
+  updateVisibilityMetadata: (_metadata: { radius?: number | null; viewerRole?: string | null } | null) => void;
 }
 
-interface RawCampaignRow {
-  id: string;
-  name: string;
-  description?: string | null;
-  dm_user_id: string;
-  dm_username?: string | null;
-  system: string;
-  setting?: string | null;
-  status: string;
-  max_players?: number | null;
-  level_range?: unknown;
-  is_public?: boolean | null;
-  allow_spectators?: boolean | null;
-  auto_approve_join_requests?: boolean | null;
-  experience_type?: string | null;
-  last_activity?: string | null;
-  created_at?: string | null;
-  updated_at?: string | null;
-}
+type RawCampaignRow = CampaignRecord;
 
 interface RawSessionRow {
   id: string;
@@ -230,12 +213,8 @@ export function GameSessionProvider({ children }: { children: ReactNode }) {
     }));
 
     try {
-      const [campaignPayload, sessionsPayload] = await Promise.all([
-        fetchJson<{ campaign: RawCampaignRow }>(
-          `/api/campaigns/${campaignId}`,
-          { signal: controller.signal },
-          'Failed to load campaign'
-        ),
+      const [campaignRow, sessionsPayload] = await Promise.all([
+        getCampaign(campaignId, { signal: controller.signal }),
         fetchJson<RawSessionRow[]>(
           `/api/campaigns/${campaignId}/sessions`,
           { signal: controller.signal },
@@ -251,11 +230,7 @@ export function GameSessionProvider({ children }: { children: ReactNode }) {
         return;
       }
 
-      if (!campaignPayload?.campaign) {
-        throw new Error('Campaign response did not include campaign details.');
-      }
-
-      const normalizedCampaign = normalizeCampaign(campaignPayload.campaign);
+      const normalizedCampaign = normalizeCampaign(campaignRow);
       const sessionsArray = Array.isArray(sessionsPayload) ? sessionsPayload : [];
       const sessionForHeader = chooseSessionForHeader(sessionsArray);
       const normalizedSession = sessionForHeader ? normalizeSession(sessionForHeader) : null;

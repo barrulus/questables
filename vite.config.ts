@@ -113,6 +113,9 @@ export default defineConfig(({ mode }) => {
       host: true,
       https: httpsOptions,
       hmr: hmrConfig,
+      watch: {
+        ignored: ['**/map_data/**'],
+      },
     },
     define: {
       // This helps ensure environment variables are accessible

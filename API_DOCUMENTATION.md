@@ -2,6 +2,13 @@
 
 This document describes the REST API endpoints provided by the Questables database server.
 
+## Documentation Governance
+- DM Toolkit work tracked in `dmtoolkit_tasks_2.md` requires verifying this document for every shipped slice. Record the observed contract (or an explicit "no change" confirmation) alongside the clearance log so this file always mirrors the live backend.
+- Schema updates are authored directly in `database/schema.sql`; reference that file when documenting new or updated fields so definitions stay synchronized.
+
+## DM Toolkit Status
+- DM Toolkit endpoints are being implemented incrementally. Until new routes land, the sections below represent the currently available API surface. Add the new endpoints here only after they are live and verified against the production-aligned database.
+
 ## Base URL
 
 - Development: `http://localhost:3001`
@@ -548,39 +555,422 @@ Get a specific campaign with player information.
 
 ### POST /api/campaigns
 
-Create a new campaign.
+Create a campaign for the authenticated DM. The server derives `dm_user_id` from the bearer token; providing a conflicting ID results in a 403 error.
+
+**Headers:**
+- `Authorization: Bearer <jwt>`
 
 **Request Body:**
 ```json
 {
   "name": "New Campaign",
   "description": "Campaign description",
-  "system": "D&D 5e",
-  "setting": "Fantasy",
-  "max_players": 6,
-  "level_range": { "min": 1, "max": 10 },
-  "is_public": true,
-  "dm_user_id": "user-uuid",
+  "system": "D&D 5e",          // optional – omit to use the backend default
+  "setting": "Eberron",         // optional – null clears any previous value
+  "maxPlayers": 6,               // required integer between 1 and 20
+  "levelRange": { "min": 1, "max": 10 },
+  "status": "recruiting",       // optional; must be recruiting|active|paused|completed
+  "isPublic": true,
   "worldMapId": "world-map-uuid" // optional, required when status is "active"
 }
 ```
 
-**Response:** Created campaign object
+**Response (201 Created):**
+```json
+{
+  "campaign": {
+    "id": "campaign-uuid",
+    "name": "New Campaign",
+    "dm_user_id": "dm-user-uuid",
+    "status": "recruiting",
+    "max_players": 6,
+    "level_range": { "min": 1, "max": 10 },
+    "is_public": true,
+    "world_map_id": null,
+    "created_at": "2025-09-23T18:45:00.000Z",
+    "updated_at": "2025-09-23T18:45:00.000Z"
+  }
+}
+```
+
+**Errors:**
+- `400 invalid_*`: Validation failure (empty name, invalid max players, malformed level range, etc.)
+- `401 authentication_required`: Missing/invalid bearer token
+- `403 dm_mismatch`: Attempted to create a campaign for a different DM
+- `409 world_map_required`: Requested `status` of `active` without a `worldMapId`
+- `409 campaign_name_conflict`: Campaign name already exists for this DM
 
 ### PUT /api/campaigns/:id
 
-Update a campaign (DM only).
+Update an existing campaign. Only the owning DM (or an authenticated admin) may perform this action.
+
+**Headers:**
+- `Authorization: Bearer <jwt>`
 
 **Parameters:**
 - `id`: Campaign UUID
 
-**Request Body:** Partial campaign data
+**Request Body:** Partial campaign data. CamelCase and snake_case keys are accepted; the examples below use snake_case to align with the persisted columns.
 
-**Response:** Updated campaign object
+Optional string fields (`description`, `system`, `setting`) accept either a trimmed string or `null` to clear the stored value.
+
+```json
+{
+  "name": "Even Greater Campaign",
+  "description": "Revised session outline",
+  "max_players": 5,
+  "level_range": { "min": 3, "max": 7 },
+  "status": "active",
+  "world_map_id": "world-map-uuid",
+  "is_public": false,
+  "allow_spectators": true,
+  "experience_type": "milestone",
+  "resting_rules": "standard",
+  "death_save_rules": "hardcore"
+}
+```
+
+**Response (200 OK):**
+```json
+{
+  "campaign": {
+    "id": "campaign-uuid",
+    "name": "Even Greater Campaign",
+    "description": "Revised session outline",
+    "status": "active",
+    "max_players": 5,
+    "level_range": { "min": 3, "max": 7 },
+    "world_map_id": "world-map-uuid",
+    "is_public": false,
+    "allow_spectators": true,
+    "auto_approve_join_requests": false,
+    "experience_type": "milestone",
+    "resting_rules": "standard",
+    "death_save_rules": "hardcore",
+    "updated_at": "2025-09-23T19:05:14.000Z"
+  }
+}
+```
 
 **Errors:**
-- `403`: Only the DM can update the campaign
+- `400 invalid_*` / `no_changes`: Payload failed validation or contained no recognised fields
+- `401 authentication_required`: Missing/invalid bearer token
+- `403 Access denied`: Authenticated user is not the campaign DM
 - `409 world_map_required`: Cannot set status to `active` without a world map
+- `409 campaign_name_conflict`: Campaign name already exists for this DM
+
+### GET /api/campaigns/:campaignId/spawns
+
+Return the current spawn configuration for a campaign. Only the campaign DM or co-DM may access this endpoint.
+
+**Headers:**
+- `Authorization: Bearer <jwt>`
+
+**Parameters:**
+- `campaignId`: Campaign UUID
+
+**Response (200 OK):**
+```json
+{
+  "spawns": [
+    {
+      "id": "spawn-uuid",
+      "campaignId": "campaign-uuid",
+      "name": "Default Spawn",
+      "note": "Start outside the tavern",
+      "isDefault": true,
+      "geometry": {
+        "type": "Point",
+        "coordinates": [1234.5, 5678.9]
+      },
+      "createdAt": "2025-09-23T18:45:00.000Z",
+      "updatedAt": "2025-09-23T19:10:12.000Z"
+    }
+  ]
+}
+```
+
+**Errors:**
+- `401 authentication_required`: Missing/invalid bearer token
+- `403 spawn_access_forbidden`: Viewer is not a DM/co-DM for the campaign
+- `500`: Unexpected database failure
+
+### PUT /api/campaigns/:campaignId/spawn
+
+Upsert (create or replace) the campaign’s default spawn location. The request overwrites the previous spawn if one exists.
+
+> This endpoint powers the campaign prep map in the DM dashboard. The UI surfaces the latest spawn coordinates and note directly from this route so DMs always work against the live database contract.
+
+**Headers:**
+- `Authorization: Bearer <jwt>`
+
+**Request Body:**
+```json
+{
+  "name": "Default Spawn",
+  "note": "Party arrives via spelljammer",
+  "worldPosition": { "x": 1234.5, "y": 5678.9 }
+}
+```
+
+You may also send `{ "x": 1234.5, "y": 5678.9 }` at the top level or provide `target`, `position`, or `worldPosition` objects with `x`/`y` members. Coordinates are always interpreted in SRID-0 space.
+
+**Response (200 OK):**
+```json
+{
+  "spawn": {
+    "id": "spawn-uuid",
+    "campaignId": "campaign-uuid",
+    "name": "Default Spawn",
+    "note": "Party arrives via spelljammer",
+    "isDefault": true,
+    "geometry": {
+      "type": "Point",
+      "coordinates": [1234.5, 5678.9]
+    },
+    "createdAt": "2025-09-23T18:45:00.000Z",
+    "updatedAt": "2025-09-23T19:15:22.000Z"
+  }
+}
+```
+
+**Errors:**
+- `400 invalid_target`: Payload lacked numeric coordinates
+- `401 authentication_required`: Missing/invalid bearer token
+- `403 spawn_forbidden`: Viewer is not the campaign’s DM/co-DM (or an admin)
+- `500 spawn_upsert_failed`: Unexpected database failure while writing the spawn
+
+### GET /api/campaigns/:campaignId/objectives
+
+Return the objectives defined for a campaign. Only the DM/co-DM (or an admin) may access this list.
+
+**Headers:**
+- `Authorization: Bearer <jwt>`
+
+**Response (200 OK):**
+```json
+{
+  "objectives": [
+    {
+      "id": "objective-uuid",
+      "campaignId": "campaign-uuid",
+      "parentId": null,
+      "title": "Secure the outpost",
+      "descriptionMd": "Scout the palisade and disable alarms.",
+      "treasureMd": null,
+      "combatMd": null,
+      "npcsMd": "Captain Ilyra (friendly)",
+      "rumoursMd": "Bandits expect reinforcements",
+      "location": {
+        "type": "pin",
+        "pin": { "type": "Point", "coordinates": [1234.5, 678.9] },
+        "burgId": null,
+        "markerId": null
+      },
+      "orderIndex": 0,
+      "isMajor": true,
+      "slug": null,
+      "createdAt": "2025-09-23T18:00:00.000Z",
+      "updatedAt": "2025-09-23T18:00:00.000Z"
+    }
+  ]
+}
+```
+
+**Errors:**
+- `401 authentication_required`: Missing/invalid bearer token
+- `403 objective_access_forbidden`: Viewer is not a DM/co-DM for the campaign
+- `500`: Unexpected database failure
+
+### POST /api/campaigns/:campaignId/objectives
+
+Create a new objective for the campaign.
+
+**Headers:**
+- `Authorization: Bearer <jwt>`
+
+**Request Body:**
+```json
+{
+  "title": "Rescue the prisoners",
+  "descriptionMd": "Free the villagers before dawn.",
+  "parentId": null,
+  "locationType": "burg",
+  "locationBurgId": "burg-uuid",
+  "orderIndex": 0,
+  "isMajor": true
+}
+```
+
+**Response (201 Created):**
+```json
+{
+  "objective": {
+    "id": "objective-uuid",
+    "campaignId": "campaign-uuid",
+    "parentId": null,
+    "title": "Rescue the prisoners",
+    "descriptionMd": "Free the villagers before dawn.",
+    "location": {
+      "type": "burg",
+      "pin": null,
+      "burgId": "burg-uuid",
+      "markerId": null
+    },
+    "orderIndex": 0,
+    "isMajor": true,
+    "createdAt": "2025-09-23T18:15:00.000Z",
+    "updatedAt": "2025-09-23T18:15:00.000Z"
+  }
+}
+```
+
+**Errors:**
+- `400 invalid_*`: Payload failed validation (missing title, invalid location, cycle detected, etc.)
+- `401 authentication_required`: Missing/invalid bearer token
+- `403 objective_forbidden`: Viewer is not a DM/co-DM
+- `404 parent_not_found`: Provided parent objective does not exist in the campaign
+- `500 objective_create_failed`: Unexpected failure while writing to the database
+
+### PUT /api/objectives/:objectiveId
+
+Update an existing objective. Payload is partial; omit fields you do not wish to change.
+
+**Headers:**
+- `Authorization: Bearer <jwt>`
+
+**Request Body (example):**
+```json
+{
+  "title": "Secure the outpost",
+  "orderIndex": 1,
+  "locationType": "pin",
+  "location": { "x": 2345.6, "y": 789.1 },
+  "descriptionMd": "Reinforce the barricades before nightfall."
+}
+```
+
+**Response (200 OK):**
+```json
+{
+  "objective": {
+    "id": "objective-uuid",
+    "campaignId": "campaign-uuid",
+    "parentId": null,
+    "title": "Secure the outpost",
+    "descriptionMd": "Reinforce the barricades before nightfall.",
+    "location": {
+      "type": "pin",
+      "pin": { "type": "Point", "coordinates": [2345.6, 789.1] },
+      "burgId": null,
+      "markerId": null
+    },
+    "orderIndex": 1,
+    "isMajor": false,
+    "updatedAt": "2025-09-23T18:45:00.000Z"
+  }
+}
+```
+
+**Errors:**
+- `400 invalid_*` / `no_changes`: Validation failure or no recognised fields supplied
+- `401 authentication_required`: Missing/invalid bearer token
+- `403 objective_forbidden`: Viewer is not a DM/co-DM
+- `404 parent_not_found`: Provided parent objective does not exist in the campaign
+- `404 Objective not found`: Objective ID does not exist
+- `500 objective_update_failed`: Unexpected database failure during update
+
+### DELETE /api/objectives/:objectiveId
+
+Delete an objective and all of its descendants.
+
+**Headers:**
+- `Authorization: Bearer <jwt>`
+
+**Response (200 OK):**
+```json
+{
+  "deletedObjectiveIds": [
+    "objective-uuid",
+    "child-objective-uuid"
+  ]
+}
+```
+
+**Errors:**
+- `401 authentication_required`: Missing/invalid bearer token
+- `403 objective_forbidden`: Viewer is not a DM/co-DM
+- `404 Objective not found`: Objective ID does not exist
+- `500 objective_delete_failed`: Unexpected database failure during deletion
+
+### POST /api/objectives/:objectiveId/assist/:assistType
+
+Generate narrative support for an objective and persist the resulting markdown field. The `assistType` path parameter must be one of: `description`, `treasure`, `combat`, `npcs`, or `rumours`.
+
+**Headers:**
+- `Authorization: Bearer <jwt>`
+
+**Request Body (example):**
+```json
+{
+  "focus": "The party negotiates with the river king",
+  "provider": {
+    "name": "ollama",
+    "model": "qwen3:8b"
+  },
+  "parameters": {
+    "temperature": 0.7
+  }
+}
+```
+
+- `focus` (optional) supplies a short prompt override (≤ 400 characters).
+- `provider` (optional) lets you request a specific LLM provider/model configuration.
+- `parameters` (optional) forwards provider-specific tuning arguments.
+
+**Response (200 OK):**
+```json
+{
+  "objective": {
+    "id": "objective-uuid",
+    "campaignId": "campaign-uuid",
+    "title": "Secure the outpost",
+    "descriptionMd": "## Mission Brief\nHold the bridge until dawn.",
+    "treasureMd": null,
+    "combatMd": null,
+    "npcsMd": null,
+    "rumoursMd": null,
+    "location": null,
+    "orderIndex": 0,
+    "isMajor": true,
+    "createdAt": "2025-09-23T18:00:00.000Z",
+    "updatedAt": "2025-09-24T13:11:00.000Z"
+  },
+  "assist": {
+    "field": "description_md",
+    "content": "## Mission Brief\nHold the bridge until dawn.",
+    "provider": {
+      "name": "ollama",
+      "model": "qwen3:8b"
+    },
+    "metrics": {
+      "tokensUsed": 612,
+      "latencyMs": 1480
+    },
+    "cache": {
+      "key": "objective:description:objective-uuid",
+      "hit": false
+    }
+  }
+}
+```
+
+**Errors:**
+- `400 objective_assist_empty` / `objective_assist_failed`: LLM returned no content or an unexpected error occurred
+- `401 authentication_required`
+- `403 objective_forbidden`: Caller lacks DM/co-DM/admin privileges
+- `404 Objective not found`
+- `503 narrative_service_error`: LLM provider/service unavailable
 
 ### DELETE /api/campaigns/:id
 
@@ -919,7 +1309,241 @@ Return a GeoJSON LineString of the selected player’s recent movement trail whe
 - `404`: No trail data has been recorded for the campaign player
 - `500`: Unexpected database failure while generating the trail
 
-**Coordinate system reminder:** All movement, teleport, and spawn coordinates use the SRID-0 “world” space (the same `xworld/yworld` columns exposed on map tables such as `maps_burgs`). If you only have pixel-space values (`x_px/y_px`), convert them with `meters_per_pixel` before calling the API.
+**Coordinate system reminder:** All movement, teleport, spawn, and NPC map coordinates use the SRID-0 “world” space (the same `xworld/yworld` columns exposed on map tables such as `maps_burgs`). If you only have pixel-space values (`x_px/y_px`), convert them with `meters_per_pixel` before calling the API.
+
+## DM Sidebar API
+
+All DM Sidebar endpoints require authentication and restrict write access to the campaign’s DM or co-DM (administrators inherit DM privileges). Unless stated otherwise, error responses use the standard `error`/`message` shape described earlier in this document.
+
+### PUT /api/sessions/:sessionId/focus
+
+Persist the DM’s short focus prompt for a live session.
+
+**Headers:**
+- `Authorization: Bearer <jwt>`
+
+**Parameters:**
+- `sessionId`: Session UUID
+
+**Request Body:**
+```json
+{
+  "focus": "Chart the necromancer’s escape route"
+}
+```
+`focus` may be a string (≤ 500 characters) or `null` to clear the value.
+
+**Response (200 OK):**
+```json
+{
+  "sessionId": "session-uuid",
+  "dmFocus": "Chart the necromancer’s escape route"
+}
+```
+
+**Errors:**
+- `401 authentication_required`: Missing/invalid bearer token
+- `403 dm_action_forbidden`: Caller is not the DM/co-DM/admin for the campaign
+- `404 session_not_found`: Session does not exist or belongs to another campaign
+
+### PUT /api/sessions/:sessionId/context
+
+Replace or append the DM’s extended context (Markdown). The payload accepts either snake_case or camelCase keys.
+
+**Headers:**
+- `Authorization: Bearer <jwt>`
+
+**Request Body:**
+```json
+{
+  "context_md": "## Situation\nThe guard captain requests reinforcements.",
+  "mode": "replace" // optional – "append" or "replace" (default)
+}
+```
+
+- When `mode` is `replace`, the provided markdown overwrites the stored value (pass `null` to clear).
+- When `mode` is `append` (or `append: true`), the payload must contain a non-empty string; the API inserts two newlines before the appended text. Combined content is capped at 20,000 characters.
+
+**Response (200 OK):**
+```json
+{
+  "sessionId": "session-uuid",
+  "mode": "append",
+  "dmContextMd": "## Situation\nThe guard captain requests reinforcements.\n\n## Reinforcements\nTwo griffons arrive at dawn."
+}
+```
+
+**Errors:**
+- `400 context_append_invalid`: Attempted to append an empty/undefined string
+- `401 authentication_required`
+- `403 dm_action_forbidden`
+- `404 session_not_found`
+- `422 context_too_long`: Resulting markdown would exceed 20,000 characters
+
+### POST /api/sessions/:sessionId/unplanned-encounter
+
+Create an “active” encounter record on the fly. The caller must supply real encounter text; there are no mocks or stubbed defaults.
+
+**Headers:**
+- `Authorization: Bearer <jwt>`
+
+**Request Body:**
+```json
+{
+  "type": "combat",               // combat | social | exploration | puzzle | rumour
+  "seed": "Spectral riders ambush the caravan.",
+  "difficulty": "hard",           // optional; defaults to medium
+  "locationId": "location-uuid"   // optional; validates campaign ownership
+}
+```
+
+**Response (201 Created):**
+```json
+{
+  "encounter": {
+    "id": "encounter-uuid",
+    "campaign_id": "campaign-uuid",
+    "session_id": "session-uuid",
+    "name": "Spectral riders ambush the caravan.",
+    "description": "Spectral riders ambush the caravan.",
+    "type": "combat",
+    "difficulty": "hard",
+    "status": "active",
+    "created_at": "2025-09-24T10:15:00.000Z",
+    "updated_at": "2025-09-24T10:15:00.000Z"
+  }
+}
+```
+
+**Errors:**
+- `401 authentication_required`
+- `403 dm_action_forbidden`
+- `404 session_not_found` / `location_not_found`
+- `409 llm_generation_unavailable`: `llm: true` is not yet supported (documented limitation)
+- `422 invalid_type`: Type outside the accepted list
+
+### POST /api/npcs/:npcId/sentiment
+
+Log an NPC sentiment adjustment with an optional session linkage and tag metadata. The service writes directly to `npc_memories` and updates long-term trust totals.
+
+**Headers:**
+- `Authorization: Bearer <jwt>`
+
+**Parameters:**
+- `npcId`: NPC UUID
+
+**Request Body:**
+```json
+{
+  "delta": 3,                         // integer between -10 and 10 (clamped server-side)
+  "summary": "The guardian now trusts the party.",
+  "sentiment": "positive",           // optional; derived from delta when omitted
+  "sessionId": "session-uuid",       // optional; must belong to the same campaign
+  "tags": ["reassurance", "trust"]  // optional string array
+}
+```
+
+**Response (201 Created):**
+```json
+{
+  "memory": {
+    "id": "memory-uuid",
+    "npc_id": "npc-uuid",
+    "campaign_id": "campaign-uuid",
+    "session_id": "session-uuid",
+    "memory_summary": "The guardian now trusts the party.",
+    "sentiment": "positive",
+    "trust_delta": 3,
+    "tags": ["reassurance", "trust"],
+    "created_at": "2025-09-24T10:20:11.000Z"
+  }
+}
+```
+
+**Errors:**
+- `401 authentication_required`
+- `403 dm_action_forbidden`
+- `404 npc_not_found` / `session_not_found`
+- `422`: Invalid payload (missing summary, delta outside range, unsupported sentiment)
+
+### POST /api/campaigns/:campaignId/teleport/player
+
+Teleport a campaign player token. Coordinates must be SRID-0 values; the call always records an audit trail entry in `player_movement_audit`.
+
+**Headers:**
+- `Authorization: Bearer <jwt>`
+
+**Request Body:**
+```json
+{
+  "playerId": "campaign-player-uuid",
+  "spawnId": "spawn-uuid",             // optional – use saved spawn point
+  "target": { "x": 123.45, "y": 678.9 },
+  "reason": "DM reposition during encounter"
+}
+```
+Provide either `spawnId` **or** coordinates (accepted keys: `target`, `position`, `worldPosition`, or top-level `x/y`).
+
+**Response (200 OK):**
+```json
+{
+  "playerId": "campaign-player-uuid",
+  "geometry": { "type": "Point", "coordinates": [123.45, 678.9] },
+  "visibilityState": "visible",
+  "lastLocatedAt": "2025-09-24T10:30:00.000Z",
+  "mode": "teleport",
+  "reason": "DM reposition during encounter",
+  "spawn": null
+}
+```
+
+**Errors:**
+- `400 player_required` / `invalid_target`: Missing playerId or coordinates
+- `401 authentication_required`
+- `403 teleport_forbidden`: Caller lacks DM privileges
+- `404 spawn_not_found` / `player_not_found`
+
+### POST /api/campaigns/:campaignId/teleport/npc
+
+Teleport an NPC either to a named location (`current_location_id`) or to direct SRID-0 coordinates (persisted in `world_position`).
+
+**Headers:**
+- `Authorization: Bearer <jwt>`
+
+**Request Body:**
+```json
+{
+  "npcId": "npc-uuid",
+  "locationId": "location-uuid"  // optional; campaign-owned location
+}
+```
+or
+```json
+{
+  "npcId": "npc-uuid",
+  "target": { "x": 42.5, "y": 99.1 },
+  "reason": "Relocate closer to the party"
+}
+```
+
+**Response (200 OK):**
+```json
+{
+  "npcId": "npc-uuid",
+  "campaignId": "campaign-uuid",
+  "currentLocationId": null,
+  "worldPosition": {
+    "type": "Point",
+    "coordinates": [42.5, 99.1]
+  }
+}
+```
+
+**Errors:**
+- `400 npc_required` / `destination_required`: Missing identifiers or coordinates
+- `401 authentication_required`
+- `403 dm_action_forbidden`
+- `404 npc_not_found` / `location_not_found`
 
 ## Encounter API
 
@@ -1006,3 +1630,171 @@ Roll or assign initiative for every participant in an encounter. When no overrid
 - `404`: Encounter not found
 - `400`: Encounter has no participants to roll initiative for
 - `500`: Database error while updating initiative
+
+## Realtime WebSocket Events
+
+Questables exposes a Socket.IO server on the same origin as the REST API (`ws://localhost:3001` in development). Authenticate with the same bearer token you use for REST calls (or the local `req.user.id` during trusted development sessions) and emit `join-campaign` with the campaign UUID to receive room-scoped broadcasts. All events below are emitted on the `campaign-<campaignId>` room.
+
+### spawn-updated
+- **Emitted When:** A DM/co-DM upserts the default spawn for a campaign.
+- **Payload:**
+```json
+{
+  "action": "upserted",
+  "spawn": {
+    "id": "spawn-uuid",
+    "campaignId": "campaign-uuid",
+    "name": "Default Spawn",
+    "note": "Party arrives via spelljammer",
+    "isDefault": true,
+    "geometry": { "type": "Point", "coordinates": [1234.5, 5678.9] },
+    "createdAt": "2025-09-23T18:45:00.000Z",
+    "updatedAt": "2025-09-23T19:15:22.000Z"
+  },
+  "actorId": "user-uuid",
+  "emittedAt": "2025-09-24T20:15:33.121Z"
+}
+```
+
+### objective-created
+- **Emitted When:** A new objective is created via `POST /api/campaigns/:campaignId/objectives`.
+- **Payload:**
+```json
+{
+  "objective": {
+    "id": "objective-uuid",
+    "campaignId": "campaign-uuid",
+    "parentId": null,
+    "title": "Rescue the prisoners",
+    "descriptionMd": "Free the villagers before dawn.",
+    "orderIndex": 0,
+    "isMajor": true,
+    "createdAt": "2025-09-23T18:15:00.000Z",
+    "updatedAt": "2025-09-23T18:15:00.000Z"
+  },
+  "actorId": "user-uuid",
+  "emittedAt": "2025-09-24T20:16:02.004Z"
+}
+```
+
+### objective-updated
+- **Emitted When:** An existing objective is changed through `PUT /api/objectives/:objectiveId`.
+- **Payload:**
+```json
+{
+  "objective": {
+    "id": "objective-uuid",
+    "campaignId": "campaign-uuid",
+    "parentId": null,
+    "title": "Secure the outpost",
+    "orderIndex": 1,
+    "isMajor": false,
+    "updatedAt": "2025-09-24T19:01:11.000Z"
+  },
+  "actorId": "user-uuid",
+  "emittedAt": "2025-09-24T20:18:10.889Z"
+}
+```
+
+### objective-deleted
+- **Emitted When:** `DELETE /api/objectives/:objectiveId` removes an objective tree.
+- **Payload:**
+```json
+{
+  "deletedObjectiveIds": [
+    "objective-uuid",
+    "child-objective-uuid"
+  ],
+  "actorId": "user-uuid",
+  "emittedAt": "2025-09-24T20:20:45.512Z"
+}
+```
+
+### session-focus-updated
+- **Emitted When:** The DM updates a session’s focus via `PUT /api/sessions/:sessionId/focus`.
+- **Payload:**
+```json
+{
+  "sessionId": "session-uuid",
+  "dmFocus": "Track the baron's envoy",
+  "actorId": "user-uuid",
+  "updatedAt": "2025-09-24T20:25:00.412Z"
+}
+```
+
+### session-context-updated
+- **Emitted When:** `PUT /api/sessions/:sessionId/context` appends or replaces DM notes.
+- **Payload:**
+```json
+{
+  "sessionId": "session-uuid",
+  "mode": "append",
+  "hasContext": true,
+  "contextLength": 240,
+  "actorId": "user-uuid",
+  "updatedAt": "2025-09-24T20:26:12.901Z"
+}
+```
+
+### unplanned-encounter-created
+- **Emitted When:** A DM records an ad-hoc encounter through `POST /api/sessions/:sessionId/unplanned-encounter`.
+- **Payload:**
+```json
+{
+  "encounter": {
+    "id": "encounter-uuid",
+    "campaign_id": "campaign-uuid",
+    "session_id": "session-uuid",
+    "location_id": null,
+    "name": "Forest ambush",
+    "description": "A band of raiders surrounds the path.",
+    "type": "combat",
+    "difficulty": "medium",
+    "status": "active",
+    "created_at": "2025-09-24T20:27:44.000Z",
+    "updated_at": "2025-09-24T20:27:44.000Z"
+  },
+  "actorId": "user-uuid",
+  "emittedAt": "2025-09-24T20:27:44.812Z"
+}
+```
+
+### npc-sentiment-adjusted
+- **Emitted When:** `POST /api/npcs/:npcId/sentiment` logs a memory entry.
+- **Payload:**
+```json
+{
+  "memory": {
+    "id": "memory-uuid",
+    "npc_id": "npc-uuid",
+    "campaign_id": "campaign-uuid",
+    "session_id": "session-uuid",
+    "memory_summary": "PCs rescued the merchant",
+    "sentiment": "positive",
+    "trust_delta": 3,
+    "tags": ["gratitude"],
+    "created_at": "2025-09-24T20:28:55.000Z"
+  },
+  "actorId": "user-uuid",
+  "emittedAt": "2025-09-24T20:28:55.337Z"
+}
+```
+
+### npc-teleported
+- **Emitted When:** A DM relocates an NPC via `POST /api/campaigns/:campaignId/teleport/npc`.
+- **Payload:**
+```json
+{
+  "npc": {
+    "npcId": "npc-uuid",
+    "campaignId": "campaign-uuid",
+    "currentLocationId": null,
+    "worldPosition": { "type": "Point", "coordinates": [4321.0, 987.6] }
+  },
+  "mode": "coordinates",
+  "actorId": "user-uuid",
+  "emittedAt": "2025-09-24T20:30:14.209Z"
+}
+```
+
+All realtime events deliberately omit narrative text from server-side logs; consumers should persist any required history on the client if extended auditing is needed.

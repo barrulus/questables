@@ -24,7 +24,16 @@ import {
   RefreshCw
 } from "lucide-react";
 import { useUser } from "../contexts/UserContext";
-import { apiFetch, readErrorMessage, readJsonBody } from "../utils/api-client";
+import {
+  apiFetch,
+  readErrorMessage,
+  readJsonBody,
+  createCampaign,
+  updateCampaign,
+  type CampaignLevelRange,
+  type CreateCampaignRequest,
+  type UpdateCampaignRequest,
+} from "../utils/api-client";
 import {
   Campaign,
   CampaignEditFormState,
@@ -39,13 +48,46 @@ import {
   buildSettingsFormState,
   createEditFormDefaults,
   createSettingsFormDefaults,
+  DEFAULT_LEVEL_RANGE,
 } from "./campaign-shared";
+import { CampaignPrep } from "./campaign-prep";
 
 interface WorldMapSummary {
   id: string;
   name: string;
   description?: string | null;
 }
+
+type NumericInputValue = number | '';
+
+interface LevelRangeInputState {
+  min: NumericInputValue;
+  max: NumericInputValue;
+}
+
+interface CreateCampaignFormState {
+  name: string;
+  description: string;
+  system: string;
+  setting: string;
+  maxPlayers: NumericInputValue;
+  levelRange: LevelRangeInputState;
+  isPublic: boolean;
+  worldMapId: string;
+}
+
+const parseIntegerInput = (value: NumericInputValue): number | null => {
+  if (value === '') {
+    return null;
+  }
+
+  const parsed = typeof value === 'number' ? value : Number.parseInt(value, 10);
+  if (!Number.isFinite(parsed)) {
+    return null;
+  }
+
+  return parsed;
+};
 
 export function CampaignManager() {
   const { user } = useUser();
@@ -59,16 +101,20 @@ export function CampaignManager() {
   
   const [isCreating, setIsCreating] = useState(false);
   const [createLoading, setCreateLoading] = useState(false);
-  const [newCampaign, setNewCampaign] = useState({
+  const NO_WORLD_MAP_VALUE = "__none";
+
+  const createFormDefaults = useCallback((): CreateCampaignFormState => ({
     name: "",
     description: "",
-    system: "D&D 5e",
-    setting: "Fantasy",
+    system: "",
+    setting: "",
     maxPlayers: 6,
-    levelRange: { min: 1, max: 20 },
+    levelRange: { min: DEFAULT_LEVEL_RANGE.min, max: DEFAULT_LEVEL_RANGE.max },
     isPublic: false,
-    worldMapId: '',
-  });
+    worldMapId: NO_WORLD_MAP_VALUE,
+  }), [NO_WORLD_MAP_VALUE]);
+
+  const [newCampaign, setNewCampaign] = useState<CreateCampaignFormState>(createFormDefaults);
   const [editDialogCampaign, setEditDialogCampaign] = useState<Campaign | null>(null);
   const [editForm, setEditForm] = useState<CampaignEditFormState>(() => createEditFormDefaults());
   const [editSaving, setEditSaving] = useState(false);
@@ -127,14 +173,22 @@ export function CampaignManager() {
   }, []);
 
   const openEditDialog = useCallback((campaign: Campaign) => {
+    const nextForm = buildEditFormState(campaign);
     setEditDialogCampaign(campaign);
-    setEditForm(buildEditFormState(campaign));
-  }, []);
+    setEditForm({
+      ...nextForm,
+      description: '',
+      system: '',
+      setting: '',
+      worldMapId: nextForm.worldMapId || NO_WORLD_MAP_VALUE,
+    });
+  }, [NO_WORLD_MAP_VALUE]);
 
   const closeEditDialog = useCallback(() => {
     setEditDialogCampaign(null);
-    setEditForm(createEditFormDefaults());
-  }, []);
+    const defaults = createEditFormDefaults();
+    setEditForm({ ...defaults, worldMapId: NO_WORLD_MAP_VALUE });
+  }, [NO_WORLD_MAP_VALUE, createEditFormDefaults]);
 
   const openSettingsDialog = useCallback((campaign: Campaign) => {
     setSettingsDialogCampaign(campaign);
@@ -223,93 +277,120 @@ export function CampaignManager() {
   }, [loadWorldMaps]);
 
   useEffect(() => {
-    if (worldMaps.length === 0) {
-      return;
+    setNewCampaign((prev) => {
+      if (worldMaps.length === 0) {
+        return prev.worldMapId === NO_WORLD_MAP_VALUE ? prev : { ...prev, worldMapId: NO_WORLD_MAP_VALUE };
+      }
+
+      const hasMatch = worldMaps.some((map) => map.id === prev.worldMapId);
+      if (hasMatch || prev.worldMapId === NO_WORLD_MAP_VALUE) {
+        return prev;
+      }
+
+      return { ...prev, worldMapId: NO_WORLD_MAP_VALUE };
+    });
+  }, [worldMaps, NO_WORLD_MAP_VALUE]);
+
+  const buildLevelRange = useCallback((range: LevelRangeInputState): CampaignLevelRange | null => {
+    if (range.min === '' || range.max === '') {
+      return null;
     }
-    setNewCampaign((prev) => (
-      prev.worldMapId || worldMaps.length === 0
-        ? prev
-        : { ...prev, worldMapId: worldMaps[0].id }
-    ));
-  }, [worldMaps]);
+
+    const minValue = Number(range.min);
+    const maxValue = Number(range.max);
+
+    if (!Number.isFinite(minValue) || !Number.isFinite(maxValue)) {
+      return null;
+    }
+
+    const min = clampLevelValue(minValue);
+    const max = clampLevelValue(maxValue);
+
+    return { min, max };
+  }, []);
 
   const handleCreateCampaign = useCallback(async () => {
-    if (!user || !newCampaign.name.trim()) {
-      toast.error("Please provide a campaign name");
+    if (!user) {
+      toast.error("You need to be signed in to create a campaign.");
       return;
     }
+
+    const trimmedName = newCampaign.name.trim();
+    if (!trimmedName) {
+      toast.error("Campaign name is required.");
+      return;
+    }
+
+    const maxPlayersValue = parseIntegerInput(newCampaign.maxPlayers);
+    if (
+      maxPlayersValue === null ||
+      !Number.isInteger(maxPlayersValue) ||
+      maxPlayersValue < 1 ||
+      maxPlayersValue > 20
+    ) {
+      toast.error("Max players must be between 1 and 20.");
+      return;
+    }
+
+    const levelRange = buildLevelRange(newCampaign.levelRange);
+    if (!levelRange) {
+      toast.error("Provide both minimum and maximum levels.");
+      return;
+    }
+
+    if (
+      levelRange.min < 1 ||
+      levelRange.min > 20 ||
+      levelRange.max < 1 ||
+      levelRange.max > 20
+    ) {
+      toast.error("Levels must be between 1 and 20.");
+      return;
+    }
+
+    if (levelRange.min > levelRange.max) {
+      toast.error("Minimum level cannot exceed maximum level.");
+      return;
+    }
+
+    const description = newCampaign.description.trim();
+    const system = newCampaign.system.trim();
+    const setting = newCampaign.setting.trim();
+    const worldMapId = newCampaign.worldMapId === NO_WORLD_MAP_VALUE ? undefined : newCampaign.worldMapId;
+
+    const payload: CreateCampaignRequest = {
+      name: trimmedName,
+      maxPlayers: maxPlayersValue,
+      levelRange,
+      isPublic: newCampaign.isPublic,
+      ...(description ? { description } : {}),
+      ...(system ? { system } : {}),
+      ...(setting ? { setting } : {}),
+      ...(worldMapId ? { worldMapId } : {}),
+    };
 
     try {
       setCreateLoading(true);
-
-      const maxPlayers = Number(newCampaign.maxPlayers);
-      if (!Number.isInteger(maxPlayers) || maxPlayers < 1 || maxPlayers > 20) {
-        toast.error("Max players must be between 1 and 20.");
-        setCreateLoading(false);
-        return;
-      }
-
-      const minLevel = Number(newCampaign.levelRange.min);
-      const maxLevel = Number(newCampaign.levelRange.max);
-      const validLevels = Number.isInteger(minLevel) && Number.isInteger(maxLevel) && minLevel >= 1 && maxLevel <= 20 && minLevel <= maxLevel;
-      if (!validLevels) {
-        toast.error("Provide a level range between 1 and 20 (min cannot exceed max).");
-        setCreateLoading(false);
-        return;
-      }
-
-      const response = await apiFetch('/api/campaigns', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          name: newCampaign.name,
-          description: newCampaign.description,
-          dmUserId: user.id,
-          system: newCampaign.system,
-          setting: newCampaign.setting,
-          status: 'recruiting',
-          maxPlayers,
-          levelRange: newCampaign.levelRange,
-          isPublic: newCampaign.isPublic,
-          worldMapId: newCampaign.worldMapId || null,
-        })
-      });
-
-      if (response.status === 401) {
-        toast.error("Your session has expired. Please sign in again to create campaigns.");
-        setCreateLoading(false);
-        return;
-      }
-
-      if (!response.ok) {
-        throw new Error(await readErrorMessage(response, 'Failed to create campaign'));
-      }
-
-      const { campaign } = await readJsonBody<{ campaign: Campaign }>(response);
-
-      // Pull fresh data to ensure local state matches backend and reselect the new campaign
-      lastSelectedCampaignIdRef.current = campaign.id;
+      const createdCampaign = await createCampaign(payload);
+      lastSelectedCampaignIdRef.current = createdCampaign.id;
       await loadCampaignData({ mode: "refresh" });
-      
-      // Reset form
-      setNewCampaign({
-        name: "",
-        description: "",
-        system: "D&D 5e",
-        setting: "Fantasy",
-        maxPlayers: 6,
-        levelRange: { min: 1, max: 20 },
-        isPublic: false,
-        worldMapId: worldMaps[0]?.id ?? '',
-      });
+      setNewCampaign(createFormDefaults());
       setIsCreating(false);
       toast.success("Campaign created successfully!");
-    } catch (err) {
-      toast.error(err instanceof Error ? err.message : 'Failed to create campaign');
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Failed to create campaign';
+      toast.error(message);
     } finally {
       setCreateLoading(false);
     }
-  }, [user, newCampaign, loadCampaignData, worldMaps]);
+  }, [
+    user,
+    newCampaign,
+    buildLevelRange,
+    NO_WORLD_MAP_VALUE,
+    createFormDefaults,
+    loadCampaignData,
+  ]);
 
   const handleUpdateCampaign = useCallback(async () => {
     if (!editDialogCampaign) {
@@ -327,87 +408,65 @@ export function CampaignManager() {
       return;
     }
 
-    const maxPlayers = Number(editForm.maxPlayers);
-    if (!Number.isInteger(maxPlayers) || maxPlayers < 1 || maxPlayers > 20) {
+    const maxPlayersValue = parseIntegerInput(editForm.maxPlayers);
+    if (
+      maxPlayersValue === null ||
+      !Number.isInteger(maxPlayersValue) ||
+      maxPlayersValue < 1 ||
+      maxPlayersValue > 20
+    ) {
       toast.error("Max players must be an integer between 1 and 20.");
       return;
     }
 
-    const minLevel = clampLevelValue(editForm.minLevel);
-    const maxLevel = clampLevelValue(editForm.maxLevel);
-    if (minLevel > maxLevel) {
+    const levelRange = buildLevelRange({ min: editForm.minLevel, max: editForm.maxLevel });
+    if (!levelRange) {
+      toast.error("Provide both minimum and maximum levels.");
+      return;
+    }
+
+    if (
+      levelRange.min < 1 ||
+      levelRange.min > 20 ||
+      levelRange.max < 1 ||
+      levelRange.max > 20
+    ) {
+      toast.error("Levels must be between 1 and 20.");
+      return;
+    }
+
+    if (levelRange.min > levelRange.max) {
       toast.error("Minimum level cannot exceed maximum level.");
       return;
     }
 
-    const defaultEditForm = createEditFormDefaults();
-
-    if (editForm.status === 'active' && !editForm.worldMapId) {
+    const worldMapId = editForm.worldMapId === NO_WORLD_MAP_VALUE ? null : editForm.worldMapId || null;
+    if (editForm.status === 'active' && !worldMapId) {
       toast.error('Select a world map before activating the campaign.');
       return;
     }
 
-    const payload = {
+    const payload: UpdateCampaignRequest = {
       name: trimmedName,
-      description: editForm.description,
-      system: editForm.system.trim() || defaultEditForm.system,
-      setting: editForm.setting,
+      description: editForm.description.trim() ? editForm.description.trim() : null,
+      system: editForm.system.trim() || null,
+      setting: editForm.setting.trim() || null,
       status: editForm.status,
-      max_players: maxPlayers,
-      level_range: { min: minLevel, max: maxLevel },
-      world_map_id: editForm.worldMapId || null,
+      maxPlayers: maxPlayersValue,
+      levelRange,
+      worldMapId,
     };
 
     try {
       setEditSaving(true);
-      const response = await apiFetch(`/api/campaigns/${editDialogCampaign.id}`, {
-        method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(payload),
-      });
-
-      if (response.status === 401) {
-        toast.error("Your session has expired. Please sign in again.");
-        setEditSaving(false);
-        return;
-      }
-
-      if (!response.ok) {
-        throw new Error(await readErrorMessage(response, 'Failed to update campaign'));
-      }
-
-      const mergeUpdate = (campaign: Campaign): Campaign => ({
-        ...campaign,
-        name: payload.name,
-        description: payload.description,
-        system: payload.system,
-        setting: payload.setting,
-        status: payload.status,
-        max_players: payload.max_players,
-        level_range: payload.level_range,
-        world_map_id: payload.world_map_id,
-      });
-
-      setDmCampaigns((campaigns) => campaigns.map((campaign) =>
-        campaign.id === editDialogCampaign.id ? mergeUpdate(campaign) : campaign
-      ));
-      setPlayerCampaigns((campaigns) => campaigns.map((campaign) =>
-        campaign.id === editDialogCampaign.id ? mergeUpdate(campaign) : campaign
-      ));
-      setPublicCampaigns((campaigns) => campaigns.map((campaign) =>
-        campaign.id === editDialogCampaign.id ? mergeUpdate(campaign) : campaign
-      ));
-      setSelectedCampaign((selected) =>
-        selected && selected.id === editDialogCampaign.id ? mergeUpdate(selected) : selected
-      );
-
+      await updateCampaign(editDialogCampaign.id, payload);
       lastSelectedCampaignIdRef.current = editDialogCampaign.id;
       await loadCampaignData({ mode: 'refresh' });
-
       toast.success("Campaign details updated.");
       closeEditDialog();
-    } catch (err) {
-      toast.error(err instanceof Error ? err.message : 'Failed to update campaign');
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Failed to update campaign';
+      toast.error(message);
     } finally {
       setEditSaving(false);
     }
@@ -422,6 +481,8 @@ export function CampaignManager() {
     editForm.status,
     editForm.system,
     editForm.worldMapId,
+    buildLevelRange,
+    NO_WORLD_MAP_VALUE,
     user,
     loadCampaignData,
     closeEditDialog,
@@ -437,63 +498,25 @@ export function CampaignManager() {
       return;
     }
 
-    const payload = {
-      is_public: settingsForm.isPublic,
-      allow_spectators: settingsForm.allowSpectators,
-      auto_approve_join_requests: settingsForm.autoApproveJoinRequests,
-      experience_type: settingsForm.experienceType,
-      resting_rules: settingsForm.restingRules,
-      death_save_rules: settingsForm.deathSaveRules,
+    const payload: UpdateCampaignRequest = {
+      isPublic: settingsForm.isPublic,
+      allowSpectators: settingsForm.allowSpectators,
+      autoApproveJoinRequests: settingsForm.autoApproveJoinRequests,
+      experienceType: settingsForm.experienceType,
+      restingRules: settingsForm.restingRules,
+      deathSaveRules: settingsForm.deathSaveRules,
     };
 
     try {
       setSettingsSaving(true);
-      const response = await apiFetch(`/api/campaigns/${settingsDialogCampaign.id}`, {
-        method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(payload),
-      });
-
-      if (response.status === 401) {
-        toast.error("Your session has expired. Please sign in again.");
-        setSettingsSaving(false);
-        return;
-      }
-
-      if (!response.ok) {
-        throw new Error(await readErrorMessage(response, 'Failed to update campaign settings'));
-      }
-
-      const mergeUpdate = (campaign: Campaign): Campaign => ({
-        ...campaign,
-        is_public: payload.is_public,
-        allow_spectators: payload.allow_spectators,
-        auto_approve_join_requests: payload.auto_approve_join_requests,
-        experience_type: payload.experience_type,
-        resting_rules: payload.resting_rules,
-        death_save_rules: payload.death_save_rules,
-      });
-
-      setDmCampaigns((campaigns) => campaigns.map((campaign) =>
-        campaign.id === settingsDialogCampaign.id ? mergeUpdate(campaign) : campaign
-      ));
-      setPlayerCampaigns((campaigns) => campaigns.map((campaign) =>
-        campaign.id === settingsDialogCampaign.id ? mergeUpdate(campaign) : campaign
-      ));
-      setPublicCampaigns((campaigns) => campaigns.map((campaign) =>
-        campaign.id === settingsDialogCampaign.id ? mergeUpdate(campaign) : campaign
-      ));
-      setSelectedCampaign((selected) =>
-        selected && selected.id === settingsDialogCampaign.id ? mergeUpdate(selected) : selected
-      );
-
+      await updateCampaign(settingsDialogCampaign.id, payload);
       lastSelectedCampaignIdRef.current = settingsDialogCampaign.id;
       await loadCampaignData({ mode: 'refresh' });
-
       toast.success("Campaign settings updated.");
       closeSettingsDialog();
-    } catch (err) {
-      toast.error(err instanceof Error ? err.message : 'Failed to update campaign settings');
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Failed to update campaign settings';
+      toast.error(message);
     } finally {
       setSettingsSaving(false);
     }
@@ -691,9 +714,7 @@ export function CampaignManager() {
                         <SelectValue placeholder="Select a world map" />
                       </SelectTrigger>
                       <SelectContent>
-                        <SelectItem value={undefined as unknown as string} disabled>
-                          No map yet (set later)
-                        </SelectItem>
+                        <SelectItem value={NO_WORLD_MAP_VALUE}>No world map (set later)</SelectItem>
                         {worldMaps.map((map) => (
                           <SelectItem key={map.id} value={map.id}>
                             {map.name}
@@ -717,11 +738,19 @@ export function CampaignManager() {
                       max="20"
                       value={newCampaign.maxPlayers}
                       onChange={(e) => {
-                        const value = parseInt(e.target.value, 10);
-                        setNewCampaign(prev => ({
-                          ...prev,
-                          maxPlayers: Number.isNaN(value) ? prev.maxPlayers : value
-                        }));
+                        const raw = e.target.value;
+                        if (raw === '') {
+                          setNewCampaign((prev) => ({ ...prev, maxPlayers: '' }));
+                          return;
+                        }
+
+                        const parsed = Number.parseInt(raw, 10);
+                        if (Number.isNaN(parsed)) {
+                          return;
+                        }
+
+                        const clamped = Math.min(20, Math.max(1, parsed));
+                        setNewCampaign((prev) => ({ ...prev, maxPlayers: clamped }));
                       }}
                     />
                   </div>
@@ -734,13 +763,25 @@ export function CampaignManager() {
                       max="20"
                       value={newCampaign.levelRange.min}
                       onChange={(e) => {
-                        const value = parseInt(e.target.value, 10);
-                        if (!Number.isNaN(value)) {
-                          setNewCampaign(prev => ({ 
-                            ...prev, 
-                            levelRange: { ...prev.levelRange, min: Math.max(1, Math.min(20, value)) }
+                        const raw = e.target.value;
+                        if (raw === '') {
+                          setNewCampaign((prev) => ({
+                            ...prev,
+                            levelRange: { ...prev.levelRange, min: '' },
                           }));
+                          return;
                         }
+
+                        const parsed = Number.parseInt(raw, 10);
+                        if (Number.isNaN(parsed)) {
+                          return;
+                        }
+
+                        const clamped = Math.max(1, Math.min(20, parsed));
+                        setNewCampaign((prev) => ({
+                          ...prev,
+                          levelRange: { ...prev.levelRange, min: clamped },
+                        }));
                       }}
                     />
                   </div>
@@ -753,25 +794,40 @@ export function CampaignManager() {
                       max="20"
                       value={newCampaign.levelRange.max}
                       onChange={(e) => {
-                        const value = parseInt(e.target.value, 10);
-                        if (!Number.isNaN(value)) {
-                          setNewCampaign(prev => ({ 
-                            ...prev, 
-                            levelRange: { ...prev.levelRange, max: Math.max(1, Math.min(20, value)) }
+                        const raw = e.target.value;
+                        if (raw === '') {
+                          setNewCampaign((prev) => ({
+                            ...prev,
+                            levelRange: { ...prev.levelRange, max: '' },
                           }));
+                          return;
                         }
+
+                        const parsed = Number.parseInt(raw, 10);
+                        if (Number.isNaN(parsed)) {
+                          return;
+                        }
+
+                        const clamped = Math.max(1, Math.min(20, parsed));
+                        setNewCampaign((prev) => ({
+                          ...prev,
+                          levelRange: { ...prev.levelRange, max: clamped },
+                        }));
                       }}
                     />
                   </div>
                 </div>
-                <div className="flex items-center space-x-2">
-                  <input
-                    type="checkbox"
+                <div className="flex items-center justify-between rounded-md border p-3">
+                  <div>
+                    <Label htmlFor="isPublic">Public Campaign</Label>
+                    <p className="text-xs text-muted-foreground">Allow other players to discover and request to join.</p>
+                  </div>
+                  <Switch
                     id="isPublic"
                     checked={newCampaign.isPublic}
-                    onChange={(e) => setNewCampaign(prev => ({ ...prev, isPublic: e.target.checked }))}
+                    onCheckedChange={(checked) => setNewCampaign((prev) => ({ ...prev, isPublic: checked }))}
+                    aria-label="Toggle public campaign"
                   />
-                  <Label htmlFor="isPublic">Make campaign public (others can join)</Label>
                 </div>
               </div>
               <div className="flex justify-end gap-2 pt-4">
@@ -913,7 +969,7 @@ export function CampaignManager() {
             </div>
           </div>
 
-          <div className="flex-1 p-4">
+          <div className="flex-1 p-4 space-y-4">
             <Card>
               <CardHeader>
                 <CardTitle className="flex items-center gap-2">
@@ -958,6 +1014,8 @@ export function CampaignManager() {
                 </div>
               </CardContent>
             </Card>
+
+            <CampaignPrep campaign={selectedCampaign} />
           </div>
         </div>
       )}
@@ -1032,7 +1090,7 @@ export function CampaignManager() {
                 <p className="text-sm text-muted-foreground">Loading world maps…</p>
               ) : worldMaps.length > 0 ? (
                 <Select
-                  value={editForm.worldMapId || undefined}
+                  value={editForm.worldMapId || NO_WORLD_MAP_VALUE}
                   onValueChange={(value) =>
                     setEditForm((prev) => ({ ...prev, worldMapId: value }))
                   }
@@ -1041,9 +1099,7 @@ export function CampaignManager() {
                     <SelectValue placeholder="Select a world map" />
                   </SelectTrigger>
                   <SelectContent>
-                    <SelectItem value={undefined as unknown as string} disabled>
-                      No map yet (set later)
-                    </SelectItem>
+                    <SelectItem value={NO_WORLD_MAP_VALUE}>No world map (set later)</SelectItem>
                     {worldMaps.map((map) => (
                       <SelectItem key={map.id} value={map.id}>
                         {map.name}
@@ -1088,11 +1144,18 @@ export function CampaignManager() {
                   max="20"
                   value={editForm.maxPlayers}
                   onChange={(event) => {
-                    const raw = parseInt(event.target.value, 10);
-                    if (Number.isNaN(raw)) {
+                    const raw = event.target.value;
+                    if (raw === '') {
+                      setEditForm((prev) => ({ ...prev, maxPlayers: '' }));
                       return;
                     }
-                    const clamped = Math.min(20, Math.max(1, raw));
+
+                    const parsed = Number.parseInt(raw, 10);
+                    if (Number.isNaN(parsed)) {
+                      return;
+                    }
+
+                    const clamped = Math.min(20, Math.max(1, parsed));
                     setEditForm((prev) => ({ ...prev, maxPlayers: clamped }));
                   }}
                 />
@@ -1106,15 +1169,27 @@ export function CampaignManager() {
                   max="20"
                   value={editForm.minLevel}
                   onChange={(event) => {
-                    const raw = parseInt(event.target.value, 10);
-                    if (Number.isNaN(raw)) {
+                    const raw = event.target.value;
+                    if (raw === '') {
+                      setEditForm((prev) => ({
+                        ...prev,
+                        minLevel: '',
+                        maxLevel: prev.maxLevel,
+                      }));
                       return;
                     }
-                    const clamped = clampLevelValue(raw);
+
+                    const parsed = Number.parseInt(raw, 10);
+                    if (Number.isNaN(parsed)) {
+                      return;
+                    }
+
+                    const clamped = clampLevelValue(parsed);
                     setEditForm((prev) => ({
                       ...prev,
                       minLevel: clamped,
-                      maxLevel: prev.maxLevel < clamped ? clamped : prev.maxLevel,
+                      maxLevel:
+                        prev.maxLevel !== '' && prev.maxLevel < clamped ? clamped : prev.maxLevel,
                     }));
                   }}
                 />
@@ -1128,14 +1203,25 @@ export function CampaignManager() {
                   max="20"
                   value={editForm.maxLevel}
                   onChange={(event) => {
-                    const raw = parseInt(event.target.value, 10);
-                    if (Number.isNaN(raw)) {
+                    const raw = event.target.value;
+                    if (raw === '') {
+                      setEditForm((prev) => ({
+                        ...prev,
+                        maxLevel: '',
+                      }));
                       return;
                     }
-                    const clamped = clampLevelValue(raw);
+
+                    const parsed = Number.parseInt(raw, 10);
+                    if (Number.isNaN(parsed)) {
+                      return;
+                    }
+
+                    const clamped = clampLevelValue(parsed);
                     setEditForm((prev) => ({
                       ...prev,
-                      maxLevel: clamped < prev.minLevel ? prev.minLevel : clamped,
+                      maxLevel:
+                        prev.minLevel !== '' && clamped < prev.minLevel ? prev.minLevel : clamped,
                     }));
                   }}
                 />
