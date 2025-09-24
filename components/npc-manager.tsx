@@ -43,6 +43,8 @@ interface NPC {
   updated_at: string;
 }
 
+const NO_LOCATION_SELECT_VALUE = '__no_location__';
+
 interface NPCStats {
   armor_class: number;
   hit_points: { max: number; current: number };
@@ -659,14 +661,19 @@ export default function NPCManager({ campaignId, isDM }: { campaignId: string; i
                 <div>
                   <Label>Location</Label>
                   <Select
-                    value={newNPC.current_location_id || ''}
-                    onValueChange={(value) => setNewNPC(prev => ({ ...prev, current_location_id: value }))}
+                    value={newNPC.current_location_id ?? NO_LOCATION_SELECT_VALUE}
+                    onValueChange={(value) =>
+                      setNewNPC((prev) => ({
+                        ...prev,
+                        current_location_id: value === NO_LOCATION_SELECT_VALUE ? null : value,
+                      }))
+                    }
                   >
                     <SelectTrigger>
                       <SelectValue placeholder="Select location" />
                     </SelectTrigger>
                     <SelectContent>
-                      <SelectItem value="">No specific location</SelectItem>
+                      <SelectItem value={NO_LOCATION_SELECT_VALUE}>No specific location</SelectItem>
                       {locations.map(location => (
                         <SelectItem key={location.id} value={location.id}>
                           {location.name}

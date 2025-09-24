@@ -7,7 +7,7 @@ const typeInstruction = {
   [NARRATIVE_TYPES.NPC_DIALOGUE]: 'Write dialogue for the requested NPC that reflects their personality, recent history with the party, and relationship status. Include stage direction or tone only when helpful.',
   [NARRATIVE_TYPES.ACTION_NARRATIVE]: 'Narrate the action outcome with dramatic flair appropriate to the success level. Mention mechanical consequences, status changes, and follow-up hooks the DM can offer.',
   [NARRATIVE_TYPES.QUEST]: 'Outline a quest using the provided campaign state. Include objective, key obstacles, and rewards drawn from existing factions or locations. Do not fabricate unrelated plotlines.',
-  [NARRATIVE_TYPES.OBJECTIVE_DESCRIPTION]: 'Draft an evocative Markdown description for the specified objective. Keep to 2-3 tight paragraphs, reference only people/places present in the context, and offer actionable hooks the DM can use immediately.',
+  [NARRATIVE_TYPES.OBJECTIVE_DESCRIPTION]: 'Draft an evocative Markdown description for the specified objective. Keep to 2-3 tight paragraphs, reference only people/places present in the context, and offer actionable hooks the DM can use immediately. Hard limit: 700 characters total—stop before exceeding this limit. Output final Markdown only; do not include analysis, explanations, or <think> sections.',
   [NARRATIVE_TYPES.OBJECTIVE_TREASURE]: 'List authentic treasure rewards for the specified objective. Provide 2-4 bullet items with short justifications and mechanical notes; do not invent items that contradict the campaign context.',
   [NARRATIVE_TYPES.OBJECTIVE_COMBAT]: 'Summarise likely combat encounters for the specified objective. Provide 1-2 markdown sections covering enemy composition, tactics, and environmental hazards strictly derived from the context.',
   [NARRATIVE_TYPES.OBJECTIVE_NPCS]: 'List notable NPCs relevant to the specified objective. Use bullet points with name, disposition, and a sentence of guidance. Only mention NPCs present in the supplied context.',
@@ -141,6 +141,7 @@ const buildSystemPrompt = ({ type, providerConfig }) => {
     providerLine,
     'Follow the context exactly—do not invent characters, locations, or events that are not supplied.',
     'Keep responses concise but evocative and respect the Zero-Dummy policy (no placeholders, no promises about unavailable services).',
+    'Do not emit analysis, scratch work, or `<think>` sections—return only the finalized response matching the instructions.',
   ].join('\n');
 };
 

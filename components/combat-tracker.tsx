@@ -231,6 +231,8 @@ const generateUuid = () => {
   throw new Error("Secure random UUID generation is unavailable in this environment.");
 };
 
+const NO_CHARACTER_SELECT_VALUE = "__no_character__";
+
 export default function CombatTracker({
   campaignId,
   sessionId,
@@ -1124,8 +1126,12 @@ export default function CombatTracker({
                       <div className="space-y-2">
                         <label className="text-sm font-medium">Campaign Character</label>
                         <Select
-                          value={newParticipantCharacterId ?? ""}
-                          onValueChange={(value) => setNewParticipantCharacterId(value || null)}
+                          value={newParticipantCharacterId ?? NO_CHARACTER_SELECT_VALUE}
+                          onValueChange={(value) =>
+                            setNewParticipantCharacterId(
+                              value === NO_CHARACTER_SELECT_VALUE ? null : value,
+                            )
+                          }
                           disabled={participantSubmitting || loadingCharacters}
                         >
                           <SelectTrigger>
@@ -1133,7 +1139,7 @@ export default function CombatTracker({
                           </SelectTrigger>
                           <SelectContent>
                             {availableCharacters.length === 0 && !loadingCharacters ? (
-                              <SelectItem value="" disabled>
+                              <SelectItem value={NO_CHARACTER_SELECT_VALUE} disabled>
                                 No characters available
                               </SelectItem>
                             ) : (

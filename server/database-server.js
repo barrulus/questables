@@ -1301,6 +1301,13 @@ const sanitizeAssistFocus = (value) => {
   return trimmed.length > 0 ? trimmed : null;
 };
 
+const stripThinkTags = (value) => {
+  if (typeof value !== 'string') {
+    return value;
+  }
+  return value.replace(/<think>[\s\S]*?<\/think>/gi, '').trim();
+};
+
 const fetchNpcWithCampaign = async (client, npcId) => {
   const { rows } = await client.query(
     `SELECT n.*, c.dm_user_id
@@ -1390,7 +1397,7 @@ const createObjectiveAssistHandler = (fieldKey) => async (req, res) => {
       },
     });
 
-    const generatedContent = (generation.result?.content || '').trim();
+    const generatedContent = stripThinkTags(generation.result?.content || '');
     if (!generatedContent) {
       throw new LLMServiceError('LLM returned empty content for objective assist', {
         type: 'objective_assist_empty',
@@ -3683,13 +3690,14 @@ app.put('/api/campaigns/:campaignId/spawn', requireAuth, async (req, res) => {
          (campaign_id, name, note, world_position, is_default, created_by, updated_by)
        VALUES
          ($1, $2, $3, ST_SetSRID(ST_MakePoint($4, $5), 0), true, $6, $6)
-       ON CONFLICT ON CONSTRAINT uq_campaign_spawns_default
+       ON CONFLICT (campaign_id) WHERE is_default = true
        DO UPDATE SET
          name = EXCLUDED.name,
          note = EXCLUDED.note,
          world_position = EXCLUDED.world_position,
          updated_at = NOW(),
-         updated_by = EXCLUDED.updated_by
+         updated_by = EXCLUDED.updated_by,
+         is_default = true
        RETURNING id, campaign_id, name, note, is_default,
                  ST_AsGeoJSON(world_position)::json AS geometry,
                  created_at, updated_at`,

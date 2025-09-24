@@ -96,6 +96,7 @@ interface MarkerOption {
 }
 
 const ROOT_PARENT_VALUE = "__root__";
+const CLEAR_LINK_VALUE = "__clear__";
 
 type AssistUiState = {
   pending: boolean;
@@ -631,15 +632,17 @@ const ObjectiveDialog = ({
                       Burgs are fetched from the live `maps_burgs` dataset. Select one to anchor the objective.
                     </Label>
                     <Select
-                      value={values.locationBurgId ?? ""}
-                      onValueChange={(value) => onChange({ ...values, locationBurgId: value || null })}
+                      value={values.locationBurgId ?? CLEAR_LINK_VALUE}
+                      onValueChange={(value) =>
+                        onChange({ ...values, locationBurgId: value === CLEAR_LINK_VALUE ? null : value })
+                      }
                       disabled={disabled}
                     >
                       <SelectTrigger id="objective-burg">
                         <SelectValue placeholder="Select burg" />
                       </SelectTrigger>
                       <SelectContent>
-                        <SelectItem value="">Clear burg link</SelectItem>
+                        <SelectItem value={CLEAR_LINK_VALUE}>Clear burg link</SelectItem>
                         {burgOptions.map((burg) => (
                           <SelectItem key={burg.id} value={burg.id}>
                             {burg.name}
@@ -656,15 +659,17 @@ const ObjectiveDialog = ({
                       Markers are loaded live from PostGIS. Choose one to link this objective.
                     </Label>
                     <Select
-                      value={values.locationMarkerId ?? ""}
-                      onValueChange={(value) => onChange({ ...values, locationMarkerId: value || null })}
+                      value={values.locationMarkerId ?? CLEAR_LINK_VALUE}
+                      onValueChange={(value) =>
+                        onChange({ ...values, locationMarkerId: value === CLEAR_LINK_VALUE ? null : value })
+                      }
                       disabled={disabled}
                     >
                       <SelectTrigger id="objective-marker">
                         <SelectValue placeholder="Select marker" />
                       </SelectTrigger>
                       <SelectContent>
-                        <SelectItem value="">Clear marker link</SelectItem>
+                        <SelectItem value={CLEAR_LINK_VALUE}>Clear marker link</SelectItem>
                         {markerOptions.map((marker) => (
                           <SelectItem key={marker.id} value={marker.id}>
                             {marker.label}

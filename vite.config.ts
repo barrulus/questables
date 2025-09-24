@@ -70,7 +70,7 @@ export default defineConfig(({ mode }) => {
     build: {
       outDir: 'dist',
       sourcemap: process.env.NODE_ENV === 'development',
-      
+
       // Code splitting optimization
       rollupOptions: {
         output: {
@@ -82,14 +82,14 @@ export default defineConfig(({ mode }) => {
           },
           // Optimize chunk file names
           chunkFileNames: (chunkInfo) => {
-            const facadeModuleId = chunkInfo.facadeModuleId ? 
-              chunkInfo.facadeModuleId.split('/').pop()?.replace('.tsx', '').replace('.ts', '') : 
+            const facadeModuleId = chunkInfo.facadeModuleId ?
+              chunkInfo.facadeModuleId.split('/').pop()?.replace('.tsx', '').replace('.ts', '') :
               'chunk';
             return `assets/${facadeModuleId}-[hash].js`;
           }
         }
       },
-      
+
       // Compression and minification
       minify: 'terser',
       terserOptions: {
@@ -98,13 +98,13 @@ export default defineConfig(({ mode }) => {
           drop_debugger: process.env.NODE_ENV === 'production'
         }
       },
-      
+
       // Bundle size limits
       chunkSizeWarningLimit: 1000,
-      
+
       // Asset optimization
       assetsInlineLimit: 4096, // 4kb
-      
+
       // Disable CSS code splitting for better performance
       cssCodeSplit: false
     },
@@ -114,7 +114,7 @@ export default defineConfig(({ mode }) => {
       https: httpsOptions,
       hmr: hmrConfig,
       watch: {
-        ignored: ['**/map_data/**'],
+        ignored: ['**/map_data/**','**/public/**'],
       },
     },
     define: {

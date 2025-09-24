@@ -89,6 +89,41 @@ export class EnhancedLLMProvider {
     });
   }
 
+  async generateObjectiveDescription(/* options */) {
+    throw new LLMProviderError('Provider does not implement objective description assists', {
+      provider: this.name,
+      code: 'NOT_IMPLEMENTED',
+    });
+  }
+
+  async generateObjectiveTreasure(/* options */) {
+    throw new LLMProviderError('Provider does not implement objective treasure assists', {
+      provider: this.name,
+      code: 'NOT_IMPLEMENTED',
+    });
+  }
+
+  async generateObjectiveCombat(/* options */) {
+    throw new LLMProviderError('Provider does not implement objective combat assists', {
+      provider: this.name,
+      code: 'NOT_IMPLEMENTED',
+    });
+  }
+
+  async generateObjectiveNPCs(/* options */) {
+    throw new LLMProviderError('Provider does not implement objective NPC assists', {
+      provider: this.name,
+      code: 'NOT_IMPLEMENTED',
+    });
+  }
+
+  async generateObjectiveRumours(/* options */) {
+    throw new LLMProviderError('Provider does not implement objective rumour assists', {
+      provider: this.name,
+      code: 'NOT_IMPLEMENTED',
+    });
+  }
+
   /**
    * Optional health check hook. Providers can override.
    */

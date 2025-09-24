@@ -714,6 +714,7 @@ Always append new entries; do not erase or rewrite previous log items except to 
   - Applied server responses back into the active dialog and objective tree only after confirmation, keeping unsaved fields intact while refreshing the canonical record (`components/objectives-panel.tsx:1324-1416`).
   - Added Jest coverage to validate both the successful assist flow and rate-limit feedback so UI behavior mirrors the documented contract (`tests/objectives-panel.test.tsx:286-344`).
   - Follow-up (2025-09-23): Revalidated the assist flow end-to-end against the live client utilities; no code changes required after confirming pending/error states still mirror backend responses (`components/objectives-panel.tsx:1324-1416`, `utils/api-client.ts:696-724`).
+  - Follow-up (2025-09-24): Extended the enhanced LLM service and Ollama provider to handle the `objective_*` narrative types so assists no longer return "Unsupported narrative type" (`server/llm/enhanced-llm-service.js:332-362`, `server/llm/provider-registry.js:63-104`, `server/llm/providers/ollama-provider.js:69-103`).
 - **Cleanups:** Connected labels to textareas with explicit `htmlFor` bindings and surfaced an assist-disabled notice during creation to avoid silent button stalls (`components/objectives-panel.tsx:332-391`).
 - **Documentation Updates:** No changes required; `API_DOCUMENTATION.md:906-977` already documents the assist request/response contract exercised here.
 - **Tests & Verification:**
@@ -721,7 +722,50 @@ Always append new entries; do not erase or rewrite previous log items except to 
   - `npx eslint components/objectives-panel.tsx tests/objectives-panel.test.tsx --ext ts,tsx`
   - `2025-09-23` — `npm test -- --runTestsByPath tests/objectives-panel.test.tsx --runInBand`
   - `2025-09-23` — `npx eslint components/objectives-panel.tsx utils/api-client.ts --ext ts,tsx`
+  - `npx eslint server/llm/enhanced-llm-service.js server/llm/provider-registry.js server/llm/providers/ollama-provider.js --ext js`
 - **Remaining Gaps / Blockers:** The frontend still lacks a dedicated analytics pipeline, so assist usage telemetry cannot yet be emitted; coordinate with observability owners once instrumentation is available.
+
+## Maintenance – Campaign Objectives Schema Fix
+- **Date:** 2025-09-24
+- **Engineer(s):** Codex Agent
+- **Work Done:**
+  - Separated the `combat_md` and `is_major` columns in the `campaign_objectives` table definition to resolve the `syntax error at or near "TEXT"` raised on server boot (`database/schema.sql:368-394`).
+- **Tests & Verification:**
+  - `PGPASSWORD=*** psql -h localhost -p 5432 -U barrulus -d questables -f database/schema.sql`
+- **Remaining Gaps / Blockers:** None; schema now loads cleanly.
+
+## Maintenance – Campaign Spawn Upsert Fix
+- **Date:** 2025-09-24
+- **Engineer(s):** Codex Agent
+- **Work Done:**
+  - Updated the spawn upsert query to target the partial unique index with an explicit `(campaign_id) WHERE is_default = true` conflict clause, avoiding reliance on a missing constraint name and restoring DM spawn saves (`server/database-server.js:3666-3692`).
+- **Tests & Verification:**
+  - `curl -k -X PUT https://quixote.tail3f19fe.ts.net:3001/api/campaigns/f2ecd449-f4bf-46ee-83ac-a8412fb9c87d/spawn -H 'Authorization: Bearer ***' -H 'Content-Type: application/json' -d '{"position":{"x":123.45,"y":67.89},"note":"GM set via API"}'`
+  - `npx eslint server/database-server.js --ext js` (fails: legacy unused-variable debt persists; spawn upsert adjustment introduces no new warnings)
+- **Remaining Gaps / Blockers:** Campaign prep Jest suite still expects a mocked `UserProvider`; update the harness before re-enabling the test run.
+
+## Maintenance – Objective Assist Narrative Types
+- **Date:** 2025-09-24
+- **Engineer(s):** Codex Agent
+- **Work Done:**
+  - Allowed the `llm_narratives` table to accept the five objective assist request types so successful assists persist without constraint failures (`database/schema.sql:701-736`).
+  - Added narrative handlers for the objective assist types across the enhanced LLM service and Ollama provider, ensuring objective assists route through the live provider (`server/llm/enhanced-llm-service.js:332-362`, `server/llm/provider-registry.js:63-104`, `server/llm/providers/ollama-provider.js:69-119`).
+  - Tightened the objective description prompt to cap output at ~700 characters and removed `<think>` scaffolding from stored responses (`server/llm/context/prompt-builder.js:8-64`, `server/database-server.js:1304-1416`).
+- **Tests & Verification:**
+  - `PGPASSWORD=*** psql -h localhost -p 5432 -U barrulus -d questables -f database/schema.sql`
+  - `curl -k -X POST https://quixote.tail3f19fe.ts.net:3001/api/objectives/82dbc5ea-f97e-49f9-995e-a56ed4d193da/assist/description -H 'Authorization: Bearer ***' -H 'Content-Type: application/json' -d '{"focus":"short"}'`
+  - `npm test -- tests/objectives-panel.test.tsx --runInBand`
+  - `npx eslint server/llm/enhanced-llm-service.js server/llm/provider-registry.js server/llm/providers/ollama-provider.js --ext js`
+- **Remaining Gaps / Blockers:** Existing objective records created before the fix may still contain legacy `<think>` tags; regenerate assists to refresh those fields with sanitized output.
+
+## Maintenance – Select Placeholder Sentinel Fix
+- **Date:** 2025-09-24
+- **Engineer(s):** Codex Agent
+- **Work Done:**
+  - Replaced empty-string `SelectItem` values with explicit sentinel constants across objectives, combat tracker, and NPC manager flows to satisfy Radix Select requirements and restore UI stability (`components/objectives-panel.tsx:95-663`, `components/combat-tracker.tsx:1-1160`, `components/npc-manager.tsx:1-720`).
+- **Tests & Verification:**
+  - `npx eslint components/objectives-panel.tsx components/combat-tracker.tsx components/npc-manager.tsx --ext ts,tsx`
+- **Remaining Gaps / Blockers:** Audit other Shadcn/Radix selects during future feature work to ensure no additional empty-string placeholders remain.
 
 ## Task 20 – DM Sidebar Interface
 - **Date:** 2025-09-23

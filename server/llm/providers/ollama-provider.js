@@ -91,6 +91,26 @@ export class OllamaProvider extends EnhancedLLMProvider {
     return this.#generate(NARRATIVE_TYPES.QUEST, options);
   }
 
+  async generateObjectiveDescription(options) {
+    return this.#generate(NARRATIVE_TYPES.OBJECTIVE_DESCRIPTION, options);
+  }
+
+  async generateObjectiveTreasure(options) {
+    return this.#generate(NARRATIVE_TYPES.OBJECTIVE_TREASURE, options);
+  }
+
+  async generateObjectiveCombat(options) {
+    return this.#generate(NARRATIVE_TYPES.OBJECTIVE_COMBAT, options);
+  }
+
+  async generateObjectiveNPCs(options) {
+    return this.#generate(NARRATIVE_TYPES.OBJECTIVE_NPCS, options);
+  }
+
+  async generateObjectiveRumours(options) {
+    return this.#generate(NARRATIVE_TYPES.OBJECTIVE_RUMOURS, options);
+  }
+
   async #generate(type, options = {}) {
     this.assertPrompt(options);
 

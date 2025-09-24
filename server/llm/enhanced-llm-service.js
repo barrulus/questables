@@ -358,6 +358,21 @@ export class EnhancedLLMService {
         case NARRATIVE_TYPES.QUEST:
           result = await provider.generateQuest({ ...options, metadata, cacheKey, requestId });
           break;
+        case NARRATIVE_TYPES.OBJECTIVE_DESCRIPTION:
+          result = await provider.generateObjectiveDescription({ ...options, metadata, cacheKey, requestId });
+          break;
+        case NARRATIVE_TYPES.OBJECTIVE_TREASURE:
+          result = await provider.generateObjectiveTreasure({ ...options, metadata, cacheKey, requestId });
+          break;
+        case NARRATIVE_TYPES.OBJECTIVE_COMBAT:
+          result = await provider.generateObjectiveCombat({ ...options, metadata, cacheKey, requestId });
+          break;
+        case NARRATIVE_TYPES.OBJECTIVE_NPCS:
+          result = await provider.generateObjectiveNPCs({ ...options, metadata, cacheKey, requestId });
+          break;
+        case NARRATIVE_TYPES.OBJECTIVE_RUMOURS:
+          result = await provider.generateObjectiveRumours({ ...options, metadata, cacheKey, requestId });
+          break;
         default:
           throw new LLMServiceError(`Unsupported narrative type ${type}`, {
             provider: provider?.name,

@@ -400,10 +400,10 @@ CREATE TABLE IF NOT EXISTS public.campaign_objectives (
     location_marker_id UUID REFERENCES public.maps_markers(id) ON DELETE SET NULL,
     location_pin geometry(Point, 0),
     treasure_md TEXT,
-    combat_md TEXT,is_major
+    combat_md TEXT,
     npcs_md TEXT,
     rumours_md TEXT,
-    is_major BOOLEAN,
+    is_major BOOLEAN DEFAULT false,
     slug TEXT,
     order_index INTEGER DEFAULT 0,
     created_by UUID REFERENCES public.user_profiles(id) ON DELETE SET NULL,
@@ -696,7 +696,20 @@ CREATE TABLE IF NOT EXISTS public.llm_narratives (
     campaign_id UUID REFERENCES public.campaigns(id) ON DELETE CASCADE NOT NULL,
     session_id UUID REFERENCES public.sessions(id) ON DELETE SET NULL,
     npc_id UUID REFERENCES public.npcs(id) ON DELETE SET NULL,
-    request_type TEXT NOT NULL CHECK (request_type IN ('dm_narration','scene_description','npc_dialogue','action_narrative','quest_generation')),
+    request_type TEXT NOT NULL CHECK (
+        request_type IN (
+            'dm_narration',
+            'scene_description',
+            'npc_dialogue',
+            'action_narrative',
+            'quest_generation',
+            'objective_description',
+            'objective_treasure',
+            'objective_combat',
+            'objective_npcs',
+            'objective_rumours'
+        )
+    ),
     requested_by UUID REFERENCES public.user_profiles(id) ON DELETE SET NULL,
     cache_key TEXT,
     cache_hit BOOLEAN DEFAULT false,
@@ -710,6 +723,23 @@ CREATE TABLE IF NOT EXISTS public.llm_narratives (
     metadata JSONB,
     created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW() NOT NULL
 );
+ALTER TABLE public.llm_narratives
+    DROP CONSTRAINT IF EXISTS llm_narratives_request_type_check;
+ALTER TABLE public.llm_narratives
+    ADD CONSTRAINT llm_narratives_request_type_check CHECK (
+        request_type IN (
+            'dm_narration',
+            'scene_description',
+            'npc_dialogue',
+            'action_narrative',
+            'quest_generation',
+            'objective_description',
+            'objective_treasure',
+            'objective_combat',
+            'objective_npcs',
+            'objective_rumours'
+        )
+    );
 CREATE INDEX IF NOT EXISTS idx_llm_narratives_campaign_id ON public.llm_narratives(campaign_id);
 CREATE INDEX IF NOT EXISTS idx_llm_narratives_session_id ON public.llm_narratives(session_id);
 CREATE INDEX IF NOT EXISTS idx_llm_narratives_request_type ON public.llm_narratives(request_type);
