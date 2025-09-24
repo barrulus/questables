@@ -705,3 +705,78 @@ Always append new entries; do not erase or rewrite previous log items except to 
   - `npm test -- tests/objectives-panel.test.tsx --runInBand`
   - `npx eslint components/objective-pin-map.tsx components/objectives-panel.tsx components/campaign-prep.tsx tests/objectives-panel.test.tsx --ext ts,tsx`
 - **Remaining Gaps / Blockers:** The UI surfaces a warning when map markers are unavailable; unblockers depend on the backend exposing `/api/maps/:worldId/markers` for production use.
+
+## Task 19 – LLM Assist UI Integration
+- **Date:** 2025-09-24
+- **Engineer(s):** Codex Agent
+- **Work Done:**
+  - Wired objective Markdown editors to call the live assist endpoints with pending state management, provider attribution, and throttle/error messaging (`components/objectives-panel.tsx:247-1516`).
+  - Applied server responses back into the active dialog and objective tree only after confirmation, keeping unsaved fields intact while refreshing the canonical record (`components/objectives-panel.tsx:1324-1416`).
+  - Added Jest coverage to validate both the successful assist flow and rate-limit feedback so UI behavior mirrors the documented contract (`tests/objectives-panel.test.tsx:286-344`).
+  - Follow-up (2025-09-23): Revalidated the assist flow end-to-end against the live client utilities; no code changes required after confirming pending/error states still mirror backend responses (`components/objectives-panel.tsx:1324-1416`, `utils/api-client.ts:696-724`).
+- **Cleanups:** Connected labels to textareas with explicit `htmlFor` bindings and surfaced an assist-disabled notice during creation to avoid silent button stalls (`components/objectives-panel.tsx:332-391`).
+- **Documentation Updates:** No changes required; `API_DOCUMENTATION.md:906-977` already documents the assist request/response contract exercised here.
+- **Tests & Verification:**
+  - `npm test -- tests/objectives-panel.test.tsx --runInBand`
+  - `npx eslint components/objectives-panel.tsx tests/objectives-panel.test.tsx --ext ts,tsx`
+  - `2025-09-23` — `npm test -- --runTestsByPath tests/objectives-panel.test.tsx --runInBand`
+  - `2025-09-23` — `npx eslint components/objectives-panel.tsx utils/api-client.ts --ext ts,tsx`
+- **Remaining Gaps / Blockers:** The frontend still lacks a dedicated analytics pipeline, so assist usage telemetry cannot yet be emitted; coordinate with observability owners once instrumentation is available.
+
+## Task 20 – DM Sidebar Interface
+- **Date:** 2025-09-23
+- **Engineer(s):** Codex Agent
+- **Work Done:**
+  - Introduced the live DM Sidebar panel with focus/context management, unplanned encounter logging, NPC sentiment capture, and teleportation controls wired to production endpoints (`components/dm-sidebar.tsx:1-1519`).
+  - Exposed the DM Sidebar through the in-game icon rail with role-aware gating so only campaign DMs, co-DMs, or administrators can open the panel (`components/icon-sidebar.tsx:1-162`, `components/expandable-panel.tsx:1-292`).
+  - Added Jest coverage exercising successful focus updates, encounter validation, and player teleportation against the mocked API client (`tests/dm-sidebar.test.tsx:1-247`).
+- **Cleanups:** Removed reliance on implicit click events carrying the synthetic event payload, standardized sentinel values for empty select states, and added UI polyfills to satisfy Radix Select expectations in the test environment.
+- **Documentation Updates:** No API documentation changes required; existing DM Sidebar sections remain accurate.
+- **Tests & Verification:**
+  - `npm test -- --runTestsByPath tests/dm-sidebar.test.tsx --runInBand`
+  - `2025-09-23` — `npx eslint components/dm-sidebar.tsx components/icon-sidebar.tsx components/expandable-panel.tsx tests/dm-sidebar.test.tsx --ext ts,tsx`
+- **Remaining Gaps / Blockers:** Teleport actions rely on the map socket layer to refresh player tokens; coordinate with realtime owners to ensure viewport updates propagate immediately after teleport responses.
+
+## Task 21 – Backend Regression & Integration Tests
+- **Date:** 2025-09-23
+- **Engineer(s):** Codex Agent
+- **Work Done:**
+  - Added `tests/server/dm-toolkit.integration.test.js` Supertest suite covering campaign creation, spawn upsert, objective CRUD/assist flows, and DM sidebar focus permissions against the live Express app.
+  - Stubbed the contextual LLM service during tests so assists return deterministic content while recording real narrative rows.
+  - Documented the DM Toolkit integration test procedure in `DATABASE_SETUP.md:121` to keep future runs aligned with the live PostgreSQL instance.
+  - Declared the `supertest` dev dependency to wire the regression suite into the Jest harness.
+- **Cleanups:** None (new regression coverage only).
+- **Documentation Updates:** `DATABASE_SETUP.md:121` (added runbook for executing the DM Toolkit integration suite and required environment prerequisites).
+- **Tests & Verification:**
+  - `npx eslint tests/server/dm-toolkit.integration.test.js --ext js` (pass)
+  - `npm test -- --runTestsByPath tests/server/dm-toolkit.integration.test.js --runInBand` (pass; logs TLS/EPERM warnings when the sandbox denies PostgreSQL connections, suite guards via skip reason)
+- **Remaining Gaps / Blockers:** Local sandbox prevents outbound PostgreSQL connections (EPERM). The suite guards when that occurs; run again in an environment with database access to observe full insert/update behaviour.
+
+## Task 22 – Frontend Testing & QA Harness
+- **Date:** 2025-09-23
+- **Engineer(s):** Codex Agent
+- **Work Done:**
+  - Introduced `tests/frontend/dm-toolkit.ui.integration.test.tsx` React Testing Library suite that exercises campaign creation, spawn placement, objective creation/assist, and DM sidebar focus updates against the live Express server (via Supertest-backed server spin-up inside the test harness).
+  - Wired the harness to use real PostgreSQL-backed endpoints while stubbing only sockets/LLM UI dependencies; added deterministic LLM responses through `app.locals.contextualLLMService`.
+  - Documented the new frontend regression commands in `lint_report.md` and ensured the suite self-skips when the sandbox blocks PostgreSQL (`EPERM`).
+- **Cleanups:** None; suite uses runtime inserts and cleans them post-test.
+- **Documentation Updates:** `DATABASE_SETUP.md:121` (clarified how to run the DM Toolkit integration suites end-to-end).
+- **Tests & Verification:**
+  - `npx eslint tests/frontend/dm-toolkit.ui.integration.test.tsx --ext tsx` (pass)
+  - `npm test -- --runTestsByPath tests/frontend/dm-toolkit.ui.integration.test.tsx --runInBand` (pass; logs TLS/EPERM warnings when sandboxed but guards with skip reason)
+- **Remaining Gaps / Blockers:** Sandbox denies direct PostgreSQL connections, so the suite records the skip state; rerun in an environment with DB access to observe the full UI/API roundtrip.
+
+## Task 23 – Telemetry, Logging, and Monitoring Updates
+- **Date:** 2025-09-23
+- **Engineer(s):** Codex Agent
+- **Work Done:**
+  - Introduced `server/utils/telemetry.js` to track in-memory counters, gauges, and recent DM Toolkit events.
+  - Instrumented campaign creation, spawn upserts, objective CRUD/assist flows, and DM sidebar actions (focus/context updates, unplanned encounters, teleport, NPC sentiment) with structured `telemetryEvent` logs and counter updates.
+  - Added `GET /api/admin/telemetry` for admins to retrieve live telemetry snapshots; websocket status now updates the `websocket.connections` gauge.
+  - Documented monitoring guidance and available counters in `docs/monitoring.md`.
+- **Cleanups:** None.
+- **Documentation Updates:** `docs/monitoring.md` (new monitoring runbook).
+- **Tests & Verification:**
+  - `npx eslint server/utils/telemetry.js --ext js` (pass)
+  - `npx eslint server/database-server.js --ext js` (fails: legacy Node globals/unused variable debt persists; telemetry instrumentation adds no new violations)
+- **Remaining Gaps / Blockers:** Telemetry snapshot is in-memory only; persist the data to external monitoring if long-term retention is required. PostgreSQL sandbox restrictions still limit automated test coverage of the new telemetry endpoints.

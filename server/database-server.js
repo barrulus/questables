@@ -44,6 +44,12 @@ import {
   logApplicationShutdown
 } from './utils/logger.js';
 import {
+  incrementCounter,
+  setGauge,
+  recordEvent,
+  getTelemetrySnapshot,
+} from './utils/telemetry.js';
+import {
   sanitizeObjectivePayload,
   ObjectiveValidationError,
   MARKDOWN_FIELDS,
@@ -571,6 +577,18 @@ app.get('/api/admin/llm/metrics', requireAuth, requireRole('admin'), (req, res) 
       userId: req.user?.id,
     });
     res.status(500).json({ error: 'Failed to load LLM metrics snapshot' });
+  }
+});
+
+app.get('/api/admin/telemetry', requireAuth, requireRole('admin'), (req, res) => {
+  try {
+    const snapshot = getTelemetrySnapshot();
+    res.json(snapshot);
+  } catch (error) {
+    logError('Failed to load telemetry snapshot', error, {
+      userId: req.user?.id,
+    });
+    res.status(500).json({ error: 'Failed to load telemetry snapshot' });
   }
 });
 
@@ -1419,7 +1437,17 @@ const createObjectiveAssistHandler = (fieldKey) => async (req, res) => {
     transactionStarted = false;
 
     const updatedObjective = formatObjectiveRow(updateResult.rows[0]);
+    incrementCounter('objective_assists.generated');
+    recordEvent('objective.assist.generated', {
+      campaignId: objectiveRow.campaign_id,
+      objectiveId,
+      field: config.column,
+      userId: req.user.id,
+      provider: generation.result?.provider ?? null,
+      cacheHit: generation.result?.cache?.hit ?? false,
+    });
     logInfo('Objective assist generated', {
+      telemetryEvent: 'objective.assist_generated',
       objectiveId,
       field: config.column,
       provider: generation.result?.provider?.name ?? null,
@@ -2840,13 +2868,24 @@ app.post('/api/campaigns', requireAuth, validateCampaign, handleValidationErrors
   const client = await pool.connect();
   try {
     const result = await client.query(insertSql, values);
+    const insertedCampaign = result.rows[0] ?? null;
+    if (insertedCampaign?.id) {
+      incrementCounter('campaigns.created');
+      recordEvent('campaign.created', {
+        campaignId: insertedCampaign.id,
+        dmUserId,
+        status,
+        isPublic,
+      });
+    }
     logInfo('Campaign created', {
-      campaignId: result.rows[0]?.id,
+      telemetryEvent: 'campaign.created',
+      campaignId: insertedCampaign?.id ?? null,
       dmUserId,
       status,
       isPublic,
     });
-    return res.status(201).json({ campaign: result.rows[0] });
+    return res.status(201).json({ campaign: insertedCampaign });
   } catch (error) {
     if (error.code === '23505' && error.constraint === 'uq_campaign_name_per_dm') {
       logWarn('Campaign name conflict detected', { dmUserId, name: trimmedName });
@@ -3357,6 +3396,22 @@ app.post(
         });
       }
 
+      incrementCounter('movement.teleport_player');
+      recordEvent('movement.teleport_player', {
+        campaignId,
+        playerId: player.id,
+        userId: req.user.id,
+        viaSpawn: Boolean(spawnMeta),
+        reason: reason ?? null,
+      });
+      logInfo('Player teleported', {
+        telemetryEvent: 'movement.teleport_player',
+        campaignId,
+        playerId: player.id,
+        userId: req.user.id,
+        viaSpawn: Boolean(spawnMeta),
+      });
+
       res.json({
         playerId: player.id,
         geometry: player.geometry,
@@ -3506,7 +3561,16 @@ app.post(
       await client.query('COMMIT');
 
       const npc = rows[0];
+      incrementCounter('movement.teleport_npc');
+      recordEvent('movement.teleport_npc', {
+        campaignId,
+        npcId,
+        userId: req.user.id,
+        mode: target ? 'coordinates' : 'location',
+        locationId: npc.current_location_id,
+      });
       logInfo('NPC teleported', {
+        telemetryEvent: 'movement.teleport_npc',
         npcId,
         campaignId,
         userId: req.user.id,
@@ -3637,7 +3701,15 @@ app.put('/api/campaigns/:campaignId/spawn', requireAuth, async (req, res) => {
 
     const formatted = formatSpawnRow(upsertResult.rows[0]);
 
+    incrementCounter('campaign_spawns.upserted');
+    recordEvent('campaign.spawn_upserted', {
+      campaignId,
+      spawnId: formatted.id,
+      userId: req.user.id,
+      hasNote: Boolean(formatted.note),
+    });
     logInfo('Campaign spawn upserted', {
+      telemetryEvent: 'campaign.spawn_upserted',
       campaignId,
       userId: req.user.id,
       hasNote: Boolean(formatted.note),
@@ -3815,7 +3887,16 @@ app.post(
       transactionStarted = false;
 
       const objective = formatObjectiveRow(insertResult.rows[0]);
+      incrementCounter('objectives.created');
+      recordEvent('objective.created', {
+        campaignId,
+        objectiveId: objective.id,
+        userId: req.user.id,
+        parentId: objective.parentId ?? null,
+        isMajor: Boolean(objective.isMajor),
+      });
       logInfo('Objective created', {
+        telemetryEvent: 'objective.created',
         campaignId,
         objectiveId: objective.id,
         userId: req.user.id,
@@ -3996,7 +4077,20 @@ app.put('/api/objectives/:objectiveId', requireAuth, async (req, res) => {
     transactionStarted = false;
 
     const objective = formatObjectiveRow(updateResult.rows[0]);
-    logInfo('Objective updated', { objectiveId, campaignId: existing.campaign_id, userId: req.user.id });
+    incrementCounter('objectives.updated');
+    recordEvent('objective.updated', {
+      campaignId: existing.campaign_id,
+      objectiveId,
+      userId: req.user.id,
+      parentId: objective.parentId ?? null,
+      isMajor: Boolean(objective.isMajor),
+    });
+    logInfo('Objective updated', {
+      telemetryEvent: 'objective.updated',
+      objectiveId,
+      campaignId: existing.campaign_id,
+      userId: req.user.id,
+    });
 
     if (wsServer) {
       wsServer.emitObjectiveUpdated(existing.campaign_id, objective, {
@@ -4069,7 +4163,16 @@ app.delete('/api/objectives/:objectiveId', requireAuth, async (req, res) => {
 
     const deletedObjectiveIds = deleteResult.rows.map((row) => row.id);
 
+    incrementCounter('objectives.deleted', deleteResult.rowCount ?? 1);
+    recordEvent('objective.deleted', {
+      campaignId: existing.campaign_id,
+      objectiveId,
+      deletedObjectiveIds,
+      userId: req.user.id,
+    });
+
     logInfo('Objective deleted', {
+      telemetryEvent: 'objective.deleted',
       objectiveId,
       deletedCount: deleteResult.rowCount,
       campaignId: existing.campaign_id,
@@ -5561,7 +5664,15 @@ app.put(
         ? new Date(updatedRow.updated_at).toISOString()
         : new Date().toISOString();
 
+      incrementCounter('sessions.focus_updated');
+      recordEvent('session.focus_updated', {
+        sessionId,
+        campaignId,
+        userId: req.user.id,
+        hasFocus: Boolean(normalizedFocus),
+      });
       logInfo('Session focus updated', {
+        telemetryEvent: 'session.focus_updated',
         sessionId,
         campaignId,
         userId: req.user.id,
@@ -5703,7 +5814,17 @@ app.put(
         : new Date().toISOString();
       const contextLength = typeof nextContext === 'string' ? nextContext.length : 0;
 
+      incrementCounter('sessions.context_updated');
+      recordEvent('session.context_updated', {
+        sessionId,
+        campaignId,
+        userId: req.user.id,
+        mode,
+        hasContext: Boolean(nextContext),
+        contextLength,
+      });
       logInfo('Session context updated', {
+        telemetryEvent: 'session.context_updated',
         sessionId,
         campaignId,
         userId: req.user.id,
@@ -5856,6 +5977,17 @@ app.post(
 
       const encounter = rows[0];
       logInfo('Unplanned encounter created', {
+        telemetryEvent: 'encounter.unplanned_created',
+        encounterId: encounter.id,
+        sessionId,
+        campaignId: sessionRow.campaign_id,
+        userId: req.user.id,
+        type,
+        difficulty,
+      });
+
+      incrementCounter('encounters.unplanned_created');
+      recordEvent('encounter.unplanned_created', {
         encounterId: encounter.id,
         sessionId,
         campaignId: sessionRow.campaign_id,
@@ -6337,7 +6469,18 @@ app.post(
       await client.query('COMMIT');
 
       const memory = rows[0];
+      incrementCounter('npc.sentiment_adjusted');
+      recordEvent('npc.sentiment_adjusted', {
+        npcId,
+        campaignId,
+        sessionId: memory.session_id ?? null,
+        userId: req.user.id,
+        sentiment,
+        trustDelta,
+        hasTags: Array.isArray(memory.tags) && memory.tags.length > 0,
+      });
       logInfo('NPC sentiment adjusted', {
+        telemetryEvent: 'npc.sentiment_adjusted',
         npcId,
         campaignId,
         userId: req.user.id,
@@ -6647,9 +6790,13 @@ app.locals.wsServer = wsServer;
 // Add WebSocket health check endpoint
 app.get('/api/websocket/status', (req, res) => {
   if (!wsServer) {
+    setGauge('websocket.connections', 0);
     return res.json({ status: 'inactive', connected: 0 });
   }
   const status = wsServer.getStatus();
+  if (typeof status?.connected === 'number') {
+    setGauge('websocket.connections', status.connected);
+  }
   res.json({
     status: 'active',
     ...status

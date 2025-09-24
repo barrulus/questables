@@ -1,77 +1,107 @@
+import { useMemo } from "react";
 import { Button } from "./ui/button";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "./ui/tooltip";
-import { 
-  User, 
-  Package, 
-  Dice6, 
-  BookOpen, 
+import {
+  User,
+  Package,
+  Dice6,
+  BookOpen,
   Sword,
   Compass,
   Sparkles,
   Settings,
   ScrollText,
   Book,
-  Library
+  Library,
+  Crown,
 } from "lucide-react";
+import { useGameSession } from "../contexts/GameSessionContext";
+import { useUser } from "../contexts/UserContext";
 
 interface IconSidebarProps {
   activePanel: string | null;
-  onPanelChange: (panel: string | null) => void;
+  onPanelChange: (_panelId: string | null) => void;
 }
 
 export function IconSidebar({ activePanel, onPanelChange }: IconSidebarProps) {
-  const tools = [
-    { 
-      id: "character", 
-      icon: <User className="w-5 h-5" />, 
-      label: "Active Character"
-    },
-    { 
-      id: "inventory", 
-      icon: <Package className="w-5 h-5" />, 
-      label: "Inventory"
-    },
-    { 
-      id: "spells", 
-      icon: <BookOpen className="w-5 h-5" />, 
-      label: "Spells"
-    },
-    { 
-      id: "dice", 
-      icon: <Dice6 className="w-5 h-5" />, 
-      label: "Dice Roller"
-    },
-    { 
-      id: "combat", 
-      icon: <Sword className="w-5 h-5" />, 
-      label: "Combat"
-    },
-    { 
-      id: "exploration", 
-      icon: <Compass className="w-5 h-5" />, 
-      label: "Exploration"
-    },
-    { 
-      id: "narratives", 
-      icon: <Sparkles className="w-5 h-5" />, 
-      label: "Narratives"
-    },
-    { 
-      id: "rulebooks", 
-      icon: <Book className="w-5 h-5" />, 
-      label: "Rule Books"
-    },
-    { 
-      id: "journals", 
-      icon: <ScrollText className="w-5 h-5" />, 
-      label: "Session Notes"
-    },
-    { 
-      id: "compendium", 
-      icon: <Library className="w-5 h-5" />, 
-      label: "Compendium"
+  const { activeCampaign, viewerRole } = useGameSession();
+  const { user } = useUser();
+
+  const canAccessDmSidebar = useMemo(() => {
+    if (!user) return false;
+    if (user.roles?.includes("admin")) return true;
+    if (viewerRole && ["dm", "co-dm"].includes(viewerRole)) return true;
+    if (activeCampaign?.dmUserId && activeCampaign.dmUserId === user.id) return true;
+    return false;
+  }, [activeCampaign?.dmUserId, user, viewerRole]);
+
+  const tools = useMemo(() => {
+    const baseTools = [
+      {
+        id: "character",
+        icon: <User className="w-5 h-5" />,
+        label: "Active Character",
+      },
+      {
+        id: "inventory",
+        icon: <Package className="w-5 h-5" />,
+        label: "Inventory",
+      },
+      {
+        id: "spells",
+        icon: <BookOpen className="w-5 h-5" />,
+        label: "Spells",
+      },
+      {
+        id: "dice",
+        icon: <Dice6 className="w-5 h-5" />,
+        label: "Dice Roller",
+      },
+      {
+        id: "combat",
+        icon: <Sword className="w-5 h-5" />,
+        label: "Combat",
+      },
+      {
+        id: "exploration",
+        icon: <Compass className="w-5 h-5" />,
+        label: "Exploration",
+      },
+      {
+        id: "narratives",
+        icon: <Sparkles className="w-5 h-5" />,
+        label: "Narratives",
+      },
+      {
+        id: "rulebooks",
+        icon: <Book className="w-5 h-5" />,
+        label: "Rule Books",
+      },
+      {
+        id: "journals",
+        icon: <ScrollText className="w-5 h-5" />,
+        label: "Session Notes",
+      },
+      {
+        id: "compendium",
+        icon: <Library className="w-5 h-5" />,
+        label: "Compendium",
+      },
+    ];
+
+    if (!canAccessDmSidebar) {
+      return baseTools;
     }
-  ];
+
+    return [
+      {
+        id: "dm-sidebar",
+        icon: <Crown className="w-5 h-5" />,
+        label: "DM Sidebar",
+      },
+      ...baseTools,
+    ];
+  }, [canAccessDmSidebar]);
 
   const handleToolClick = (toolId: string) => {
     if (activePanel === toolId) {

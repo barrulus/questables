@@ -400,9 +400,11 @@ CREATE TABLE IF NOT EXISTS public.campaign_objectives (
     location_marker_id UUID REFERENCES public.maps_markers(id) ON DELETE SET NULL,
     location_pin geometry(Point, 0),
     treasure_md TEXT,
-    combat_md TEXT,
+    combat_md TEXT,is_major
     npcs_md TEXT,
     rumours_md TEXT,
+    is_major BOOLEAN,
+    slug TEXT,
     order_index INTEGER DEFAULT 0,
     created_by UUID REFERENCES public.user_profiles(id) ON DELETE SET NULL,
     updated_by UUID REFERENCES public.user_profiles(id) ON DELETE SET NULL,

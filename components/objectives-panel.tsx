@@ -8,9 +8,12 @@ import {
   apiFetch,
   readErrorMessage,
   readJsonBody,
+  requestObjectiveAssist,
+  HttpError,
   type ObjectiveRecord,
   type ObjectiveCreatePayload,
   type ObjectiveUpdatePayload,
+  type ObjectiveAssistField,
 } from "../utils/api-client";
 import { Campaign } from "./campaign-shared";
 import { useWebSocket } from "../hooks/useWebSocket";
@@ -48,6 +51,8 @@ import {
   Landmark,
   Map as MapIcon,
   GitBranchPlus,
+  Sparkles,
+  Loader2,
 } from "lucide-react";
 
 const toNullable = (value: string): string | null => {
@@ -91,6 +96,44 @@ interface MarkerOption {
 }
 
 const ROOT_PARENT_VALUE = "__root__";
+
+type AssistUiState = {
+  pending: boolean;
+  message: string | null;
+  error: string | null;
+};
+
+const createAssistUiState = (): Record<ObjectiveAssistField, AssistUiState> => ({
+  description: { pending: false, message: null, error: null },
+  treasure: { pending: false, message: null, error: null },
+  combat: { pending: false, message: null, error: null },
+  npcs: { pending: false, message: null, error: null },
+  rumours: { pending: false, message: null, error: null },
+});
+
+const assistFieldLabels: Record<ObjectiveAssistField, string> = {
+  description: "Description",
+  treasure: "Treasure",
+  combat: "Combat Notes",
+  npcs: "NPCs",
+  rumours: "Rumours",
+};
+
+const assistFieldRecordKeys: Record<ObjectiveAssistField, keyof ObjectiveRecord> = {
+  description: "descriptionMd",
+  treasure: "treasureMd",
+  combat: "combatMd",
+  npcs: "npcsMd",
+  rumours: "rumoursMd",
+};
+
+const assistFieldFormKeys: Record<ObjectiveAssistField, keyof ObjectiveFormValues> = {
+  description: "descriptionMd",
+  treasure: "treasureMd",
+  combat: "combatMd",
+  npcs: "npcsMd",
+  rumours: "rumoursMd",
+};
 
 interface ObjectivesPanelProps {
   campaign: Campaign | null;
@@ -258,6 +301,10 @@ interface ObjectiveDialogProps {
   markerUnavailable: boolean;
   burgOptions: BurgOption[];
   markerOptions: MarkerOption[];
+  assistEnabled: boolean;
+  assistStates: Record<ObjectiveAssistField, AssistUiState>;
+  onRequestAssist: (_field: ObjectiveAssistField) => void;
+  assistDisabledReason?: string | null;
 }
 
 const ObjectiveDialog = ({
@@ -274,6 +321,10 @@ const ObjectiveDialog = ({
   markerUnavailable,
   burgOptions,
   markerOptions,
+  assistEnabled,
+  assistStates,
+  onRequestAssist,
+  assistDisabledReason,
 }: ObjectiveDialogProps) => {
   const [pinPickerOpen, setPinPickerOpen] = useState(false);
 
@@ -282,6 +333,54 @@ const ObjectiveDialog = ({
       setPinPickerOpen(false);
     }
   }, [open]);
+
+  const renderAssistButton = (field: ObjectiveAssistField) => {
+    const label = assistFieldLabels[field];
+    const state = assistStates[field];
+    const disabledAssist = disabled || saving || !assistEnabled || state.pending;
+
+    return (
+      <Button
+        type="button"
+        size="xs"
+        variant="outline"
+        onClick={() => onRequestAssist(field)}
+        disabled={disabledAssist}
+        aria-label={`Assist ${label}`}
+      >
+        {state.pending ? (
+          <>
+            <Loader2 className="mr-2 h-3 w-3 animate-spin" />
+            Generating…
+          </>
+        ) : (
+          <>
+            <Sparkles className="mr-2 h-3 w-3" />
+            Assist
+          </>
+        )}
+      </Button>
+    );
+  };
+
+  const renderAssistStatus = (field: ObjectiveAssistField, options?: { showDisabledInfo?: boolean }) => {
+    const state = assistStates[field];
+    if (assistEnabled) {
+      if (state.error) {
+        return <p className="text-xs text-destructive">{state.error}</p>;
+      }
+      if (state.message) {
+        return <p className="text-xs text-muted-foreground">{state.message}</p>;
+      }
+      return null;
+    }
+
+    if (options?.showDisabledInfo && assistDisabledReason) {
+      return <p className="text-xs italic text-muted-foreground">{assistDisabledReason}</p>;
+    }
+
+    return null;
+  };
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -353,54 +452,79 @@ const ObjectiveDialog = ({
             <Separator />
             <div className="grid gap-4">
               <div className="space-y-2">
-                <Label>Description</Label>
+                <div className="flex items-center justify-between gap-2">
+                  <Label htmlFor="objective-description">Description</Label>
+                  {renderAssistButton("description")}
+                </div>
                 <Textarea
+                  id="objective-description"
                   disabled={disabled}
                   value={values.descriptionMd}
                   rows={4}
                   onChange={(event) => onChange({ ...values, descriptionMd: event.target.value })}
                   placeholder="Main objective details in Markdown"
                 />
+                {renderAssistStatus("description", { showDisabledInfo: true })}
               </div>
               <div className="space-y-2">
-                <Label>Treasure</Label>
+                <div className="flex items-center justify-between gap-2">
+                  <Label htmlFor="objective-treasure">Treasure</Label>
+                  {renderAssistButton("treasure")}
+                </div>
                 <Textarea
+                  id="objective-treasure"
                   disabled={disabled}
                   value={values.treasureMd}
                   rows={3}
                   onChange={(event) => onChange({ ...values, treasureMd: event.target.value })}
                   placeholder="Loot drops, rewards, or boons"
                 />
+                {renderAssistStatus("treasure")}
               </div>
               <div className="space-y-2">
-                <Label>Combat Notes</Label>
+                <div className="flex items-center justify-between gap-2">
+                  <Label htmlFor="objective-combat">Combat Notes</Label>
+                  {renderAssistButton("combat")}
+                </div>
                 <Textarea
+                  id="objective-combat"
                   disabled={disabled}
                   value={values.combatMd}
                   rows={3}
                   onChange={(event) => onChange({ ...values, combatMd: event.target.value })}
                   placeholder="Encounters, stat block links, or strategy"
                 />
+                {renderAssistStatus("combat")}
               </div>
               <div className="space-y-2">
-                <Label>NPCs</Label>
+                <div className="flex items-center justify-between gap-2">
+                  <Label htmlFor="objective-npcs">NPCs</Label>
+                  {renderAssistButton("npcs")}
+                </div>
                 <Textarea
+                  id="objective-npcs"
                   disabled={disabled}
                   value={values.npcsMd}
                   rows={3}
                   onChange={(event) => onChange({ ...values, npcsMd: event.target.value })}
                   placeholder="Key NPCs, alliances, and hooks"
                 />
+                {renderAssistStatus("npcs")}
               </div>
               <div className="space-y-2">
-                <Label>Rumours</Label>
+                <div className="flex items-center justify-between gap-2">
+                  <Label htmlFor="objective-rumours">Rumours</Label>
+                  {renderAssistButton("rumours")}
+                </div>
                 <Textarea
+                  id="objective-rumours"
                   disabled={disabled}
                   value={values.rumoursMd}
                   rows={3}
                   onChange={(event) => onChange({ ...values, rumoursMd: event.target.value })}
                   placeholder="Foreshadowing, myths, or misinformation"
                 />
+                {renderAssistStatus("rumours")}
               </div>
             </div>
           </div>
@@ -883,8 +1007,11 @@ export function ObjectivesPanel({ campaign, canEdit, worldMap, worldMapLoading, 
   const [reordering, setReordering] = useState(false);
   const [dragState, setDragState] = useState<{ id: string; parentId: string | null } | null>(null);
   const [dropTarget, setDropTarget] = useState<{ id: string; position: "before" | "after" } | null>(null);
+  const [assistStates, setAssistStates] = useState<Record<ObjectiveAssistField, AssistUiState>>(createAssistUiState);
   const { messages } = useWebSocket(campaign?.id ?? "");
   const processedMessageIndexRef = useRef(0);
+
+  const disabledAssistState = useMemo(createAssistUiState, []);
 
   const objectiveIndex = useMemo(() => {
     const map = new Map<string, ObjectiveRecord>();
@@ -1160,6 +1287,7 @@ export function ObjectivesPanel({ campaign, canEdit, worldMap, worldMapLoading, 
   const openEditDialog = useCallback((objective: ObjectiveRecord) => {
     setActiveObjective(objective);
     setFormValues(objectiveToFormValues(objective));
+    setAssistStates(createAssistUiState());
     setEditDialogOpen(true);
   }, []);
 
@@ -1202,6 +1330,80 @@ export function ObjectivesPanel({ campaign, canEdit, worldMap, worldMapLoading, 
       setSaving(false);
     }
   }, [activeObjective, formValues]);
+
+  const handleRequestAssist = useCallback(
+    async (field: ObjectiveAssistField) => {
+      if (!canEdit) {
+        toast.error("You do not have permission to run assists in this campaign.");
+        return;
+      }
+
+      if (!activeObjective?.id) {
+        toast.error("Select an objective before requesting an assist.");
+        return;
+      }
+
+      setAssistStates((prev) => ({
+        ...prev,
+        [field]: { pending: true, message: null, error: null },
+      }));
+
+      try {
+        const response = await requestObjectiveAssist(activeObjective.id, field);
+        const updated = response.objective;
+
+        setObjectives((prev) => {
+          const exists = prev.some((item) => item.id === updated.id);
+          if (!exists) {
+            return [...prev, updated];
+          }
+          return prev.map((item) => (item.id === updated.id ? updated : item));
+        });
+
+        setActiveObjective(updated);
+
+        const recordKey = assistFieldRecordKeys[field];
+        const formKey = assistFieldFormKeys[field];
+        const updatedValue = updated[recordKey] as string | null | undefined;
+
+        setFormValues((prev) => {
+          if (!prev) return prev;
+          const nextValue = updatedValue ?? "";
+          return { ...prev, [formKey]: nextValue };
+        });
+
+        const provider = response.assist?.provider ?? null;
+        const providerLabel = [provider?.name, provider?.model].filter((value): value is string => Boolean(value && value.trim())).join(" · ");
+        const successMessage = providerLabel
+          ? `Generated with ${providerLabel}.`
+          : "Assist content applied.";
+
+        setAssistStates((prev) => ({
+          ...prev,
+          [field]: { pending: false, message: successMessage, error: null },
+        }));
+
+        toast.success(`${assistFieldLabels[field]} updated with assist content.`);
+      } catch (error) {
+        let message = error instanceof Error ? error.message : "Failed to generate objective assist.";
+        if (error instanceof HttpError) {
+          if (error.status === 429) {
+            message = "Assist request throttled. Please wait before retrying.";
+          } else if (error.status === 503) {
+            message = "Assist service unavailable. Try again shortly.";
+          }
+        }
+
+        console.error(`[ObjectivesPanel] Objective assist failed for ${field}`, error);
+        setAssistStates((prev) => ({
+          ...prev,
+          [field]: { pending: false, message: null, error: message },
+        }));
+        toast.error(message);
+      }
+    },
+    [activeObjective?.id, canEdit],
+  );
 
   const handleDelete = useCallback(
     async (objective: ObjectiveRecord) => {
@@ -1510,6 +1712,10 @@ export function ObjectivesPanel({ campaign, canEdit, worldMap, worldMapLoading, 
         markerUnavailable={markerUnavailable}
         burgOptions={burgOptions}
         markerOptions={markerOptions}
+        assistEnabled={false}
+        assistStates={disabledAssistState}
+        onRequestAssist={() => {}}
+        assistDisabledReason="Save the objective before requesting an LLM assist."
       />
 
       {editDialogOpen && formValues && activeObjective && (
@@ -1533,6 +1739,10 @@ export function ObjectivesPanel({ campaign, canEdit, worldMap, worldMapLoading, 
           markerUnavailable={markerUnavailable}
           burgOptions={burgOptions}
           markerOptions={markerOptions}
+          assistEnabled={Boolean(activeObjective.id) && canEdit}
+          assistStates={assistStates}
+          onRequestAssist={handleRequestAssist}
+          assistDisabledReason={null}
         />
       )}
 

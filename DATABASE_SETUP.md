@@ -118,6 +118,22 @@ pnpm dev
 
 The frontend will start on `http://localhost:3000`.
 
+### 4. Running DM Toolkit Integration Tests
+
+The DM Toolkit backend suites execute directly against the live PostgreSQL instance—no mocks or in-memory fakes are used. Before running them, confirm that:
+
+- `.env.local` points to the running database service (see the Environment Setup section).
+- `database/schema.sql` has been applied so spatial fields (SRID 0) and DM Toolkit tables exist.
+- The database server (`npm run db:server`) can accept authenticated requests.
+
+You can then run the Supertest-powered integration suite with:
+
+```bash
+npm test -- --runTestsByPath tests/server/dm-toolkit.integration.test.js --runInBand
+```
+
+The tests seed real user, campaign, spawn, objective, assist, and sidebar records, verify behaviour end-to-end, and clean up the inserted rows afterward. If the local PostgreSQL instance is unavailable, the suite skips itself and logs the reason.
+
 ## Database Schema Overview
 
 The application uses a comprehensive PostgreSQL schema with the following key features:

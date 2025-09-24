@@ -1,0 +1,1 @@
+node tile-svg.mjs --source snoopia_topo.svg --out tiles-topo --startZoom 0 --maxZoom 10 --tileSize 256 --concurrency 8

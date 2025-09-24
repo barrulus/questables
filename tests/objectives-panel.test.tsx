@@ -13,6 +13,16 @@ const deleteObjectiveMock = jest.fn();
 const apiFetchMock = jest.fn();
 const readJsonBodyMock = jest.fn();
 const readErrorMessageMock = jest.fn();
+const requestObjectiveAssistMock = jest.fn();
+
+class HttpError extends Error {
+  status: number;
+
+  constructor(message: string, status: number) {
+    super(message);
+    this.status = status;
+  }
+}
 
 let ObjectivesPanel: ComponentType<ObjectivesPanelProps>;
 
@@ -65,6 +75,8 @@ beforeAll(async () => {
     apiFetch: (...args: unknown[]) => apiFetchMock(...args),
     readJsonBody: (...args: unknown[]) => readJsonBodyMock(...args),
     readErrorMessage: (...args: unknown[]) => readErrorMessageMock(...args),
+    requestObjectiveAssist: (...args: unknown[]) => requestObjectiveAssistMock(...args),
+    HttpError,
   }));
 
   const module = await import("../components/objectives-panel");
@@ -146,6 +158,7 @@ describe("ObjectivesPanel", () => {
     readJsonBodyMock.mockReset();
     readErrorMessageMock.mockReset();
     readErrorMessageMock.mockResolvedValue("Request failed");
+    requestObjectiveAssistMock.mockReset();
   });
 
   it("loads objectives and displays them", async () => {
@@ -274,5 +287,58 @@ describe("ObjectivesPanel", () => {
     await waitFor(() => expect(deleteObjectiveMock).toHaveBeenCalledWith("root-1"));
 
     confirmSpy.mockRestore();
+  });
+
+  it("requests description assists against the live endpoint and updates the form", async () => {
+    const objective = createObjectiveRecord("obj-1", { title: "Existing", descriptionMd: "Initial copy" });
+    listCampaignObjectivesMock.mockResolvedValue([objective]);
+    requestObjectiveAssistMock.mockResolvedValue({
+      objective: createObjectiveRecord("obj-1", { descriptionMd: "## Assisted content" }),
+      assist: {
+        field: "description_md",
+        content: "## Assisted content",
+        provider: { name: "ollama", model: "qwen3:8b" },
+        metrics: null,
+        cache: null,
+      },
+    });
+
+    const user = userEvent.setup();
+    renderPanel();
+
+    await waitFor(() => expect(listCampaignObjectivesMock).toHaveBeenCalled());
+    const editButton = await screen.findByRole("button", { name: /^Edit$/ });
+    await user.click(editButton);
+    const dialog = await screen.findByRole("dialog", { name: /edit objective/i });
+
+    const assistButton = within(dialog).getByRole("button", { name: /assist description/i });
+    await user.click(assistButton);
+
+    await waitFor(() => expect(requestObjectiveAssistMock).toHaveBeenCalledWith("obj-1", "description"));
+
+    const descriptionInput = within(dialog).getByRole("textbox", { name: /description/i });
+    await waitFor(() => expect(descriptionInput).toHaveValue("## Assisted content"));
+    expect(await within(dialog).findByText(/Generated with ollama · qwen3:8b\./i)).toBeInTheDocument();
+  });
+
+  it("surfaces throttling feedback when the assist endpoint rate limits the request", async () => {
+    const objective = createObjectiveRecord("obj-2", { title: "Existing" });
+    listCampaignObjectivesMock.mockResolvedValue([objective]);
+    requestObjectiveAssistMock.mockRejectedValue(new HttpError("Too many requests", 429));
+
+    const user = userEvent.setup();
+    renderPanel();
+
+    await waitFor(() => expect(listCampaignObjectivesMock).toHaveBeenCalled());
+    const editButton = await screen.findByRole("button", { name: /^Edit$/ });
+    await user.click(editButton);
+    const dialog = await screen.findByRole("dialog", { name: /edit objective/i });
+
+    const assistButton = within(dialog).getByRole("button", { name: /assist description/i });
+    await user.click(assistButton);
+
+    await waitFor(() => expect(requestObjectiveAssistMock).toHaveBeenCalledWith("obj-2", "description"));
+    expect(await within(dialog).findByText(/assist request throttled/i)).toBeInTheDocument();
+    await waitFor(() => expect(assistButton).not.toBeDisabled());
   });
 });

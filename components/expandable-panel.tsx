@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useMemo } from "react";
 import { Button } from "./ui/button";
 import { ScrollArea } from "./ui/scroll-area";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "./ui/select";
@@ -12,10 +12,12 @@ import { Inventory } from "./inventory";
 import { Spellbook } from "./spellbook";
 import { FeatureUnavailable } from "./feature-unavailable";
 import { useUser } from "../contexts/UserContext";
+import { useGameSession } from "../contexts/GameSessionContext";
 import { characterHelpers, type Character } from '../utils/database/data-helpers';
 import { createAsyncHandler } from '../utils/error-handling';
 import { OfflineModeWrapper } from './database-status';
 import { NarrativeConsole } from "./narrative-console";
+import { DMSidebar } from "./dm-sidebar";
 import { 
   User, 
   Package, 
@@ -28,7 +30,8 @@ import {
   ScrollText,
   Book,
   Library,
-  Cog
+  Cog,
+  Crown
 } from "lucide-react";
 
 interface ExpandablePanelProps {
@@ -38,11 +41,20 @@ interface ExpandablePanelProps {
 
 export function ExpandablePanel({ activePanel, onClose }: ExpandablePanelProps) {
   const { user } = useUser();
+  const { activeCampaign, viewerRole } = useGameSession();
   const [refreshTrigger, setRefreshTrigger] = useState(0);
   const [selectedCharacter, setSelectedCharacter] = useState<string>('');
   const [userCharacters, setUserCharacters] = useState<Character[]>([]);
   const [loadingCharacters, setLoadingCharacters] = useState(true);
   const [characterError, setCharacterError] = useState<string | null>(null);
+
+  const canAccessDmSidebar = useMemo(() => {
+    if (!user) return false;
+    if (user.roles?.includes('admin')) return true;
+    if (viewerRole && ['dm', 'co-dm'].includes(viewerRole)) return true;
+    if (activeCampaign?.dmUserId && activeCampaign.dmUserId === user.id) return true;
+    return false;
+  }, [activeCampaign?.dmUserId, user, viewerRole]);
 
   // Load user's characters when component mounts
   useEffect(() => {
@@ -130,6 +142,17 @@ export function ExpandablePanel({ activePanel, onClose }: ExpandablePanelProps) 
         return <Compendium />;
       case "settings":
         return <Settings />;
+      case "dm-sidebar":
+        if (!canAccessDmSidebar) {
+          return (
+            <FeatureUnavailable
+              feature="DM Sidebar"
+              reason="Only the active campaign’s DM, co-DMs, or administrators can access live sidebar controls."
+              remediation="Request DM access from the campaign owner or switch to a campaign where you have DM permissions."
+            />
+          );
+        }
+        return <DMSidebar />;
       default:
         return null;
     }
@@ -148,6 +171,7 @@ export function ExpandablePanel({ activePanel, onClose }: ExpandablePanelProps) 
       case "journals": return "Session Notes";
       case "compendium": return "Compendium";
       case "settings": return "Settings";
+      case "dm-sidebar": return "DM Sidebar";
       default: return "";
     }
   };
@@ -165,6 +189,7 @@ export function ExpandablePanel({ activePanel, onClose }: ExpandablePanelProps) 
       case "journals": return <ScrollText className="w-5 h-5" />;
       case "compendium": return <Library className="w-5 h-5" />;
       case "settings": return <Cog className="w-5 h-5" />;
+      case "dm-sidebar": return <Crown className="w-5 h-5" />;
       default: return null;
     }
   };
