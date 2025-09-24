@@ -498,6 +498,18 @@ describe('DM Toolkit integration tests', () => {
 
     const sessionsPath = `/api/campaigns/${state.baseCampaignId}/sessions`;
 
+    const rosterResponse = await api
+      .get(`/api/campaigns/${state.baseCampaignId}/players`)
+      .set('Authorization', `Bearer ${state.dmToken}`);
+    ensureOk(rosterResponse, 200, 'Roster fetch failed for DM');
+    expect(Array.isArray(rosterResponse.body)).toBe(true);
+
+    const rosterPlayerAttempt = await api
+      .get(`/api/campaigns/${state.baseCampaignId}/players`)
+      .set('Authorization', `Bearer ${state.playerToken}`);
+    expect(rosterPlayerAttempt.status).toBe(403);
+    expect(rosterPlayerAttempt.body?.error).toBe('dm_action_forbidden');
+
     const missingAuth = await api
       .post(sessionsPath)
       .send({ title: 'No token session' });

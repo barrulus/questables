@@ -1397,6 +1397,39 @@ Return the sessions scheduled for a campaign in reverse session-number order.
 - `403 campaign_access_forbidden`: Caller is not part of the campaign (also returned when the campaign cannot be found)
 - `500 session_list_failed`: Unexpected database failure while fetching sessions
 
+### GET /api/campaigns/:campaignId/players
+
+Return the active campaign roster with user and character details for session assignment.
+
+**Headers:**
+- `Authorization: Bearer <jwt>` (required; DM/co-DM/Admin)
+
+**Parameters:**
+- `campaignId` (path): Campaign UUID
+
+**Response (200 OK):**
+```json
+[
+  {
+    "id": "campaign-player-uuid",
+    "campaign_player_id": "campaign-player-uuid",
+    "user_id": "user-uuid",
+    "campaign_user_id": "user-uuid",
+    "username": "dungeonmistress",
+    "role": "player",
+    "status": "active",
+    "character_id": "character-uuid",
+    "character_name": "Elowen",
+    "character_level": 6
+  }
+]
+```
+
+**Errors:**
+- `401 authentication_required`: Missing or invalid bearer token
+- `403 dm_action_forbidden`: Caller lacks DM/co-DM/Admin privileges for the campaign
+- `500 campaign_players_failed`: Unexpected database failure while fetching the roster
+
 ### POST /api/campaigns/:campaignId/sessions
 
 Create a new scheduled session. The server assigns the next sequential `session_number`.

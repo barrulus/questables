@@ -3173,6 +3173,56 @@ app.get('/api/campaigns/:campaignId/characters', async (req, res) => {
   }
 });
 
+app.get(
+  '/api/campaigns/:campaignId/players',
+  requireAuth,
+  [
+    param('campaignId')
+      .isUUID()
+      .withMessage('campaignId must be a valid UUID'),
+  ],
+  handleValidationErrors,
+  async (req, res) => {
+    const { campaignId } = req.params;
+    const client = await pool.connect();
+
+    try {
+      const viewer = await getViewerContextOrThrow(client, campaignId, req.user);
+      ensureDmControl(viewer, 'Only the campaign DM or co-DM may view the full roster.');
+
+      const result = await client.query(
+        `SELECT
+            cp.id,
+            cp.id AS campaign_player_id,
+            cp.user_id,
+            cp.user_id AS campaign_user_id,
+            cp.role,
+            cp.status,
+            cp.character_id,
+            up.username,
+            c.name AS character_name,
+            c.level AS character_level
+          FROM public.campaign_players cp
+          JOIN public.user_profiles up ON cp.user_id = up.id
+          LEFT JOIN public.characters c ON cp.character_id = c.id
+         WHERE cp.campaign_id = $1
+         ORDER BY up.username`,
+        [campaignId]
+      );
+
+      res.json(result.rows);
+    } catch (error) {
+      console.error('[Campaigns] Get players error:', error);
+      res.status(error.status || 500).json({
+        error: error.code || 'campaign_players_failed',
+        message: error.message || 'Failed to load campaign roster',
+      });
+    } finally {
+      client.release();
+    }
+  }
+);
+
 app.delete('/api/campaigns/:campaignId/players/:userId', async (req, res) => {
   const { campaignId, userId } = req.params;
 
