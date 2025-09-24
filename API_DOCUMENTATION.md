@@ -14,6 +14,45 @@ This document describes the REST API endpoints provided by the Questables databa
 - Development: `http://localhost:3001`
 - All endpoints require `Content-Type: application/json` for POST/PUT requests
 
+## Maps API
+
+### GET /api/maps/:worldId/markers
+
+Return the live marker catalog for a given world map. Results reflect the persisted
+`maps_markers` table—no placeholder data is returned.
+
+**Parameters:**
+- `worldId` (path): UUID of the world map.
+
+**Query Parameters:**
+- `bounds` (optional): JSON-encoded bounding box string formatted as
+  `{"north": 0, "south": 0, "east": 0, "west": 0}`. All values must be numeric. The
+  server responds with `400 invalid_bounds` when parsing fails or a value is not a number.
+
+**Response (200 OK):**
+```json
+[
+  {
+    "id": "3c950b83-9a5a-4dce-9222-64eb4c9694f2",
+    "world_id": "c8a2d2b1-6e8c-4c99-9f96-3d5243e13d0d",
+    "marker_id": 42,
+    "type": "waypoint",
+    "icon": "waypoint",
+    "x_px": 10234.12,
+    "y_px": 8745.88,
+    "note": "Ruined watchtower",
+    "geometry": {
+      "type": "Point",
+      "coordinates": [10234.12, 8745.88]
+    }
+  }
+]
+```
+
+**Errors:**
+- `400 invalid_bounds`: `bounds` query parameter missing or not parseable as numeric north/south/east/west values.
+- `500`: Unexpected database failure while reading markers.
+
 ## Health Monitoring
 
 ### GET /api/health
@@ -1310,6 +1349,217 @@ Return a GeoJSON LineString of the selected player’s recent movement trail whe
 - `500`: Unexpected database failure while generating the trail
 
 **Coordinate system reminder:** All movement, teleport, spawn, and NPC map coordinates use the SRID-0 “world” space (the same `xworld/yworld` columns exposed on map tables such as `maps_burgs`). If you only have pixel-space values (`x_px/y_px`), convert them with `meters_per_pixel` before calling the API.
+
+## Session Lifecycle
+
+The DM Toolkit’s Session Manager consumes the endpoints below to list, create, start, and finish campaign sessions. All routes expect an authenticated bearer token. Mutating endpoints (`POST`/`PUT`) are limited to the campaign’s DM, co-DM, or an administrator; other campaign members receive `dm_action_forbidden`. Read endpoints require the caller to belong to the campaign and otherwise respond with `campaign_access_forbidden`.
+
+### GET /api/campaigns/:campaignId/sessions
+
+Return the sessions scheduled for a campaign in reverse session-number order.
+
+**Headers:**
+- `Authorization: Bearer <jwt>` (required; any campaign member)
+
+**Parameters:**
+- `campaignId` (path): Campaign UUID
+
+**Response (200 OK):**
+```json
+[
+  {
+    "id": "3e00fd89-7854-4bae-9db3-0ec9098c4a5e",
+    "campaign_id": "fd8e6d4e-0f5c-4865-b2f5-6b8fbf87194c",
+    "session_number": 6,
+    "title": "Siege of the Gloaming Vault",
+    "summary": "Party infiltrated the outer ward",
+    "dm_notes": "Prep lightning ward for next scene",
+    "scheduled_at": "2025-09-25T23:00:00.000Z",
+    "started_at": "2025-09-25T23:12:19.000Z",
+    "ended_at": "2025-09-26T02:58:03.000Z",
+    "duration": 226,
+    "experience_awarded": 1200,
+    "status": "completed",
+    "participant_count": 5,
+    "created_at": "2025-09-18T04:02:11.524Z",
+    "updated_at": "2025-09-26T02:58:03.442Z"
+  }
+]
+```
+
+**Field notes:**
+- `status` is one of `scheduled`, `active`, `completed`, or `cancelled`.
+- `participant_count` counts rows in `session_participants` and helps the UI show attendance at-a-glance.
+- `duration` is stored as whole minutes.
+
+**Errors:**
+- `401 authentication_required`: Missing or invalid bearer token
+- `403 campaign_access_forbidden`: Caller is not part of the campaign (also returned when the campaign cannot be found)
+- `500 session_list_failed`: Unexpected database failure while fetching sessions
+
+### POST /api/campaigns/:campaignId/sessions
+
+Create a new scheduled session. The server assigns the next sequential `session_number`.
+
+**Headers:**
+- `Authorization: Bearer <jwt>` (required; DM/co-DM/Admin)
+- `Content-Type: application/json`
+
+**Parameters:**
+- `campaignId` (path): Campaign UUID
+
+**Request Body:**
+```json
+{
+  "title": "Arcforge Negotiations",
+  "summary": "Prep bullet points for the envoy",
+  "dm_notes": "Keep Veilguard ambush in reserve",
+  "scheduled_at": "2025-09-30T19:00:00.000Z"
+}
+```
+
+`title` is required. `summary`, `dm_notes`, and `scheduled_at` are optional and may be `null`.
+
+**Response (201 Created):**
+Returns the inserted session row using the same shape as the GET endpoint.
+
+**Errors:**
+- `400 Validation failed`: Payload failed schema checks (see `details` array)
+- `401 authentication_required`: Missing or invalid bearer token
+- `403 dm_action_forbidden`: Caller lacks DM/co-DM/Admin privileges for the campaign
+- `404 campaign_not_found`: Campaign does not exist
+- `500 session_create_failed`: Unexpected database failure while creating the session
+
+### PUT /api/sessions/:sessionId
+
+Update session status or timing fields (e.g., starting or ending a session). Status transitions follow the live workflow: `scheduled → active → completed`, with `cancelled` available from `scheduled` or `active`.
+
+**Headers:**
+- `Authorization: Bearer <jwt>` (required; DM/co-DM/Admin)
+- `Content-Type: application/json`
+
+**Parameters:**
+- `sessionId` (path): Session UUID
+
+**Request Body:**
+```json
+{
+  "status": "completed",
+  "started_at": "2025-09-30T19:07:42.000Z",
+  "ended_at": "2025-09-30T22:31:05.000Z",
+  "duration": 204,
+  "experience_awarded": 850,
+  "summary": "Resolved the Arcforge treaty without bloodshed."
+}
+```
+
+Provide only the fields you intend to change. `duration` expects minutes and `experience_awarded` must be a non-negative integer. Passing `null` clears `summary`, `started_at`, or `ended_at`.
+
+**Response (200 OK):**
+The updated session row (identical structure to the GET response).
+
+**Errors:**
+- `400 Validation failed`: Payload failed schema checks (see `details` array)
+- `400 invalid_status_transition`: Requested status change is not allowed from the current state
+- `400 no_updates_provided`: Request omitted all updatable fields
+- `401 authentication_required`: Missing or invalid bearer token
+- `403 dm_action_forbidden`: Caller lacks DM/co-DM/Admin privileges for the campaign
+- `404 session_not_found`: Session does not exist
+- `500 session_update_failed`: Unexpected database failure while updating the session
+
+### POST /api/sessions/:sessionId/participants
+
+Attach or update a participant record for a session. The target user must already belong to the campaign roster.
+
+**Headers:**
+- `Authorization: Bearer <jwt>` (required; DM/co-DM/Admin)
+- `Content-Type: application/json`
+
+**Parameters:**
+- `sessionId` (path): Session UUID
+
+**Request Body:**
+```json
+{
+  "user_id": "f53d8d84-ee40-44d6-b646-67c096ef6876",
+  "character_id": "c71f4866-1d46-4a92-83ff-33e2ee8f0db1",
+  "character_level_start": 6,
+  "attendance_status": "present"
+}
+```
+
+`character_level_start` defaults to `1` when omitted. `attendance_status` defaults to `present` and must be one of `present`, `absent`, `late`, or `left_early`.
+
+**Response (200 OK):**
+```json
+{ "success": true }
+```
+
+**Errors:**
+- `400 Validation failed`: Payload failed schema checks (see `details` array)
+- `400 character_mismatch`: Character does not belong to the specified user
+- `401 authentication_required`: Missing or invalid bearer token
+- `403 dm_action_forbidden`: Caller lacks DM/co-DM/Admin privileges for the campaign
+- `404 session_not_found`: Session does not exist
+- `404 campaign_player_not_found`: User is not part of the campaign
+- `404 character_not_found`: Character ID not found
+- `500 session_participant_failed`: Unexpected database failure while saving the participant record
+
+### GET /api/sessions/:sessionId/participants
+
+List the participants recorded against a session, including attendance metadata.
+
+**Headers:**
+- `Authorization: Bearer <jwt>` (required; any campaign member)
+
+**Parameters:**
+- `sessionId` (path): Session UUID
+
+**Response (200 OK):**
+```json
+[
+  {
+    "id": "c8186813-53d5-4e79-a5cb-4fa0feb8e5d9",
+    "session_id": "3e00fd89-7854-4bae-9db3-0ec9098c4a5e",
+    "user_id": "f53d8d84-ee40-44d6-b646-67c096ef6876",
+    "character_id": "c71f4866-1d46-4a92-83ff-33e2ee8f0db1",
+    "character_name": "Elowen",
+    "username": "dungeonmistress",
+    "character_level_start": 6,
+    "character_level_end": 6,
+    "attendance_status": "present"
+  }
+]
+```
+
+**Errors:**
+- `401 authentication_required`: Missing or invalid bearer token
+- `403 campaign_access_forbidden`: Caller is not part of the campaign
+- `404 session_not_found`: Session does not exist
+- `500 session_participants_failed`: Unexpected database failure while fetching participants
+
+### DELETE /api/sessions/:sessionId/participants/:userId
+
+Remove a participant from the session roster.
+
+**Headers:**
+- `Authorization: Bearer <jwt>` (required; DM/co-DM/Admin)
+
+**Parameters:**
+- `sessionId` (path): Session UUID
+- `userId` (path): User UUID for the participant to remove
+
+**Response (200 OK):**
+```json
+{ "success": true }
+```
+
+**Errors:**
+- `401 authentication_required`: Missing or invalid bearer token
+- `403 dm_action_forbidden`: Caller lacks DM/co-DM/Admin privileges for the campaign
+- `404 session_not_found`: Session does not exist
+- `404 participant_not_found`: The specified user is not currently attached to the session
+- `500 session_participant_remove_failed`: Unexpected database failure while removing the participant
 
 ## DM Sidebar API
 

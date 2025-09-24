@@ -31,6 +31,7 @@ const state = {
   locationId: null,
   spawnId: null,
   createdCampaignIds: new Set(),
+  createdSessionIds: new Set(),
   createdObjectiveIds: new Set(),
 };
 
@@ -488,6 +489,132 @@ describe('DM Toolkit integration tests', () => {
 
     expect(response.status).toBe(403);
     expect(response.body?.error).toBe('objective_forbidden');
+  });
+
+  test('enforces session lifecycle permissions and validation', async () => {
+    if (guard()) {
+      return;
+    }
+
+    const sessionsPath = `/api/campaigns/${state.baseCampaignId}/sessions`;
+
+    const missingAuth = await api
+      .post(sessionsPath)
+      .send({ title: 'No token session' });
+    expect(missingAuth.status).toBe(401);
+
+    const playerAttempt = await api
+      .post(sessionsPath)
+      .set('Authorization', `Bearer ${state.playerToken}`)
+      .send({ title: 'Player session attempt' });
+    expect(playerAttempt.status).toBe(403);
+    expect(playerAttempt.body?.error).toBe('dm_action_forbidden');
+
+    const invalidPayload = await api
+      .post(sessionsPath)
+      .set('Authorization', `Bearer ${state.dmToken}`)
+      .send({ summary: 'Missing title' });
+    expect(invalidPayload.status).toBe(400);
+    expect(invalidPayload.body?.error).toBe('Validation failed');
+
+    const createdResponse = await api
+      .post(sessionsPath)
+      .set('Authorization', `Bearer ${state.dmToken}`)
+      .send({
+        title: 'Integration Hardened Session',
+        summary: 'Created by DM for auth tests',
+        scheduled_at: new Date().toISOString(),
+      });
+    ensureOk(createdResponse, 201, 'Session creation failed for DM');
+    const createdSessionId = createdResponse.body?.id;
+    expect(createdSessionId).toBeDefined();
+    if (createdSessionId) {
+      state.createdSessionIds.add(createdSessionId);
+    }
+
+    const playerUpdate = await api
+      .put(`/api/sessions/${createdSessionId}`)
+      .set('Authorization', `Bearer ${state.playerToken}`)
+      .send({ status: 'active' });
+    expect(playerUpdate.status).toBe(403);
+    expect(playerUpdate.body?.error).toBe('dm_action_forbidden');
+
+    const invalidStatusTransition = await api
+      .put(`/api/sessions/${createdSessionId}`)
+      .set('Authorization', `Bearer ${state.dmToken}`)
+      .send({ status: 'completed' });
+    expect(invalidStatusTransition.status).toBe(400);
+    expect(invalidStatusTransition.body?.error).toBe('invalid_status_transition');
+
+    const startedAt = new Date().toISOString();
+    const startResponse = await api
+      .put(`/api/sessions/${createdSessionId}`)
+      .set('Authorization', `Bearer ${state.dmToken}`)
+      .send({ status: 'active', started_at: startedAt });
+    ensureOk(startResponse, 200, 'Session start failed for DM');
+    expect(startResponse.body?.status).toBe('active');
+
+    const endedAt = new Date(Date.now() + 15 * 60 * 1000).toISOString();
+    const completeResponse = await api
+      .put(`/api/sessions/${createdSessionId}`)
+      .set('Authorization', `Bearer ${state.dmToken}`)
+      .send({
+        status: 'completed',
+        ended_at: endedAt,
+        duration: 120,
+        experience_awarded: 450,
+        summary: 'Session wrapped successfully',
+      });
+    ensureOk(completeResponse, 200, 'Session completion failed for DM');
+    expect(completeResponse.body?.status).toBe('completed');
+    expect(completeResponse.body?.experience_awarded).toBe(450);
+
+    const participantForbidden = await api
+      .post(`/api/sessions/${createdSessionId}/participants`)
+      .set('Authorization', `Bearer ${state.playerToken}`)
+      .send({
+        user_id: state.playerUserId,
+        character_id: state.characterId,
+        character_level_start: 3,
+      });
+    expect(participantForbidden.status).toBe(403);
+    expect(participantForbidden.body?.error).toBe('dm_action_forbidden');
+
+    const participantResponse = await api
+      .post(`/api/sessions/${createdSessionId}/participants`)
+      .set('Authorization', `Bearer ${state.dmToken}`)
+      .send({
+        user_id: state.playerUserId,
+        character_id: state.characterId,
+        character_level_start: 3,
+        attendance_status: 'present',
+      });
+    ensureOk(participantResponse, 200, 'Session participant add failed for DM');
+
+    const participantsView = await api
+      .get(`/api/sessions/${createdSessionId}/participants`)
+      .set('Authorization', `Bearer ${state.playerToken}`);
+    ensureOk(participantsView, 200, 'Participant list retrieval failed for player');
+    expect(Array.isArray(participantsView.body)).toBe(true);
+
+    const playerRemoveAttempt = await api
+      .delete(`/api/sessions/${createdSessionId}/participants/${state.playerUserId}`)
+      .set('Authorization', `Bearer ${state.playerToken}`);
+    expect(playerRemoveAttempt.status).toBe(403);
+    expect(playerRemoveAttempt.body?.error).toBe('dm_action_forbidden');
+
+    const removeResponse = await api
+      .delete(`/api/sessions/${createdSessionId}/participants/${state.playerUserId}`)
+      .set('Authorization', `Bearer ${state.dmToken}`);
+    ensureOk(removeResponse, 200, 'Session participant removal failed for DM');
+    expect(removeResponse.body?.success).toBe(true);
+
+    const afterRemoval = await api
+      .get(`/api/sessions/${createdSessionId}/participants`)
+      .set('Authorization', `Bearer ${state.dmToken}`);
+    ensureOk(afterRemoval, 200, 'Participant refresh after removal failed');
+    expect(Array.isArray(afterRemoval.body)).toBe(true);
+    expect(afterRemoval.body.length).toBe(0);
   });
 
   test('updates session focus for the DM and rejects players', async () => {

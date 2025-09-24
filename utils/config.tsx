@@ -4,17 +4,17 @@ import { z } from 'zod';
 // Environment configuration schema
 const envSchema = z.object({
   // Server configuration
-  DATABASE_SERVER_PORT: z.string().default('3001'),
-  DATABASE_HOST: z.string().default('localhost'),
-  DATABASE_PORT: z.string().default('5432'),
-  DATABASE_NAME: z.string().default('dnd_app'),
+  DATABASE_SERVER_PORT: z.string(),
+  DATABASE_HOST: z.string(),
+  DATABASE_PORT: z.string(),
+  DATABASE_NAME: z.string(),
   DATABASE_USER: z.string().optional(),
   DATABASE_PASSWORD: z.string().optional(),
   DATABASE_SSL: z.enum(['true', 'false']).default('false'),
   
   // Frontend configuration
-  FRONTEND_URL: z.string().default('http://localhost:3000'),
-  VITE_DATABASE_URL: z.string().default('http://localhost:3001'),
+  FRONTEND_URL: z.string(),
+  VITE_DATABASE_URL: z.string(),
   
   // Security configuration
   JWT_SECRET: z.string().default('your-super-secret-jwt-key-change-this-in-production'),

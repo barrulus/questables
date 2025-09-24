@@ -767,6 +767,44 @@ Always append new entries; do not erase or rewrite previous log items except to 
   - `npx eslint components/objectives-panel.tsx components/combat-tracker.tsx components/npc-manager.tsx --ext ts,tsx`
 - **Remaining Gaps / Blockers:** Audit other Shadcn/Radix selects during future feature work to ensure no additional empty-string placeholders remain.
 
+## Task 1 – Session Manager Prep Integration
+- **Date:** 2025-09-24
+- **Engineer(s):** Codex Agent
+- **Work Done:**
+  - Corrected the session selection handler so list clicks keep the manager synced on the active session id (`components/session-manager.tsx`).
+  - Embedded the live `SessionManager` inside the campaign prep column with DM/co-DM gating and a restricted-access notice for viewers without control roles (`components/campaign-prep.tsx`).
+  - Documented the session lifecycle endpoints backing the UI, including current auth limitations, so frontend behavior matches the Express handlers (`API_DOCUMENTATION.md`).
+- **Tests & Verification:**
+  - `npx eslint components/session-manager.tsx components/campaign-prep.tsx --ext ts,tsx`
+- **Remaining Gaps / Blockers:** Session CRUD routes still lack enforced authentication/role checks; coordinate with Task 2 to land `requireAuth` plus `getViewerContextOrThrow` guards before exposing the controls broadly.
+
+## Task 2 – Session Endpoint Hardening
+- **Date:** 2025-09-24
+- **Engineer(s):** Codex Agent
+- **Work Done:**
+  - Wrapped session creation, lifecycle updates, and participant mutations in `requireAuth` and enforced DM/co-DM/Admin permissions via `getViewerContextOrThrow`/`ensureDmControl` (`server/database-server.js`).
+  - Added field validation for session payloads (status transitions, timestamps, XP, attendance) and ensured campaign membership checks guard participant CRUD (`server/database-server.js`).
+  - Required authentication for listing sessions/participants and refreshed the public API documentation to describe the new auth/validation behavior (`API_DOCUMENTATION.md`).
+- **Tests & Verification:**
+  - `npx eslint server/database-server.js --ext js` (fails: longstanding unused-variable debt in legacy portions of the Express bundle; new hardening introduces no additional lint regressions)
+  - `npx eslint tests/server/dm-toolkit.integration.test.js --ext js`
+  - `npm test -- --runTestsByPath tests/server/dm-toolkit.integration.test.js --runInBand`
+- **Remaining Gaps / Blockers:** Server lint debt predates this change (unused helpers/constants). Hardened endpoints still rely on Task 3’s realtime updates to broadcast lifecycle changes.
+
+## Task 3 – Session Participant Management UI
+- **Date:** 2025-09-24
+- **Engineer(s):** Codex Agent
+- **Work Done:**
+  - Added roster-driven participant management to the Session Manager: DMs can add members, adjust attendance/levels, and remove players with live API calls (`components/session-manager.tsx`).
+  - Exposed campaign roster metadata through the session UI, including filtering out already-assigned users and mirroring backend validation states in the UI.
+  - Implemented REST support for removing participants and tightened the roster payload to include usernames for selection flows (`server/database-server.js`).
+  - Updated public API documentation to describe participant CRUD capabilities and new DELETE endpoint (`API_DOCUMENTATION.md`).
+- **Tests & Verification:**
+  - `npx eslint components/session-manager.tsx --ext ts,tsx`
+  - `npx eslint tests/server/dm-toolkit.integration.test.js --ext js`
+  - `npm test -- --runTestsByPath tests/server/dm-toolkit.integration.test.js --runInBand`
+- **Remaining Gaps / Blockers:** UI still relies on backend upsert semantics; dedicated PATCH endpoints would reduce payload size for attendance-only updates. Realtime sync (Task 4) is still pending to broadcast participant changes.
+
 ## Task 20 – DM Sidebar Interface
 - **Date:** 2025-09-23
 - **Engineer(s):** Codex Agent
@@ -824,3 +862,17 @@ Always append new entries; do not erase or rewrite previous log items except to 
   - `npx eslint server/utils/telemetry.js --ext js` (pass)
   - `npx eslint server/database-server.js --ext js` (fails: legacy Node globals/unused variable debt persists; telemetry instrumentation adds no new violations)
 - **Remaining Gaps / Blockers:** Telemetry snapshot is in-memory only; persist the data to external monitoring if long-term retention is required. PostgreSQL sandbox restrictions still limit automated test coverage of the new telemetry endpoints.
+
+## Task 24 – World Map Marker API Enablement
+- **Date:** 2025-09-24
+- **Engineer(s):** Codex Agent
+- **Work Done:**
+  - Implemented `GET /api/maps/:worldId/markers` in `server/database-server.js` to return live marker records with optional bounding-box filtering.
+  - Added ordered response semantics and numeric validation for bounds to prevent silent fallbacks when clients provide malformed viewports.
+  - Documented the new endpoint contract in `API_DOCUMENTATION.md` and clarified the `invalid_bounds` error shape.
+- **Cleanups:** None (new endpoint only).
+- **Documentation Updates:** `API_DOCUMENTATION.md` (new Maps API section).
+- **Tests & Verification:**
+  - `npx eslint server/database-server.js --ext js` (fails: longstanding unused-variable debt predating this change; markers endpoint introduces no new lint findings).
+  - `npx eslint API_DOCUMENTATION.md --ext md` (fails: ESLint config lacks Markdown parser support; stops at line 1).
+- **Remaining Gaps / Blockers:** Sandbox restrictions block PostgreSQL connections (`psql` returns EPERM), so the new route still needs a live-environment verification run to confirm real marker payloads.

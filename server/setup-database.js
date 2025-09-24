@@ -20,11 +20,11 @@ for (const f of [
 
 // Database connection
 const pool = new Pool({
-  host: process.env.DATABASE_HOST || "localhost",
-  port: parseInt(process.env.DATABASE_PORT || "5432", 10),
-  database: process.env.DATABASE_NAME || process.env.PGDATABASE || "dnd_app",
-  user: process.env.DATABASE_USER || process.env.PGUSER || "postgres",
-  password: process.env.DATABASE_PASSWORD || process.env.PGPASSWORD || "",
+  host: process.env.DATABASE_HOST,
+  port: parseInt(process.env.DATABASE_PORT),
+  database: process.env.DATABASE_NAME || process.env.PGDATABASE,
+  user: process.env.DATABASE_USER || process.env.PGUSER,
+  password: process.env.DATABASE_PASSWORD,
   ssl:
     process.env.DATABASE_SSL === "true" ? { rejectUnauthorized: false } : false,
 });

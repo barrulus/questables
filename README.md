@@ -118,8 +118,8 @@ The application now features a complete database integration with:
 
 The application will be available at:
 - Frontend: http://localhost:3000
-- Backend API: http://localhost:3001 *(or https://quixote.tail3f19fe.ts.net:3001 when TLS is enabled)*
-- Health Check: http://localhost:3001/api/health *(or https://quixote.tail3f19fe.ts.net:3001/health)*
+- Backend API: http://localhost:3001 
+- Health Check: http://localhost:3001/api/health 
 
 ### ⚠️ Important Notes
 
@@ -183,15 +183,15 @@ FRONTEND_URL=http://localhost:3000
 
 # Optional HTTPS configuration
 # DATABASE_SERVER_USE_TLS=true
-# DATABASE_SERVER_TLS_CERT=../quixote.tail3f19fe.ts.net.crt
-# DATABASE_SERVER_TLS_KEY=../quixote.tail3f19fe.ts.net.key
-# DATABASE_SERVER_PUBLIC_HOST=quixote.tail3f19fe.ts.net
-# VITE_DATABASE_SERVER_URL=https://quixote.tail3f19fe.ts.net:3001
+# DATABASE_SERVER_TLS_CERT=
+# DATABASE_SERVER_TLS_KEY=
+# DATABASE_SERVER_PUBLIC_HOST=
+# VITE_DATABASE_SERVER_URL=
 # When enabling HTTPS for the frontend dev server, update FRONTEND_URL and set:
-# FRONTEND_URL=https://quixote.tail3f19fe.ts.net:3000
-# DEV_SERVER_USE_TLS=true
-# DEV_SERVER_TLS_CERT=./quixote.tail3f19fe.ts.net.crt
-# DEV_SERVER_TLS_KEY=./quixote.tail3f19fe.ts.net.key
+# FRONTEND_URL=
+# DEV_SERVER_USE_TLS=
+# DEV_SERVER_TLS_CERT=
+# DEV_SERVER_TLS_KEY=
 
 ### LLM Provider Configuration
 
@@ -228,7 +228,7 @@ Provider definitions can now be stored in `public.llm_providers`. Insert a row f
 
 ```sql
 INSERT INTO public.llm_providers (name, adapter, host, model, default_provider)
-VALUES ('ollama', 'ollama', 'http://192.168.1.34', 'qwen3:8b', true)
+VALUES ('ollama', 'ollama', 'http://localhost:11434', 'qwen3:8b', true)
 ON CONFLICT (name) DO UPDATE
 SET host = EXCLUDED.host,
     model = EXCLUDED.model,
@@ -280,7 +280,7 @@ npm run build
 - Run the live smoke suite once the backend is accessible:
 
   ```bash
-  LIVE_API_BASE_URL=https://quixote.tail3f19fe.ts.net:3001 \
+  LIVE_API_BASE_URL= \
   LIVE_API_ADMIN_EMAIL="${DEFAULT_ADMIN_EMAIL:-admin@questables.example}" \
   LIVE_API_ADMIN_PASSWORD="${DEFAULT_ADMIN_PASSWORD:-changeme}" \
   npm test -- --runTestsByPath tests/live-api.integration.test.js

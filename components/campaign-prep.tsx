@@ -9,6 +9,7 @@ import { Textarea } from "./ui/textarea";
 import { Skeleton } from "./ui/skeleton";
 import { CampaignSpawnMap, type CampaignSpawnMapProps } from "./campaign-spawn-map";
 import { ObjectivesPanel } from "./objectives-panel";
+import SessionManager from "./session-manager";
 import type { Campaign } from "./campaign-shared";
 import {
   listCampaignSpawns,
@@ -17,6 +18,7 @@ import {
 } from "../utils/api-client";
 import { apiFetch, readErrorMessage, readJsonBody } from "../utils/api-client";
 import { useUser } from "../contexts/UserContext";
+import { useGameSession } from "../contexts/GameSessionContext";
 
 interface CampaignPrepProps {
   campaign: Campaign | null;
@@ -80,6 +82,7 @@ export function CampaignPrep({
   const user = viewerOverride === undefined
     ? useUser().user
     : viewerOverride ?? null;
+  const { activeCampaignId, viewerRole } = useGameSession();
   const [worldMap, setWorldMap] = useState<WorldMapRecord | null>(worldMapOverride ?? null);
   const [worldMapLoading, setWorldMapLoading] = useState(worldMapOverride === undefined);
   const [worldMapError, setWorldMapError] = useState<string | null>(null);
@@ -99,6 +102,20 @@ export function CampaignPrep({
     if (user.roles?.includes("admin")) return true;
     return user.id === campaign.dm_user_id;
   }, [campaign, user]);
+
+  const campaignId = campaign?.id ?? null;
+  const normalizedViewerRole = typeof viewerRole === "string" ? viewerRole.toLowerCase() : null;
+  const isCampaignCoDm = useMemo(() => {
+    if (!campaignId || !normalizedViewerRole) {
+      return false;
+    }
+    if (normalizedViewerRole !== "co-dm") {
+      return false;
+    }
+    return activeCampaignId === campaignId;
+  }, [activeCampaignId, campaignId, normalizedViewerRole]);
+
+  const canManageSessions = Boolean(campaignId && (isCampaignDm || isCampaignCoDm));
 
   const loadWorldMap = useCallback(async () => {
     if (!campaign?.world_map_id) {
@@ -286,121 +303,143 @@ export function CampaignPrep({
 
   return (
     <div className="grid gap-4 xl:grid-cols-[minmax(0,3fr)_minmax(0,2fr)]">
-      <Card>
-        <CardHeader>
-          <CardTitle>Campaign Prep Map</CardTitle>
-          <CardDescription>
-            Place the default spawn pin for the party and capture any scene-setting notes that should load before a session.
-          </CardDescription>
-        </CardHeader>
-        <CardContent className="space-y-4">
-          {renderMap()}
+      <div className="space-y-4">
+        <Card>
+          <CardHeader>
+            <CardTitle>Campaign Prep Map</CardTitle>
+            <CardDescription>
+              Place the default spawn pin for the party and capture any scene-setting notes that should load before a session.
+            </CardDescription>
+          </CardHeader>
+          <CardContent className="space-y-4">
+            {renderMap()}
 
-          <div className="flex flex-wrap items-center gap-2">
-            <Button
-              variant="default"
-              size="sm"
-              disabled={!isCampaignDm || !worldMap || worldMapLoading}
-              onClick={() => setEditing(true)}
-            >
-              Set Spawn Location
-            </Button>
-            <Button
-              variant="outline"
-              size="sm"
-              onClick={handleEditNote}
-              disabled={!isCampaignDm || !spawn || spawnLoading}
-            >
-              Edit Spawn Note
-            </Button>
-            {spawnLoading && <span className="text-xs text-muted-foreground">Refreshing spawn…</span>}
-            {spawnError && <span className="text-xs text-destructive">{spawnError}</span>}
-          </div>
+            <div className="flex flex-wrap items-center gap-2">
+              <Button
+                variant="default"
+                size="sm"
+                disabled={!isCampaignDm || !worldMap || worldMapLoading}
+                onClick={() => setEditing(true)}
+              >
+                Set Spawn Location
+              </Button>
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={handleEditNote}
+                disabled={!isCampaignDm || !spawn || spawnLoading}
+              >
+                Edit Spawn Note
+              </Button>
+              {spawnLoading && <span className="text-xs text-muted-foreground">Refreshing spawn…</span>}
+              {spawnError && <span className="text-xs text-destructive">{spawnError}</span>}
+            </div>
 
-          <div className="rounded-md border bg-muted/40 p-4">
-            <h3 className="text-sm font-semibold">Current Spawn</h3>
-            {spawn ? (
-              <div className="mt-2 space-y-2 text-sm">
-                <div className="flex items-center justify-between">
-                  <span className="font-medium">Name</span>
-                  <span>{spawn.name || "Default Spawn"}</span>
-                </div>
-                {spawnCoordinates && (
+            <div className="rounded-md border bg-muted/40 p-4">
+              <h3 className="text-sm font-semibold">Current Spawn</h3>
+              {spawn ? (
+                <div className="mt-2 space-y-2 text-sm">
                   <div className="flex items-center justify-between">
-                    <span className="font-medium">Coordinates</span>
-                    <span>
-                      x: {spawnCoordinates.x}, y: {spawnCoordinates.y}
-                    </span>
+                    <span className="font-medium">Name</span>
+                    <span>{spawn.name || "Default Spawn"}</span>
                   </div>
-                )}
-                <div>
-                  <span className="font-medium">Note</span>
-                  <p className="mt-1 text-muted-foreground">
-                    {spawn.note ? spawn.note : "No note provided."}
-                  </p>
-                </div>
-              </div>
-            ) : (
-              <p className="mt-2 text-sm text-muted-foreground">This campaign does not yet have a default spawn.</p>
-            )}
-          </div>
-
-          <Dialog open={isDialogOpen} onOpenChange={(open) => {
-            setIsDialogOpen(open);
-            if (!open) {
-              setEditing(false);
-              setPendingPosition(null);
-            }
-          }}>
-            <DialogContent>
-              <DialogHeader>
-                <DialogTitle>Save Default Spawn</DialogTitle>
-                <DialogDescription>
-                  Confirm the spawn location note. Coordinates are stored automatically based on your map selection.
-                </DialogDescription>
-              </DialogHeader>
-              <div className="space-y-4">
-                {pendingPosition && (
-                  <div className="rounded-md bg-muted/50 p-3 text-sm">
+                  {spawnCoordinates && (
                     <div className="flex items-center justify-between">
                       <span className="font-medium">Coordinates</span>
                       <span>
-                        x: {pendingPosition.x.toFixed(2)}, y: {pendingPosition.y.toFixed(2)}
+                        x: {spawnCoordinates.x}, y: {spawnCoordinates.y}
                       </span>
                     </div>
+                  )}
+                  <div>
+                    <span className="font-medium">Note</span>
+                    <p className="mt-1 text-muted-foreground">
+                      {spawn.note ? spawn.note : "No note provided."}
+                    </p>
                   </div>
-                )}
-                <div className="space-y-2">
-                  <Label htmlFor="spawn-note">Scene Note</Label>
-                  <Textarea
-                    id="spawn-note"
-                    value={noteDraft}
-                    onChange={(event) => setNoteDraft(event.target.value)}
-                    placeholder="Describe the opening scene or context the party should see when they load in."
-                    rows={4}
-                  />
                 </div>
-              </div>
-              <DialogFooter className="gap-2">
-                <Button
-                  type="button"
-                  variant="outline"
-                  onClick={() => {
-                    setIsDialogOpen(false);
-                    setEditing(false);
-                    setPendingPosition(null);
-                  }}
-                >
-                  Cancel
-                </Button>
-                <Button type="button" onClick={handleSubmit} disabled={saving}>
-                  {saving ? "Saving…" : "Save Spawn"}
-                </Button>
-              </DialogFooter>
-            </DialogContent>
-          </Dialog>
-        </CardContent>
-      </Card>
+              ) : (
+                <p className="mt-2 text-sm text-muted-foreground">This campaign does not yet have a default spawn.</p>
+              )}
+            </div>
+
+            <Dialog open={isDialogOpen} onOpenChange={(open) => {
+              setIsDialogOpen(open);
+              if (!open) {
+                setEditing(false);
+                setPendingPosition(null);
+              }
+            }}>
+              <DialogContent>
+                <DialogHeader>
+                  <DialogTitle>Save Default Spawn</DialogTitle>
+                  <DialogDescription>
+                    Confirm the spawn location note. Coordinates are stored automatically based on your map selection.
+                  </DialogDescription>
+                </DialogHeader>
+                <div className="space-y-4">
+                  {pendingPosition && (
+                    <div className="rounded-md bg-muted/50 p-3 text-sm">
+                      <div className="flex items-center justify-between">
+                        <span className="font-medium">Coordinates</span>
+                        <span>
+                          x: {pendingPosition.x.toFixed(2)}, y: {pendingPosition.y.toFixed(2)}
+                        </span>
+                      </div>
+                    </div>
+                  )}
+                  <div className="space-y-2">
+                    <Label htmlFor="spawn-note">Scene Note</Label>
+                    <Textarea
+                      id="spawn-note"
+                      value={noteDraft}
+                      onChange={(event) => setNoteDraft(event.target.value)}
+                      placeholder="Describe the opening scene or context the party should see when they load in."
+                      rows={4}
+                    />
+                  </div>
+                </div>
+                <DialogFooter className="gap-2">
+                  <Button
+                    type="button"
+                    variant="outline"
+                    onClick={() => {
+                      setIsDialogOpen(false);
+                      setEditing(false);
+                      setPendingPosition(null);
+                    }}
+                  >
+                    Cancel
+                  </Button>
+                  <Button type="button" onClick={handleSubmit} disabled={saving}>
+                    {saving ? "Saving…" : "Save Spawn"}
+                  </Button>
+                </DialogFooter>
+              </DialogContent>
+            </Dialog>
+          </CardContent>
+        </Card>
+
+        {campaignId ? (
+          canManageSessions ? (
+            <SessionManager key={campaignId} campaignId={campaignId} isDM={canManageSessions} />
+          ) : (
+            <Card>
+              <CardHeader>
+                <CardTitle>Session Management Restricted</CardTitle>
+                <CardDescription>
+                  Only the campaign’s DM or co-DM can schedule or close sessions from the prep view.
+                </CardDescription>
+              </CardHeader>
+              <CardContent>
+                <p className="text-sm text-muted-foreground">
+                  Ask the campaign owner to grant you co-DM access if you need to manage the session lifecycle.
+                </p>
+              </CardContent>
+            </Card>
+          )
+        ) : null}
+      </div>
 
       <ObjectivesPanel
         campaign={campaign}

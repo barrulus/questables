@@ -131,7 +131,7 @@ if (shouldUseTls) {
 
 // Enable CORS for frontend requests
 app.use(cors({
-  origin: process.env.FRONTEND_URL || 'http://localhost:3000',
+  origin: process.env.FRONTEND_URL,
   credentials: true
 }));
 
@@ -861,7 +861,15 @@ const ensureDmControl = (viewer, message = 'Only the campaign DM or co-DM may pe
 const fetchSessionWithCampaign = async (client, sessionId, { forUpdate = false } = {}) => {
   const lockClause = forUpdate ? 'FOR UPDATE' : '';
   const { rows } = await client.query(
-    `SELECT id, campaign_id, dm_focus, dm_context_md
+    `SELECT id,
+            campaign_id,
+            dm_focus,
+            dm_context_md,
+            status,
+            started_at,
+            ended_at,
+            duration,
+            experience_awarded
        FROM public.sessions
       WHERE id = $1
       ${lockClause}`,
@@ -3147,10 +3155,12 @@ app.get('/api/campaigns/:campaignId/characters', async (req, res) => {
         cp.role,
         cp.status,
         cp.visibility_state,
+        up.username,
         ST_AsGeoJSON(cp.loc_current)::json AS loc_geometry,
         cp.last_located_at
       FROM campaign_players cp
       JOIN characters c ON cp.character_id = c.id
+      JOIN user_profiles up ON cp.user_id = up.id
       WHERE cp.campaign_id = $1
       ORDER BY c.name
     `, [campaignId]);
@@ -5326,6 +5336,69 @@ app.get('/api/maps/:worldId/burgs', async (req, res) => {
   }
 });
 
+// GET /api/maps/:worldId/markers - Get markers for world map
+app.get('/api/maps/:worldId/markers', async (req, res) => {
+  let client;
+  try {
+    const { worldId } = req.params;
+    const { bounds } = req.query;
+
+    client = await pool.connect();
+
+    let query = `
+      SELECT
+        id,
+        world_id,
+        marker_id,
+        type,
+        icon,
+        x_px,
+        y_px,
+        note,
+        ST_AsGeoJSON(geom)::json AS geometry
+      FROM maps_markers
+      WHERE world_id = $1`;
+    const params = [worldId];
+
+    if (bounds) {
+      try {
+        const parsedBounds = typeof bounds === 'string' ? JSON.parse(bounds) : bounds;
+        const west = Number(parsedBounds?.west);
+        const south = Number(parsedBounds?.south);
+        const east = Number(parsedBounds?.east);
+        const north = Number(parsedBounds?.north);
+
+        if (![west, south, east, north].every((value) => Number.isFinite(value))) {
+          return res.status(400).json({
+            error: 'invalid_bounds',
+            message: 'Bounds must include numeric north, south, east, and west values.',
+          });
+        }
+
+        query += ' AND ST_Intersects(geom, ST_MakeEnvelope($2, $3, $4, $5, 0))';
+        params.push(west, south, east, north);
+      } catch (parseError) {
+        return res.status(400).json({
+          error: 'invalid_bounds',
+          message: 'Bounds must be a valid JSON object with numeric north, south, east, and west values.',
+        });
+      }
+    }
+
+    query += ' ORDER BY note NULLS LAST, type NULLS LAST, marker_id';
+
+    const result = await client.query(query, params);
+    res.json(result.rows);
+  } catch (error) {
+    console.error('[Maps] Get markers error:', error);
+    res.status(500).json({ error: error.message });
+  } finally {
+    if (client) {
+      client.release();
+    }
+  }
+});
+
 // GET /api/maps/:worldId/rivers - Get rivers for world map
 app.get('/api/maps/:worldId/rivers', async (req, res) => {
   try {
@@ -5470,143 +5543,490 @@ app.get('/api/campaigns/:campaignId/locations', async (req, res) => {
 // Session Management API Endpoints (Phase 3 - Task 3)
 
 // POST /api/campaigns/:campaignId/sessions - Create session
-app.post('/api/campaigns/:campaignId/sessions', async (req, res) => {
-  try {
+app.post(
+  '/api/campaigns/:campaignId/sessions',
+  requireAuth,
+  [
+    param('campaignId')
+      .isUUID()
+      .withMessage('campaignId must be a valid UUID'),
+    body('title')
+      .isString()
+      .withMessage('title must be a string')
+      .bail()
+      .trim()
+      .notEmpty()
+      .withMessage('title is required')
+      .isLength({ max: 200 })
+      .withMessage('title must be 200 characters or fewer'),
+    body('summary')
+      .optional({ nullable: true })
+      .isString()
+      .withMessage('summary must be a string'),
+    body('dm_notes')
+      .optional({ nullable: true })
+      .isString()
+      .withMessage('dm_notes must be a string'),
+    body('scheduled_at')
+      .optional({ nullable: true })
+      .isISO8601()
+      .withMessage('scheduled_at must be an ISO 8601 timestamp'),
+  ],
+  handleValidationErrors,
+  async (req, res) => {
     const { campaignId } = req.params;
-    const { title, summary, dm_notes, scheduled_at } = req.body;
-    
-    if (!title) {
-      return res.status(400).json({ error: 'Session title is required' });
-    }
-    
     const client = await pool.connect();
-    
-    // Get next session number for campaign
-    const sessionCountResult = await client.query(
-      'SELECT COALESCE(MAX(session_number), 0) + 1 as next_number FROM sessions WHERE campaign_id = $1',
-      [campaignId]
-    );
-    const sessionNumber = sessionCountResult.rows[0].next_number;
 
-    const result = await client.query(`
-      INSERT INTO sessions (campaign_id, session_number, title, summary, dm_notes, scheduled_at, status)
-      VALUES ($1, $2, $3, $4, $5, $6, 'scheduled')
-      RETURNING *
-    `, [campaignId, sessionNumber, title, summary, dm_notes, scheduled_at]);
-    
-    client.release();
-    res.json(result.rows[0]);
-  } catch (error) {
-    console.error('[Sessions] Create error:', error);
-    res.status(500).json({ error: error.message });
+    try {
+      await client.query('BEGIN');
+
+      const campaignCheck = await client.query(
+        'SELECT id FROM public.campaigns WHERE id = $1',
+        [campaignId]
+      );
+      if (campaignCheck.rowCount === 0) {
+        await client.query('ROLLBACK');
+        return res.status(404).json({
+          error: 'campaign_not_found',
+          message: 'Campaign not found',
+        });
+      }
+
+      const viewer = await getViewerContextOrThrow(client, campaignId, req.user);
+      ensureDmControl(viewer);
+
+      const normalizedTitle = req.body.title.trim();
+      const normalizedSummary = typeof req.body.summary === 'string' ? req.body.summary.trim() || null : null;
+      const normalizedNotes = typeof req.body.dm_notes === 'string' ? req.body.dm_notes.trim() || null : null;
+      const normalizedScheduledAt = req.body.scheduled_at
+        ? new Date(req.body.scheduled_at).toISOString()
+        : null;
+
+      const sessionCountResult = await client.query(
+        'SELECT COALESCE(MAX(session_number), 0) + 1 AS next_number FROM public.sessions WHERE campaign_id = $1',
+        [campaignId]
+      );
+      const sessionNumber = Number(sessionCountResult.rows[0]?.next_number ?? 1);
+
+      const insertResult = await client.query(
+        `INSERT INTO public.sessions (
+            campaign_id,
+            session_number,
+            title,
+            summary,
+            dm_notes,
+            scheduled_at,
+            status
+         ) VALUES ($1, $2, $3, $4, $5, $6, 'scheduled')
+         RETURNING *`,
+        [
+          campaignId,
+          sessionNumber,
+          normalizedTitle,
+          normalizedSummary,
+          normalizedNotes,
+          normalizedScheduledAt,
+        ]
+      );
+
+      await client.query('COMMIT');
+
+      res.status(201).json(insertResult.rows[0]);
+    } catch (error) {
+      await client.query('ROLLBACK').catch(() => {});
+      console.error('[Sessions] Create error:', error);
+      res.status(error.status || 500).json({
+        error: error.code || 'session_create_failed',
+        message: error.message || 'Failed to create session',
+      });
+    } finally {
+      client.release();
+    }
   }
-});
+);
 
 // GET /api/campaigns/:campaignId/sessions - Get campaign sessions
-app.get('/api/campaigns/:campaignId/sessions', async (req, res) => {
+app.get('/api/campaigns/:campaignId/sessions', requireAuth, async (req, res) => {
+  const { campaignId } = req.params;
+  const client = await pool.connect();
+
   try {
-    const { campaignId } = req.params;
-    const client = await pool.connect();
-    const result = await client.query(`
-      SELECT s.*, 
-             COUNT(sp.user_id) as participant_count
-      FROM sessions s
-      LEFT JOIN session_participants sp ON s.id = sp.session_id
-      WHERE s.campaign_id = $1
-      GROUP BY s.id
-      ORDER BY s.session_number DESC
-    `, [campaignId]);
-    client.release();
-    
+    await getViewerContextOrThrow(client, campaignId, req.user);
+
+    const result = await client.query(
+      `SELECT s.*, 
+              COUNT(sp.user_id) AS participant_count
+         FROM public.sessions s
+         LEFT JOIN public.session_participants sp ON s.id = sp.session_id
+        WHERE s.campaign_id = $1
+        GROUP BY s.id
+        ORDER BY s.session_number DESC`,
+      [campaignId]
+    );
+
     res.json(result.rows);
   } catch (error) {
     console.error('[Sessions] Get sessions error:', error);
-    res.status(500).json({ error: error.message });
+    res.status(error.status || 500).json({
+      error: error.code || 'session_list_failed',
+      message: error.message || 'Failed to load sessions',
+    });
+  } finally {
+    client.release();
   }
 });
 
 // PUT /api/sessions/:sessionId - Update session
-app.put('/api/sessions/:sessionId', async (req, res) => {
-  try {
+app.put(
+  '/api/sessions/:sessionId',
+  requireAuth,
+  [
+    param('sessionId')
+      .isUUID()
+      .withMessage('sessionId must be a valid UUID'),
+    body('status')
+      .optional({ nullable: true })
+      .isIn(['scheduled', 'active', 'completed', 'cancelled'])
+      .withMessage('status must be scheduled, active, completed, or cancelled'),
+    body('started_at')
+      .optional({ nullable: true })
+      .isISO8601()
+      .withMessage('started_at must be an ISO 8601 timestamp'),
+    body('ended_at')
+      .optional({ nullable: true })
+      .isISO8601()
+      .withMessage('ended_at must be an ISO 8601 timestamp'),
+    body('duration')
+      .optional({ nullable: true })
+      .isInt({ min: 1 })
+      .withMessage('duration must be a positive integer representing minutes'),
+    body('experience_awarded')
+      .optional({ nullable: true })
+      .isInt({ min: 0 })
+      .withMessage('experience_awarded must be a non-negative integer'),
+    body('summary')
+      .optional({ nullable: true })
+      .isString()
+      .withMessage('summary must be a string'),
+  ],
+  handleValidationErrors,
+  async (req, res) => {
     const { sessionId } = req.params;
-    const { status, started_at, ended_at, duration, experience_awarded, summary } = req.body;
-    
     const client = await pool.connect();
-    const result = await client.query(`
-      UPDATE sessions 
-      SET status = COALESCE($1, status),
-          started_at = COALESCE($2, started_at),
-          ended_at = COALESCE($3, ended_at), 
-          duration = COALESCE($4, duration),
-          experience_awarded = COALESCE($5, experience_awarded),
-          summary = COALESCE($6, summary),
-          updated_at = NOW()
-      WHERE id = $7
-      RETURNING *
-    `, [status, started_at, ended_at, duration, experience_awarded, summary, sessionId]);
-    
-    client.release();
-    
-    if (result.rows.length === 0) {
-      return res.status(404).json({ error: 'Session not found' });
+
+    try {
+      await client.query('BEGIN');
+
+      const sessionRow = await fetchSessionWithCampaign(client, sessionId, { forUpdate: true });
+      if (!sessionRow) {
+        await client.query('ROLLBACK');
+        return res.status(404).json({
+          error: 'session_not_found',
+          message: 'Session not found',
+        });
+      }
+
+      const viewer = await getViewerContextOrThrow(client, sessionRow.campaign_id, req.user);
+      ensureDmControl(viewer);
+
+      const updates = [];
+      const values = [];
+      let index = 1;
+
+      if (Object.prototype.hasOwnProperty.call(req.body, 'status')) {
+        const currentStatus = sessionRow.status;
+        const nextStatus = req.body.status ?? currentStatus;
+
+        const allowedTransitions = {
+          scheduled: new Set(['scheduled', 'active', 'cancelled']),
+          active: new Set(['active', 'completed', 'cancelled']),
+          completed: new Set(['completed']),
+          cancelled: new Set(['cancelled']),
+        };
+
+        if (!allowedTransitions[currentStatus]?.has(nextStatus)) {
+          const error = new Error('Status transition is not allowed');
+          error.status = 400;
+          error.code = 'invalid_status_transition';
+          throw error;
+        }
+
+        updates.push(`status = $${index++}`);
+        values.push(nextStatus);
+      }
+
+      if (Object.prototype.hasOwnProperty.call(req.body, 'started_at')) {
+        const value = req.body.started_at ? new Date(req.body.started_at).toISOString() : null;
+        updates.push(`started_at = $${index++}`);
+        values.push(value);
+      }
+
+      if (Object.prototype.hasOwnProperty.call(req.body, 'ended_at')) {
+        const value = req.body.ended_at ? new Date(req.body.ended_at).toISOString() : null;
+        updates.push(`ended_at = $${index++}`);
+        values.push(value);
+      }
+
+      if (Object.prototype.hasOwnProperty.call(req.body, 'duration')) {
+        updates.push(`duration = $${index++}`);
+        values.push(req.body.duration ?? null);
+      }
+
+      if (Object.prototype.hasOwnProperty.call(req.body, 'experience_awarded')) {
+        updates.push(`experience_awarded = $${index++}`);
+        values.push(req.body.experience_awarded ?? 0);
+      }
+
+      if (Object.prototype.hasOwnProperty.call(req.body, 'summary')) {
+        const normalizedSummary = typeof req.body.summary === 'string' ? req.body.summary.trim() || null : null;
+        updates.push(`summary = $${index++}`);
+        values.push(normalizedSummary);
+      }
+
+      if (updates.length === 0) {
+        await client.query('ROLLBACK');
+        return res.status(400).json({
+          error: 'no_updates_provided',
+          message: 'Provide at least one session field to update',
+        });
+      }
+
+      updates.push('updated_at = NOW()');
+
+      const query = `UPDATE public.sessions SET ${updates.join(', ')} WHERE id = $${index} RETURNING *`;
+      values.push(sessionId);
+
+      const updateResult = await client.query(query, values);
+
+      await client.query('COMMIT');
+
+      res.json(updateResult.rows[0]);
+    } catch (error) {
+      await client.query('ROLLBACK').catch(() => {});
+      console.error('[Sessions] Update error:', error);
+      res.status(error.status || 500).json({
+        error: error.code || 'session_update_failed',
+        message: error.message || 'Failed to update session',
+      });
+    } finally {
+      client.release();
     }
-    
-    res.json(result.rows[0]);
-  } catch (error) {
-    console.error('[Sessions] Update error:', error);
-    res.status(500).json({ error: error.message });
   }
-});
+);
 
 // POST /api/sessions/:sessionId/participants - Add session participant
-app.post('/api/sessions/:sessionId/participants', async (req, res) => {
-  try {
+app.post(
+  '/api/sessions/:sessionId/participants',
+  requireAuth,
+  [
+    param('sessionId')
+      .isUUID()
+      .withMessage('sessionId must be a valid UUID'),
+    body('user_id')
+      .isUUID()
+      .withMessage('user_id must be a valid UUID'),
+    body('character_id')
+      .isUUID()
+      .withMessage('character_id must be a valid UUID'),
+    body('character_level_start')
+      .optional({ nullable: true })
+      .isInt({ min: 1, max: 20 })
+      .withMessage('character_level_start must be an integer between 1 and 20'),
+    body('attendance_status')
+      .optional({ nullable: true })
+      .isIn(['present', 'absent', 'late', 'left_early'])
+      .withMessage('attendance_status must be present, absent, late, or left_early'),
+  ],
+  handleValidationErrors,
+  async (req, res) => {
     const { sessionId } = req.params;
-    const { user_id, character_id, character_level_start } = req.body;
-    
-    if (!user_id || !character_id) {
-      return res.status(400).json({ error: 'User ID and character ID are required' });
-    }
-    
     const client = await pool.connect();
-    await client.query(`
-      INSERT INTO session_participants (session_id, user_id, character_id, character_level_start, character_level_end, attendance_status)
-      VALUES ($1, $2, $3, $4, $4, 'present')
-      ON CONFLICT (session_id, user_id) DO UPDATE SET
-      character_id = EXCLUDED.character_id,
-      character_level_start = EXCLUDED.character_level_start,
-      attendance_status = EXCLUDED.attendance_status
-    `, [sessionId, user_id, character_id, character_level_start || 1]);
-    
-    client.release();
-    res.json({ success: true });
-  } catch (error) {
-    console.error('[Sessions] Add participant error:', error);
-    res.status(500).json({ error: error.message });
+
+    try {
+      await client.query('BEGIN');
+
+      const sessionRow = await fetchSessionWithCampaign(client, sessionId, { forUpdate: true });
+      if (!sessionRow) {
+        await client.query('ROLLBACK');
+        return res.status(404).json({
+          error: 'session_not_found',
+          message: 'Session not found',
+        });
+      }
+
+      const viewer = await getViewerContextOrThrow(client, sessionRow.campaign_id, req.user);
+      ensureDmControl(viewer);
+
+      const { user_id: participantUserId, character_id: characterId } = req.body;
+
+      const membershipResult = await client.query(
+        `SELECT cp.id, cp.user_id, cp.character_id
+           FROM public.campaign_players cp
+          WHERE cp.campaign_id = $1 AND cp.user_id = $2
+          LIMIT 1`,
+        [sessionRow.campaign_id, participantUserId]
+      );
+
+      if (membershipResult.rowCount === 0) {
+        const error = new Error('User is not part of this campaign');
+        error.status = 404;
+        error.code = 'campaign_player_not_found';
+        throw error;
+      }
+
+      const characterResult = await client.query(
+        `SELECT id, user_id FROM public.characters WHERE id = $1`,
+        [characterId]
+      );
+
+      if (characterResult.rowCount === 0) {
+        const error = new Error('Character not found');
+        error.status = 404;
+        error.code = 'character_not_found';
+        throw error;
+      }
+
+      if (characterResult.rows[0].user_id !== participantUserId) {
+        const error = new Error('Character does not belong to the specified user');
+        error.status = 400;
+        error.code = 'character_mismatch';
+        throw error;
+      }
+
+      const attendanceStatus = req.body.attendance_status ?? 'present';
+      const levelStart = req.body.character_level_start ?? 1;
+
+      await client.query(
+        `INSERT INTO public.session_participants (
+            session_id,
+            user_id,
+            character_id,
+            character_level_start,
+            character_level_end,
+            attendance_status
+         ) VALUES ($1, $2, $3, $4, $4, $5)
+         ON CONFLICT (session_id, user_id) DO UPDATE SET
+           character_id = EXCLUDED.character_id,
+           character_level_start = EXCLUDED.character_level_start,
+           character_level_end = EXCLUDED.character_level_end,
+           attendance_status = EXCLUDED.attendance_status`,
+        [sessionId, participantUserId, characterId, levelStart, attendanceStatus]
+      );
+
+      await client.query('COMMIT');
+
+      res.json({ success: true });
+    } catch (error) {
+      await client.query('ROLLBACK').catch(() => {});
+      console.error('[Sessions] Add participant error:', error);
+      res.status(error.status || 500).json({
+        error: error.code || 'session_participant_failed',
+        message: error.message || 'Failed to add or update participant',
+      });
+    } finally {
+      client.release();
+    }
   }
-});
+);
 
 // GET /api/sessions/:sessionId/participants - Get session participants
-app.get('/api/sessions/:sessionId/participants', async (req, res) => {
+app.get('/api/sessions/:sessionId/participants', requireAuth, async (req, res) => {
+  const { sessionId } = req.params;
+  const client = await pool.connect();
+
   try {
-    const { sessionId } = req.params;
-    const client = await pool.connect();
-    const result = await client.query(`
-      SELECT sp.*, up.username, c.name as character_name
-      FROM session_participants sp
-      JOIN user_profiles up ON sp.user_id = up.id
-      LEFT JOIN characters c ON sp.character_id = c.id
-      WHERE sp.session_id = $1
-      ORDER BY up.username
-    `, [sessionId]);
-    client.release();
-    
+    const sessionRow = await fetchSessionWithCampaign(client, sessionId);
+    if (!sessionRow) {
+      return res.status(404).json({
+        error: 'session_not_found',
+        message: 'Session not found',
+      });
+    }
+
+    await getViewerContextOrThrow(client, sessionRow.campaign_id, req.user);
+
+    const result = await client.query(
+      `SELECT sp.*, up.username, c.name AS character_name
+         FROM public.session_participants sp
+         JOIN public.user_profiles up ON sp.user_id = up.id
+         LEFT JOIN public.characters c ON sp.character_id = c.id
+        WHERE sp.session_id = $1
+        ORDER BY up.username`,
+      [sessionId]
+    );
+
     res.json(result.rows);
   } catch (error) {
     console.error('[Sessions] Get participants error:', error);
-    res.status(500).json({ error: error.message });
+    res.status(error.status || 500).json({
+      error: error.code || 'session_participants_failed',
+      message: error.message || 'Failed to fetch session participants',
+    });
+  } finally {
+    client.release();
   }
 });
+
+// DELETE /api/sessions/:sessionId/participants/:userId - Remove session participant
+app.delete(
+  '/api/sessions/:sessionId/participants/:userId',
+  requireAuth,
+  [
+    param('sessionId')
+      .isUUID()
+      .withMessage('sessionId must be a valid UUID'),
+    param('userId')
+      .isUUID()
+      .withMessage('userId must be a valid UUID'),
+  ],
+  handleValidationErrors,
+  async (req, res) => {
+    const { sessionId, userId } = req.params;
+    const client = await pool.connect();
+
+    try {
+      await client.query('BEGIN');
+
+      const sessionRow = await fetchSessionWithCampaign(client, sessionId, { forUpdate: true });
+      if (!sessionRow) {
+        await client.query('ROLLBACK');
+        return res.status(404).json({
+          error: 'session_not_found',
+          message: 'Session not found',
+        });
+      }
+
+      const viewer = await getViewerContextOrThrow(client, sessionRow.campaign_id, req.user);
+      ensureDmControl(viewer);
+
+      const deleteResult = await client.query(
+        'DELETE FROM public.session_participants WHERE session_id = $1 AND user_id = $2 RETURNING id',
+        [sessionId, userId]
+      );
+
+      if (deleteResult.rowCount === 0) {
+        await client.query('ROLLBACK');
+        return res.status(404).json({
+          error: 'participant_not_found',
+          message: 'Participant not found for this session',
+        });
+      }
+
+      await client.query('COMMIT');
+
+      res.json({ success: true });
+    } catch (error) {
+      await client.query('ROLLBACK').catch(() => {});
+      console.error('[Sessions] Remove participant error:', error);
+      res.status(error.status || 500).json({
+        error: error.code || 'session_participant_remove_failed',
+        message: error.message || 'Failed to remove participant',
+      });
+    } finally {
+      client.release();
+    }
+  }
+);
 
 app.put(
   '/api/sessions/:sessionId/focus',
@@ -6818,11 +7238,11 @@ if (shouldStartServer) {
       port,
       protocol: accessProtocol,
       tlsEnabled: Boolean(httpsOptions),
-      databaseHost: process.env.DATABASE_HOST || 'localhost',
-      databasePort: process.env.DATABASE_PORT || '5432',
-      databaseName: process.env.DATABASE_NAME || 'dnd_app',
-      frontendUrl: process.env.FRONTEND_URL || 'http://localhost:3000',
-      nodeEnv: process.env.NODE_ENV || 'development',
+      databaseHost: process.env.DATABASE_HOST,
+      databasePort: process.env.DATABASE_PORT,
+      databaseName: process.env.DATABASE_NAME,
+      frontendUrl: process.env.FRONTEND_URL,
+      nodeEnv: process.env.NODE_ENV,
     };
     if (tlsMetadata) {
       config.tls = tlsMetadata;
