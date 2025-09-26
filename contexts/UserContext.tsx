@@ -1,7 +1,7 @@
 import React, { createContext, useContext, useState, useEffect, ReactNode, useCallback } from 'react';
 import { User } from '../utils/database/data-structures';
-import { userHelpers } from '../utils/database/production-helpers';
-import { databaseClient } from '../utils/database/client';
+import { fetchCurrentUser, updateCurrentUser } from '../utils/api/users';
+import { login as authenticate } from '../utils/api/auth';
 import { AUTH_LOGOUT_EVENT } from '../utils/api-client';
 
 const USER_STORAGE_KEY = 'dnd-user';
@@ -58,11 +58,11 @@ const normalizeUser = (rawUser: RawUser): User => {
 interface UserContextType {
   user: User | null;
   authToken: string | null;
-  login: (email: string, password?: string) => Promise<User>;
+  login: (_email: string, _password?: string) => Promise<User>;
   logout: () => void;
   loading: boolean;
   error: string | null;
-  updateProfile: (updates: Partial<User>) => Promise<void>;
+  updateProfile: (_updates: Partial<User>) => Promise<void>;
 }
 
 const UserContext = createContext<UserContextType | undefined>(undefined);
@@ -103,10 +103,8 @@ export function UserProvider({ children }: UserProviderProps) {
       const storedToken = localStorage.getItem(TOKEN_STORAGE_KEY);
 
       if (storedUser && storedToken) {
-        const userData = JSON.parse(storedUser);
-        
         // Validate user session with database
-        const currentUser = await userHelpers.getCurrentUser(userData.id);
+        const currentUser = await fetchCurrentUser();
         if (currentUser) {
           const normalizedUser = normalizeUser(currentUser);
           setUser(normalizedUser);
@@ -133,29 +131,25 @@ export function UserProvider({ children }: UserProviderProps) {
     }
   };
 
-  const login = async (email: string, password?: string): Promise<User> => {
+  const login = async (_email: string, _password?: string): Promise<User> => {
+    const email = _email;
+    const password = _password;
+    const credentials = { email, password };
     try {
       setLoading(true);
       setError(null);
 
       // Call authentication endpoint
-      const { data, error: authError } = await databaseClient.auth.login(email, password);
-      if (authError) {
-        throw new Error(authError.message || 'Login failed');
-      }
-      
-      if (!data?.user || !data.token) {
-        throw new Error('Invalid login credentials');
-      }
+      const { user: authenticatedUser, token } = await authenticate(credentials);
 
-      const loggedInUser = normalizeUser(data.user);
+      const loggedInUser = normalizeUser(authenticatedUser);
       setUser(loggedInUser);
-      setAuthToken(data.token);
+      setAuthToken(token);
       
       // Store user in localStorage for session persistence
       if (typeof window !== 'undefined') {
         localStorage.setItem(USER_STORAGE_KEY, JSON.stringify(loggedInUser));
-        localStorage.setItem(TOKEN_STORAGE_KEY, data.token);
+        localStorage.setItem(TOKEN_STORAGE_KEY, token);
       }
       
       return loggedInUser;
@@ -179,7 +173,7 @@ export function UserProvider({ children }: UserProviderProps) {
     }
   }, [setAuthToken, setError, setUser]);
 
-  const updateProfile = useCallback(async (updates: Partial<User>): Promise<void> => {
+  const updateProfile = useCallback(async (_updates: Partial<User>): Promise<void> => {
     if (!user) {
       throw new Error('No user logged in');
     }
@@ -188,7 +182,8 @@ export function UserProvider({ children }: UserProviderProps) {
       setLoading(true);
       setError(null);
 
-      const updatedUser = await userHelpers.updateUserProfile(user.id, updates);
+      const changes = { ..._updates };
+      const updatedUser = await updateCurrentUser(changes);
       if (updatedUser) {
         const normalizedUser = normalizeUser(updatedUser);
         setUser(normalizedUser);

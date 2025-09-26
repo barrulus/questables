@@ -8,17 +8,18 @@ import { Separator } from "./ui/separator";
 import { Checkbox } from "./ui/checkbox";
 import { toast } from "sonner";
 import { Eye, EyeOff, Mail, Lock, User, Crown, Shield } from "lucide-react";
-import { databaseClient } from "../utils/database/client";
+import { register as registerUser } from "../utils/api/auth";
 import { useUser } from "../contexts/UserContext";
 
 interface RegisterModalProps {
   open: boolean;
-  onOpenChange: (open: boolean) => void;
+  onOpenChange: (_open: boolean) => void;
   onRegister: () => void;
   onSwitchToLogin: () => void;
 }
 
-export function RegisterModal({ open, onOpenChange, onRegister, onSwitchToLogin }: RegisterModalProps) {
+export function RegisterModal(props: RegisterModalProps) {
+  const { onOpenChange, onRegister, onSwitchToLogin } = props;
   const [formData, setFormData] = useState({
     username: "",
     email: "",
@@ -62,18 +63,12 @@ export function RegisterModal({ open, onOpenChange, onRegister, onSwitchToLogin 
     }
 
     try {
-      const { data, error } = await databaseClient.auth.register(
-        formData.username,
-        formData.email,
-        formData.password,
-        [formData.role]
-      );
-
-      if (error || !data?.user) {
-        const errorMessage = error instanceof Error ? error.message : "Registration failed. Please try again.";
-        toast.error(errorMessage);
-        return;
-      }
+      await registerUser({
+        username: formData.username.trim(),
+        email: formData.email.trim(),
+        password: formData.password,
+        roles: [formData.role],
+      });
 
       let authenticatedUser;
       try {
@@ -106,7 +101,7 @@ export function RegisterModal({ open, onOpenChange, onRegister, onSwitchToLogin 
   };
 
   return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
+    <Dialog open={props.open} onOpenChange={onOpenChange}>
       <DialogContent className="sm:max-w-[500px] p-0 max-h-[90vh] overflow-y-auto">
         <DialogHeader className="p-6 pb-2">
           <DialogTitle className="text-2xl">Create Your Account</DialogTitle>

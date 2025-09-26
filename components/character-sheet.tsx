@@ -3,15 +3,8 @@ import { Card, CardContent, CardHeader, CardTitle } from "./ui/card";
 import { Badge } from "./ui/badge";
 import { Progress } from "./ui/progress";
 import { Separator } from "./ui/separator";
-import { useUser } from "../contexts/UserContext";
-import { characterHelpers } from "../utils/database/production-helpers";
+import { getCharacter } from "../utils/api/characters";
 import { Character } from "../utils/database/data-structures";
-import { 
-  characterSchema, 
-  abilityScoreSchema, 
-  characterLevelSchema,
-  validateField 
-} from "../utils/validation/schemas";
 
 interface CharacterSheetProps {
   characterId?: string;
@@ -21,11 +14,9 @@ interface CharacterSheetProps {
 }
 
 export function CharacterSheet({ characterId, refreshTrigger }: CharacterSheetProps) {
-  const { user } = useUser();
   const [character, setCharacter] = useState<Character | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const [validationErrors, setValidationErrors] = useState<Record<string, string[]>>({});
 
   useEffect(() => {
     if (characterId) {
@@ -39,7 +30,7 @@ export function CharacterSheet({ characterId, refreshTrigger }: CharacterSheetPr
     try {
       setLoading(true);
       setError(null);
-      const char = await characterHelpers.getCharacter(characterId!);
+      const char = await getCharacter(characterId!);
       if (char) {
         setCharacter(char);
       } else {
@@ -51,61 +42,6 @@ export function CharacterSheet({ characterId, refreshTrigger }: CharacterSheetPr
     } finally {
       setLoading(false);
     }
-  };
-
-  // Validation functions
-  const validateAbilityScore = (value: number, fieldName: string) => {
-    const validation = validateField(abilityScoreSchema, value);
-    if (!validation.isValid) {
-      setValidationErrors(prev => ({
-        ...prev,
-        [fieldName]: validation.errors || ['Invalid ability score']
-      }));
-      return false;
-    } else {
-      setValidationErrors(prev => {
-        const newErrors = { ...prev };
-        delete newErrors[fieldName];
-        return newErrors;
-      });
-      return true;
-    }
-  };
-
-  const validateCharacterLevel = (value: number) => {
-    const validation = validateField(characterLevelSchema, value);
-    if (!validation.isValid) {
-      setValidationErrors(prev => ({
-        ...prev,
-        level: validation.errors || ['Invalid character level']
-      }));
-      return false;
-    } else {
-      setValidationErrors(prev => {
-        const newErrors = { ...prev };
-        delete newErrors.level;
-        return newErrors;
-      });
-      return true;
-    }
-  };
-
-  const validateCharacter = (characterData: Partial<Character>) => {
-    const validation = validateField(characterSchema, characterData);
-    if (!validation.isValid) {
-      // Convert flat error array to field-based errors
-      const fieldErrors: Record<string, string[]> = {};
-      validation.errors?.forEach(error => {
-        const fieldMatch = error.match(/^(\w+):/);
-        const field = fieldMatch ? fieldMatch[1] : 'general';
-        if (!fieldErrors[field]) fieldErrors[field] = [];
-        fieldErrors[field].push(error);
-      });
-      setValidationErrors(fieldErrors);
-      return false;
-    }
-    setValidationErrors({});
-    return true;
   };
 
   // Calculate ability modifier

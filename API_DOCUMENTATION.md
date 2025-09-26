@@ -14,44 +14,124 @@ This document describes the REST API endpoints provided by the Questables databa
 - Development: `http://localhost:3001`
 - All endpoints require `Content-Type: application/json` for POST/PUT requests
 
+### Router Implementation References
+- Maps API → `server/routes/maps.routes.js`
+- Session endpoints → `server/routes/sessions.routes.js`
+- Encounter endpoints → `server/routes/encounters.routes.js`
+- NPC endpoints → `server/routes/npcs.routes.js`
+- Upload endpoints → `server/routes/uploads.routes.js`
+
 ## Maps API
 
-### GET /api/maps/:worldId/markers
+### POST /api/maps/world
 
-Return the live marker catalog for a given world map. Results reflect the persisted
-`maps_markers` table—no placeholder data is returned.
+Create a world map entry and mark it active. Used by importers that push Azgaar exports or
+curated tiles into the platform.
 
-**Parameters:**
-- `worldId` (path): UUID of the world map.
+**Headers:**
+- `Content-Type: application/json`
 
-**Query Parameters:**
-- `bounds` (optional): JSON-encoded bounding box string formatted as
-  `{"north": 0, "south": 0, "east": 0, "west": 0}`. All values must be numeric. The
-  server responds with `400 invalid_bounds` when parsing fails or a value is not a number.
-
-**Response (200 OK):**
+**Request Body:**
 ```json
-[
-  {
-    "id": "3c950b83-9a5a-4dce-9222-64eb4c9694f2",
-    "world_id": "c8a2d2b1-6e8c-4c99-9f96-3d5243e13d0d",
-    "marker_id": 42,
-    "type": "waypoint",
-    "icon": "waypoint",
-    "x_px": 10234.12,
-    "y_px": 8745.88,
-    "note": "Ruined watchtower",
-    "geometry": {
-      "type": "Point",
-      "coordinates": [10234.12, 8745.88]
-    }
-  }
-]
+{
+  "name": "Azure Expanse",
+  "description": "Imported from the Azgaar FMG exporter",
+  "bounds": { "north": 1200, "south": 0, "east": 1800, "west": 0 },
+  "layers": { "population": "population.geojson" },
+  "uploaded_by": "user-uuid"
+}
+```
+
+`name` and `uploaded_by` are required. Optional `bounds` and `layers` payloads are stored as JSONB.
+
+**Response (201 Created):**
+```json
+{
+  "id": "b3f46f3c-78d5-4bd4-a4f0-6d0f9b7f509e",
+  "name": "Azure Expanse",
+  "description": "Imported from the Azgaar FMG exporter",
+  "bounds": { "north": 1200, "south": 0, "east": 1800, "west": 0 },
+  "layers": { "population": "population.geojson" },
+  "uploaded_by": "user-uuid",
+  "is_active": true,
+  "created_at": "2025-09-26T17:41:12.091Z"
+}
 ```
 
 **Errors:**
-- `400 invalid_bounds`: `bounds` query parameter missing or not parseable as numeric north/south/east/west values.
-- `500`: Unexpected database failure while reading markers.
+- `400`: Missing `name` or `uploaded_by`.
+- `500`: Database insert failure.
+
+### GET /api/maps/world
+
+List every active world map ordered by `created_at DESC`. The response joins `user_profiles` when
+available to expose `uploaded_by_username`.
+
+### GET /api/maps/world/:id
+
+Retrieve a single world map. Returns `404` when the id does not exist.
+
+### GET /api/maps/:worldId/burgs
+
+Return burg metadata (`maps_burgs`) for the requested world. Use the optional SRID-0 bounding box
+to constrain the result set.
+
+**Query Parameters:**
+- `bounds` (optional): JSON string with numeric `north`, `south`, `east`, `west` values. Invalid
+  payloads raise `400 invalid_bounds`.
+
+### GET /api/maps/:worldId/markers
+
+Return persisted map markers. Accepts the same `bounds` filter as burgs and returns each marker’s
+GeoJSON geometry alongside metadata (`name`, `type`, `icon`, etc.).
+
+### GET /api/maps/:worldId/rivers
+
+Return river segments from `maps_rivers` with optional `bounds` filtering. GeoJSON is emitted via
+`ST_AsGeoJSON`.
+
+### GET /api/maps/:worldId/routes
+
+Return trade/road routes from `maps_routes` with optional `bounds` filtering.
+
+### GET /api/maps/:worldId/cells
+
+Return terrain cells from `maps_cells` constrained by a required SRID-0 bounding box.
+
+**Query Parameters:**
+- `bounds` (required): JSON string with numeric `north`, `south`, `east`, `west` values. Missing or
+  invalid payloads raise `400 cells_bounds_required`.
+
+### GET /api/maps/tilesets
+
+Return all active tile set configurations from `tile_sets`, ordered by `name ASC`.
+
+### POST /api/campaigns/:campaignId/locations
+
+Create a campaign location optionally linked to a world map or parent location.
+
+**Request Body:**
+```json
+{
+  "name": "Skyhold",
+  "description": "Citadel above the valley",
+  "type": "stronghold",
+  "world_map_id": "b3f46f3c-78d5-4bd4-a4f0-6d0f9b7f509e",
+  "parent_location_id": null,
+  "world_position": { "lng": 432.12, "lat": 98.6 }
+}
+```
+
+`name` and `type` are required. If `world_position` is supplied both `lng` and `lat` must be
+numeric; the service writes the SRID-0 point via `ST_SetSRID(ST_MakePoint(...), 0)`.
+
+**Response (201 Created):**
+The inserted row with derived `lng`/`lat` values when a world position is present.
+
+### GET /api/campaigns/:campaignId/locations
+
+List all campaign locations. Locations with a `world_position` include `lng`/`lat` convenience
+fields calculated with `ST_X/ST_Y`.
 
 ## Health Monitoring
 
@@ -1171,38 +1251,53 @@ Delete a message (only by sender).
 
 ### GET /api/users/profile
 
-Get current user profile.
-
-**Query Parameters:**
-- `userId` (required): User ID
+Get the authenticated user's profile. Requires a valid `Authorization: Bearer <token>` header.
 
 **Response:**
 ```json
 {
-  "id": "uuid-string",
-  "username": "player_name",
-  "email": "player@example.com",
-  "roles": ["player", "dm"],
-  "role": "player", // Primary role for backward compatibility
-  "created_at": "2025-09-16T12:00:00.000Z",
-  "updated_at": "2025-09-16T12:00:00.000Z"
+  "user": {
+    "id": "uuid-string",
+    "username": "player_name",
+    "email": "player@example.com",
+    "roles": ["player", "dm"],
+    "role": "player",
+    "status": "active",
+    "avatar_url": null,
+    "timezone": "UTC",
+    "created_at": "2025-09-16T12:00:00.000Z",
+    "updated_at": "2025-09-16T12:00:00.000Z",
+    "last_login": "2025-09-16T12:05:00.000Z"
+  }
 }
 ```
 
 ### PUT /api/users/profile
 
-Update user profile.
+Update profile fields for the authenticated user.
 
-**Request Body:**
+**Request Body:** (all fields optional)
 ```json
 {
   "username": "new_username",
-  "email": "new_email@example.com",
-  "userId": "user-uuid"
+  "avatarUrl": "https://cdn.example.com/avatars/hero.png",
+  "timezone": "America/New_York"
 }
 ```
 
-**Response:** Updated user object
+**Response:**
+```json
+{
+  "user": {
+    "id": "uuid-string",
+    "username": "new_username",
+    "avatar_url": "https://cdn.example.com/avatars/hero.png",
+    "timezone": "America/New_York",
+    "updated_at": "2025-09-19T09:15:00.000Z",
+    ...
+  }
+}
+```
 
 ## Error Responses
 
@@ -1828,7 +1923,175 @@ or
 - `403 dm_action_forbidden`
 - `404 npc_not_found` / `location_not_found`
 
+## NPC API
+
+### POST /api/campaigns/:campaignId/npcs
+
+Create an NPC tied to a campaign. The payload maps directly to the `npcs` table; any supplied
+object fields (e.g., `stats`) are stored as JSON.
+
+**Request Body:**
+```json
+{
+  "name": "Captain Mirelle",
+  "description": "Commander of the Azure Guard",
+  "race": "Human",
+  "occupation": "Guard Captain",
+  "personality": "Disciplined and pragmatic",
+  "appearance": "Polished armor with blue sash",
+  "motivations": "Keep the city safe",
+  "secrets": "Secretly allied with the mages' guild",
+  "current_location_id": "location-uuid",
+  "stats": { "ac": 17, "hp": 45 }
+}
+```
+
+**Response (201 Created):** Returns the inserted NPC row.
+
+### GET /api/campaigns/:campaignId/npcs
+
+List all NPCs for a campaign. The response includes `location_name` when the NPC references a
+location.
+
+### PUT /api/npcs/:npcId
+
+Update one or more NPC fields. Provide only the columns to change; all JSON-capable fields are
+serialized before storage.
+
+**Errors:**
+- `400`: No valid fields supplied.
+- `404`: NPC not found.
+
+### DELETE /api/npcs/:npcId
+
+Remove an NPC permanently. Returns `{ "success": true, "name": "NPC name" }` when deleted or
+`404` if the NPC does not exist.
+
+### POST /api/npcs/:npcId/relationships
+
+Create or update a relationship edge for the NPC. Relationships are upserted by `npc_id` +
+`target_type` + `target_id`.
+
+**Request Body:**
+```json
+{
+  "target_id": "npc-ally-uuid",
+  "target_type": "npc",           // npc | character | faction
+  "relationship_type": "ally",
+  "description": "Shared military history",
+  "strength": 8
+}
+```
+
+### GET /api/npcs/:npcId/relationships
+
+Return all relationships for the NPC including a human-readable `target_name` derived from the
+linked NPC/character when available.
+
 ## Encounter API
+
+### POST /api/campaigns/:campaignId/encounters
+
+Create a planned encounter linked to a campaign (and optionally a session/location). The API
+stores the payload exactly as provided—no dummy participants or auto-generated text.
+
+**Request Body:**
+```json
+{
+  "name": "Council Negotiations",
+  "description": "Political session in the Azure Hall",
+  "type": "social",
+  "difficulty": "medium",
+  "session_id": "session-uuid",
+  "location_id": "location-uuid"
+}
+```
+
+`name` and `type` are required. `difficulty` defaults to `medium` when omitted.
+
+**Response (201 Created):** Returns the inserted encounter row.
+
+**Errors:**
+- `400`: Missing `name` or `type`.
+- `500`: Database failure.
+
+### GET /api/campaigns/:campaignId/encounters
+
+List encounters for a campaign including participant counts, location names, and the session title
+if linked.
+
+**Response (200 OK):**
+```json
+[
+  {
+    "id": "encounter-uuid",
+    "campaign_id": "campaign-uuid",
+    "session_id": "session-uuid",
+    "location_id": "location-uuid",
+    "name": "Council Negotiations",
+    "description": "Political session in the Azure Hall",
+    "type": "social",
+    "difficulty": "medium",
+    "status": "planned",
+    "participant_count": 6,
+    "location_name": "Azure Hall",
+    "session_title": "Council Summit",
+    "created_at": "2025-09-24T09:11:00.000Z"
+  }
+]
+```
+
+### POST /api/encounters/:encounterId/participants
+
+Add a participant to an encounter or upsert an existing one.
+
+**Request Body:**
+```json
+{
+  "participant_id": "npc-uuid",
+  "participant_type": "npc",
+  "name": "Captain Mirelle",
+  "hit_points": { "current": 45, "max": 45, "temporary": 0 },
+  "armor_class": 17,
+  "initiative": 12
+}
+```
+
+`name`, `hit_points`, and `armor_class` are required. When the participant already exists the row is
+updated instead of duplicated.
+
+**Errors:**
+- `400`: Missing required fields.
+- `500`: Database failure.
+
+### GET /api/encounters/:encounterId/participants
+
+Return all participants ordered by initiative (DESC) and name. For character participants the
+response includes the character name as `display_name`.
+
+### PUT /api/encounters/:encounterId
+
+Update encounter status, current round, current turn, or initiative order. Provide only the fields
+you intend to change; omitted fields remain untouched.
+
+**Errors:**
+- `404`: Encounter not found.
+- `500`: Database update failure.
+
+### PUT /api/encounter-participants/:participantId
+
+Update mutable columns for an encounter participant (hit points, conditions, notes, initiative,
+etc.). At least one supported field must be supplied.
+
+**Errors:**
+- `400`: Request omitted all updatable fields.
+- `404`: Participant not found.
+- `500`: Database update failure.
+
+### DELETE /api/encounter-participants/:participantId
+
+Remove a participant from the encounter. Returns `{ "success": true }` on success, or `404` when
+the participant id is unknown.
 
 ### GET /api/encounters/:encounterId
 
@@ -1913,6 +2176,55 @@ Roll or assign initiative for every participant in an encounter. When no overrid
 - `404`: Encounter not found
 - `400`: Encounter has no participants to roll initiative for
 - `500`: Database error while updating initiative
+
+## Upload API
+
+### POST /api/upload/avatar
+
+Accept a multipart upload (field name `avatar`) and save it to the local `uploads/` directory.
+JPEG, PNG, and WebP files are accepted up to 50 MB.
+
+**Response (200 OK):**
+```json
+{
+  "url": "/uploads/avatar-1695756112091-123456789.png",
+  "filename": "avatar-1695756112091-123456789.png"
+}
+```
+
+### POST /api/upload/map
+
+Upload either a raw image or an Azgaar FMG JSON export (field name `mapFile`).
+
+- When the file is JSON the server parses the bounds, persists a `maps_world` entry, and returns the
+  new world map.
+- For other MIME types the API simply returns the uploaded file URL.
+
+**Optional fields:** `name`, `description`, `uploaded_by`.
+
+### POST /api/campaigns/:campaignId/assets
+
+Attach an arbitrary campaign asset (field name `asset`). Metadata (`name`, `description`, `type`)
+is stored alongside file attributes in the campaign’s `assets` JSON array.
+
+**Response (200 OK):**
+```json
+{
+  "asset": {
+    "id": "asset-1695756500000-555555555.png",
+    "name": "Battle map",
+    "description": "Annotated strategy sketch",
+    "type": "image",
+    "url": "/uploads/asset-1695756500000-555555555.png",
+    "size": 4832540
+  }
+}
+```
+
+### GET /api/campaigns/:campaignId/assets
+
+Return the stored `assets` array for a campaign. Responds with `404 campaign_not_found` when the id
+does not exist.
 
 ## Realtime WebSocket Events
 

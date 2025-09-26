@@ -13,7 +13,8 @@ import { Spellbook } from "./spellbook";
 import { FeatureUnavailable } from "./feature-unavailable";
 import { useUser } from "../contexts/UserContext";
 import { useGameSession } from "../contexts/GameSessionContext";
-import { characterHelpers, type Character } from '../utils/database/data-helpers';
+import type { Character } from '../utils/database/data-structures';
+import { listUserCharacters } from '../utils/api/characters';
 import { createAsyncHandler } from '../utils/error-handling';
 import { OfflineModeWrapper } from './database-status';
 import { NarrativeConsole } from "./narrative-console";
@@ -67,7 +68,7 @@ export function ExpandablePanel({ activePanel, onClose }: ExpandablePanelProps) 
     async () => {
       if (!user) return;
       
-      const characters = await characterHelpers.getCharactersByUser(user.id);
+      const characters = await listUserCharacters(user.id);
       setUserCharacters(characters || []);
       
       // Auto-select first character if available and none selected

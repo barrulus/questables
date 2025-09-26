@@ -347,6 +347,8 @@ Always append new entries; do not erase or rewrite previous log items except to 
 - **Engineer(s):** Codex Agent
 - **Work Done:**
   - Added `components/narrative-console.tsx:1` to expose DM narration, scene descriptions, NPC dialogue, action outcomes, and quest hooks via the live `/api/campaigns/:campaignId/narratives/*` routes, including session/NPC loaders that rely on `utils/api-client.ts`.
+- Replaced the legacy SQL-bound helpers with REST adapters: introduced `utils/api/{auth,users,characters,maps}.ts`, excised `utils/database/{client,data-helpers,production-helpers}.tsx`, and migrated character/map consumers (`components/character-manager.tsx`, `components/character-sheet.tsx`, `components/inventory.tsx`, `components/spellbook.tsx`, `components/expandable-panel.tsx`, `components/map-data-loader.tsx`) to call the new adapters. Added `server/routes/users.routes.js` + `server/services/users/service.js` for profile fetch/update and expanded `server/routes/maps.routes.js`/`server/services/maps/service.js` with `/api/maps/:worldId/cells` & `/api/maps/tilesets` so no client code hits `/api/database/*`.
+- `npx eslint components/character-manager.tsx components/character-sheet.tsx components/expandable-panel.tsx components/inventory.tsx components/spellbook.tsx components/map-data-loader.tsx components/register-modal.tsx contexts/UserContext.tsx utils/api/auth.ts utils/api/users.ts utils/api/characters.ts utils/api/maps.ts server/routes/maps.routes.js server/routes/users.routes.js server/services/maps/service.js server/services/users/service.js --ext ts,tsx,js`
   - Wired the new console into the game-side UI by extending the icon sidebar and expandable panel (`components/icon-sidebar.tsx:1`, `components/expandable-panel.tsx:1`), ensuring DMs reach the live endpoints through the existing campaign/session context.
   - Rendered provider metadata, cache indicators, and raw prompts verbatim so players see the precise backend response when requests succeed or fail—no placeholder prose remains in the narrative flow.
 - **Cleanups:** None beyond removing the empty narrative placeholder; the new console replaced the gap rather than deleting additional assets.
@@ -876,3 +878,55 @@ Always append new entries; do not erase or rewrite previous log items except to 
   - `npx eslint server/database-server.js --ext js` (fails: longstanding unused-variable debt predating this change; markers endpoint introduces no new lint findings).
   - `npx eslint API_DOCUMENTATION.md --ext md` (fails: ESLint config lacks Markdown parser support; stops at line 1).
 - **Remaining Gaps / Blockers:** Sandbox restrictions block PostgreSQL connections (`psql` returns EPERM), so the new route still needs a live-environment verification run to confirm real marker payloads.
+
+## Task DB-01 – Database Layer Blueprint
+- **Date:** 2025-09-25
+- **Engineer(s):** Codex Agent
+- **Work Done:**
+  - Captured the target server module boundaries (config, bootstrap, DB helpers, shared middleware, domain services, routers, realtime) inside `docs/database_layer_reference.md`, aligning them with the Zero-Dummy mandate and structured logging/telemetry expectations.
+  - Documented the frontend integration plan covering the REST-only client wrapper, shared mappers, and domain adapters that will replace legacy raw-SQL helpers.
+  - Updated the module status table to “Blueprint defined” or “Blueprint aligned” where applicable so future tasks can track progress against the agreed architecture.
+- **Cleanups:** None required for blueprinting.
+- **Documentation Updates:** `docs/database_layer_reference.md` (new architecture blueprint and status table updates).
+- **Tests & Verification:** Documentation-only change; no automated tests executed.
+- **Remaining Gaps / Blockers:** Implementation tasks (DB-02 through DB-05) must execute the blueprint, enforce linting, and retire the raw SQL endpoints once the new routes are live.
+
+## Task DB-02 – Pool Helper Implementation
+- **Date:** 2025-09-25
+- **Engineer(s):** Codex Agent
+- **Work Done:**
+  - Introduced `server/db/pool.js` with centralized pool configuration plus `getClient`, `withClient`, and `withTransaction` helpers that wrap telemetry metrics and leak warnings.
+  - Updated `server/database-server.js` to consume `getClient`/`dbQuery`, eliminating every direct `pool.connect()` call and routing bootstrap initialization through the new helper.
+  - Refreshed `docs/database_layer_reference.md` to mark the helper layer as implemented and tracked the lint command output in `lint_report.md`.
+- **Cleanups:** Removed legacy pool instantiation block from `server/database-server.js`.
+- **Documentation Updates:** `docs/database_layer_reference.md` (pool helper status + usage notes).
+- **Tests & Verification:**
+  - `npx eslint server/db/pool.js server/database-server.js --ext js` *(fails: existing unused-variable debt in `server/database-server.js`; new helper introduces no additional lint errors.)*
+- **Remaining Gaps / Blockers:** Core routes still contain longstanding unused exports/params flagged by ESLint; address during router refactor (DB-03).
+
+## Task DB-03 – Feature Router Extraction (In Progress)
+- **Date:** 2025-09-25
+- **Engineer(s):** Codex Agent
+- **Work Done:**
+  - Extracted character and campaign endpoints into dedicated router modules (`server/routes/characters.routes.js`, `server/routes/campaigns.routes.js`) backed by new service/validation layers (`server/services/campaigns/*`, `server/validation/*`).
+  - Introduced chat router scaffolding and centralized campaign utility helpers to remove direct `pool.connect` usage and replace `console.*` logging with structured logger calls.
+- **Cleanups:** Removed legacy inline validation/middleware from `server/database-server.js`; module now imports shared helpers.
+- **Documentation Updates:** Pending – will update `docs/database_layer_reference.md` once remaining routers (maps, sessions, encounters, NPCs, uploads) are extracted.
+- **Tests & Verification:**
+  - `npx eslint server/routes/characters.routes.js server/routes/campaigns.routes.js server/validation/*.js server/services/campaigns/*.js --ext js` *(fails: existing lint debt in legacy sections; new modules pass)*
+- **Remaining Gaps / Blockers:** Must migrate chat/maps/sessions/encounters/NPC/uploads endpoints to routers and align `API_DOCUMENTATION.md` & `schema.sql` before marking DB-03 complete.
+
+## Task 12 – DB-03 Router Extraction (Server)
+- **Date:** 2025-09-26
+- **Engineer(s):** Codex Agent
+- **Work Done:**
+  - Split the legacy monolith routes into dedicated feature routers for maps, sessions, encounters, NPCs, and uploads (`server/routes/{maps,sessions,encounters,npcs,uploads}.routes.js`).
+  - Registered the new routers in `server/database-server.js:25-32` and migrated supporting helpers into `server/services/sessions/service.js` and `server/services/encounters/service.js`.
+  - Added shared LLM/request helpers (`server/llm/request-helpers.js`, `server/llm/narrative-errors.js`) and ensured router code consumes the centralized pool helpers in `server/db/pool.js`.
+  - Routed chat endpoints through `server/services/chat/service.js`, centralising message CRUD/authorization and replacing inline SQL in `server/routes/chat.routes.js`.
+  - Rebuilt narrative endpoints to use `server/services/narratives/service.js`, consolidating LLM generation, campaign validation, and persistence across `server/routes/narratives.routes.js`.
+  - Created `server/services/npcs/service.js` and `server/services/uploads/service.js` so NPC and upload routes no longer perform raw SQL operations in the router layer.
+- **Cleanups:** Removed inline map/session/encounter/NPC/upload handlers from `server/database-server.js`, eliminating unused campaign helper imports and redundant cache scaffolding.
+- **Documentation Updates:** docs/database_layer_reference.md:21-31 (router table), API_DOCUMENTATION.md:17-2200 (new endpoint coverage), database_cleanup_task_list.md:13-15 (DB-03 status), lint_report.md:150 (recorded ESLint run).
+- **Tests & Verification:** `npx eslint server/database-server.js server/routes/maps.routes.js server/routes/sessions.routes.js server/routes/encounters.routes.js server/routes/npcs.routes.js server/routes/uploads.routes.js server/services/sessions/service.js server/services/encounters/service.js --ext js` (pass).
+- **Remaining Gaps / Blockers:** None for DB-03; remaining follow-ups (validation polish, realtime wiring) are tracked under subsequent tasks.

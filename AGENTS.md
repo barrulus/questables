@@ -3,7 +3,7 @@
 ## Core Ethos
 
 - Deliver only verifiable product behavior. Every flow must reflect the live backend; simulated shortcuts invalidate the work.
-- Treat the "Frontend Dummy Clearance & API Integration" mandate as the baseline for all assignments—never regress to mock-driven behavior.
+- Never regress to mock-driven behavior.
 - Favor clarity over speed: if a feature cannot reach production truth today, pause implementation, document the blocker, and escalate.
 
 ## Zero-Dummy Policy
@@ -21,7 +21,7 @@
 
 ## Progress Accountability
 
-- Log each completed slice in `clearance_and_connect_tasks_documentation.md` with concrete evidence (commits, screenshots, test runs).
+- Log each completed slice in relevant documents with concrete evidence (commits, screenshots, test runs).
 - Record blockers immediately instead of fabricating progress or installing throwaway fallbacks.
 - Align PR scope with logged tasks so reviewers can trace every removal of dummy data to the documented change.
 - Linting must be done on all files worked on with a lint_report.md file containing the results, please update results if needed. Example: -`npx eslint components/register-modal.tsx contexts/UserContext.tsx --ext ts,tsx`

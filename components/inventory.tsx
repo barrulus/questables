@@ -8,8 +8,9 @@ import { Textarea } from "./ui/textarea";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from "./ui/dialog";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "./ui/select";
 import { toast } from "sonner";
-import { Coins, Package, Sword, Shield, Shirt, Plus, Minus, Trash2, Edit, Loader2 } from "lucide-react";
-import { characterHelpers, type Character, type InventoryItem, type Equipment } from '../utils/database/data-helpers';
+import { Coins, Package, Sword, Shield, Shirt, Plus, Minus, Trash2, Loader2 } from "lucide-react";
+import type { InventoryItem, Equipment } from '../utils/database/data-structures';
+import { getCharacter, updateCharacter, type CharacterUpdateRequest } from '../utils/api/characters';
 
 interface InventoryProps {
   characterId: string;
@@ -24,7 +25,6 @@ interface Currency {
 }
 
 export function Inventory({ characterId, onInventoryChange }: InventoryProps) {
-  const [character, setCharacter] = useState<Character | null>(null);
   const [inventory, setInventory] = useState<InventoryItem[]>([]);
   const [equipment, setEquipment] = useState<Equipment | null>(null);
   const [currency, setCurrency] = useState<Currency>({ copper: 0, silver: 0, gold: 0, platinum: 0 });
@@ -46,9 +46,8 @@ export function Inventory({ characterId, onInventoryChange }: InventoryProps) {
   const loadCharacterInventory = async () => {
     try {
       setLoading(true);
-      const char = await characterHelpers.getCharacter(characterId);
+      const char = await getCharacter(characterId);
       if (char) {
-        setCharacter(char);
         setInventory(char.inventory || []);
         setEquipment(char.equipment || {});
         
@@ -78,10 +77,10 @@ export function Inventory({ characterId, onInventoryChange }: InventoryProps) {
   }, [characterId]);
 
   // Update character in database
-  const updateCharacterData = async (updates: Partial<Character>) => {
+  const updateCharacterData = async (updates: CharacterUpdateRequest) => {
     try {
       setUpdating(true);
-      await characterHelpers.updateCharacter(characterId, updates);
+      await updateCharacter(characterId, updates);
       onInventoryChange?.();
     } catch (error) {
       console.error('Failed to update character:', error);
@@ -389,7 +388,7 @@ export function Inventory({ characterId, onInventoryChange }: InventoryProps) {
                   <Label htmlFor="itemType">Type</Label>
                   <Select 
                     value={newItem.type || 'gear'} 
-                    onValueChange={(value) => setNewItem(prev => ({ ...prev, type: value as any }))}
+                    onValueChange={(value) => setNewItem(prev => ({ ...prev, type: value as InventoryItem['type'] }))}
                   >
                     <SelectTrigger>
                       <SelectValue />

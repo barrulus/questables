@@ -16,10 +16,8 @@ import {
   Plus,
   Trash2,
 } from "lucide-react";
-import {
-  characterHelpers,
-  type SpellcastingInfo,
-} from "../utils/database/data-helpers";
+import type { SpellcastingInfo } from "../utils/database/data-structures";
+import { getCharacter, updateCharacter } from "../utils/api/characters";
 
 interface SpellbookProps {
   characterId: string;
@@ -36,7 +34,7 @@ export function Spellbook({ characterId, onSpellcastingChange }: SpellbookProps)
   const loadCharacterSpellcasting = async () => {
     try {
       setLoading(true);
-      const char = await characterHelpers.getCharacter(characterId);
+      const char = await getCharacter(characterId);
       if (char) {
         setSpellcasting(char.spellcasting || null);
       }
@@ -65,7 +63,7 @@ export function Spellbook({ characterId, onSpellcastingChange }: SpellbookProps)
     try {
       setUpdating(true);
       const merged = { ...spellcasting, ...updates } as SpellcastingInfo;
-      await characterHelpers.updateCharacter(characterId, {
+      await updateCharacter(characterId, {
         spellcasting: merged,
       });
       setSpellcasting(merged);

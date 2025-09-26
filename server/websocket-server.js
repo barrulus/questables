@@ -22,12 +22,14 @@ const CAMPAIGN_ROOM_PREFIX = 'campaign-';
 
 class WebSocketServer {
   constructor(server) {
+    const clientOrigin = process.env.CLIENT_URL || process.env.FRONTEND_URL;
+
     this.io = new Server(server, {
       cors: {
-        origin: process.env.CLIENT_URL,
+        origin: clientOrigin || true,
         methods: ["GET", "POST"],
-        allowedHeaders: ["Authorization"],
-        credentials: true
+        allowedHeaders: ['Authorization'],
+        credentials: Boolean(clientOrigin)
       },
       transports: ['websocket', 'polling']
     });

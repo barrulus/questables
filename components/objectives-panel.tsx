@@ -4,6 +4,7 @@ import {
   createObjective,
   deleteObjective,
   listCampaignObjectives,
+  listCampaignSpawns,
   updateObjective,
   apiFetch,
   readErrorMessage,
@@ -14,9 +15,11 @@ import {
   type ObjectiveCreatePayload,
   type ObjectiveUpdatePayload,
   type ObjectiveAssistField,
+  type SpawnPoint,
 } from "../utils/api-client";
 import { Campaign } from "./campaign-shared";
 import { useWebSocket } from "../hooks/useWebSocket";
+import { useGameSession } from "../contexts/GameSessionContext";
 import { ObjectivePinMap } from "./objective-pin-map";
 import { Button } from "./ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "./ui/card";
@@ -97,6 +100,14 @@ interface MarkerOption {
 
 const ROOT_PARENT_VALUE = "__root__";
 const CLEAR_LINK_VALUE = "__clear__";
+const DEFAULT_LOCATION_RADIUS = 1500;
+
+interface BoundsEnvelope {
+  west: number;
+  south: number;
+  east: number;
+  north: number;
+}
 
 type AssistUiState = {
   pending: boolean;
@@ -1013,7 +1024,10 @@ export function ObjectivesPanel({ campaign, canEdit, worldMap, worldMapLoading, 
   const [dragState, setDragState] = useState<{ id: string; parentId: string | null } | null>(null);
   const [dropTarget, setDropTarget] = useState<{ id: string; position: "before" | "after" } | null>(null);
   const [assistStates, setAssistStates] = useState<Record<ObjectiveAssistField, AssistUiState>>(createAssistUiState);
+  const [spawn, setSpawn] = useState<SpawnPoint | null>(null);
+  const [spawnLoaded, setSpawnLoaded] = useState(false);
   const { messages } = useWebSocket(campaign?.id ?? "");
+  const { playerVisibilityRadius } = useGameSession();
   const processedMessageIndexRef = useRef(0);
 
   const disabledAssistState = useMemo(createAssistUiState, []);
@@ -1076,13 +1090,78 @@ export function ObjectivesPanel({ campaign, canEdit, worldMap, worldMapLoading, 
     void loadObjectives();
   }, [loadObjectives]);
 
+  useEffect(() => {
+    if (!campaign?.id) {
+      setSpawn(null);
+      setSpawnLoaded(true);
+      return;
+    }
+
+    let cancelled = false;
+    const controller = new AbortController();
+
+    (async () => {
+      setSpawnLoaded(false);
+      try {
+        const spawns = await listCampaignSpawns(campaign.id, { signal: controller.signal });
+        if (cancelled) return;
+        const defaultSpawn = spawns.find((entry) => entry.isDefault) ?? spawns[0] ?? null;
+        setSpawn(defaultSpawn ?? null);
+      } catch (error) {
+        if (!cancelled && !controller.signal.aborted) {
+          console.error('[ObjectivesPanel] Failed to load spawn points', error);
+          setSpawn(null);
+        }
+      } finally {
+        if (!cancelled) {
+          setSpawnLoaded(true);
+        }
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+      controller.abort();
+    };
+  }, [campaign?.id]);
+
+  const computeBoundsNearSpawn = useCallback((): BoundsEnvelope | null => {
+    if (!spawn?.geometry || !Array.isArray(spawn.geometry.coordinates)) {
+      return null;
+    }
+
+    const [x, y] = spawn.geometry.coordinates;
+    if (!Number.isFinite(x) || !Number.isFinite(y)) {
+      return null;
+    }
+
+    const radius = Number.isFinite(playerVisibilityRadius ?? NaN) && (playerVisibilityRadius ?? 0) > 0
+      ? (playerVisibilityRadius as number)
+      : DEFAULT_LOCATION_RADIUS;
+
+    return {
+      west: x - radius,
+      south: y - radius,
+      east: x + radius,
+      north: y + radius,
+    };
+  }, [spawn, playerVisibilityRadius]);
+
   const fetchBurgs = useCallback(async () => {
-    if (!worldMap?.id) {
+    if (!worldMap?.id || !spawnLoaded) {
+      if (!spawnLoaded) {
+        return;
+      }
       setBurgOptions([]);
       return;
     }
     try {
-      const response = await apiFetch(`/api/maps/${worldMap.id}/burgs`);
+      const bounds = computeBoundsNearSpawn();
+      const boundsQuery = bounds
+        ? `?bounds=${encodeURIComponent(JSON.stringify(bounds))}`
+        : '';
+
+      const response = await apiFetch(`/api/maps/${worldMap.id}/burgs${boundsQuery}`);
       if (!response.ok) {
         throw new Error(await readErrorMessage(response, "Failed to load burgs"));
       }
@@ -1118,17 +1197,25 @@ export function ObjectivesPanel({ campaign, canEdit, worldMap, worldMapLoading, 
       console.error("[ObjectivesPanel] Failed to load burg options", error);
       setBurgOptions([]);
     }
-  }, [worldMap?.id]);
+  }, [worldMap?.id, computeBoundsNearSpawn, spawnLoaded]);
 
   const fetchMarkers = useCallback(async () => {
-    if (!worldMap?.id) {
+    if (!worldMap?.id || !spawnLoaded) {
+      if (!spawnLoaded) {
+        return;
+      }
       setMarkerOptions([]);
       setMarkerUnavailable(false);
       return;
     }
 
     try {
-      const response = await apiFetch(`/api/maps/${worldMap.id}/markers`);
+      const bounds = computeBoundsNearSpawn();
+      const boundsQuery = bounds
+        ? `?bounds=${encodeURIComponent(JSON.stringify(bounds))}`
+        : '';
+
+      const response = await apiFetch(`/api/maps/${worldMap.id}/markers${boundsQuery}`);
       if (response.status === 404) {
         setMarkerUnavailable(true);
         setMarkerOptions([]);
@@ -1171,7 +1258,7 @@ export function ObjectivesPanel({ campaign, canEdit, worldMap, worldMapLoading, 
       setMarkerOptions([]);
       setMarkerUnavailable(false);
     }
-  }, [worldMap?.id]);
+  }, [worldMap?.id, computeBoundsNearSpawn, spawnLoaded]);
 
   useEffect(() => {
     void fetchBurgs();

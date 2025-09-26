@@ -13,8 +13,13 @@ import {
 
 import { useUser } from "../contexts/UserContext";
 import {
-  characterHelpers,
-} from "../utils/database/production-helpers";
+  listUserCharacters,
+  createCharacter as createCharacterRecord,
+  updateCharacter as updateCharacterRecord,
+  deleteCharacter as deleteCharacterRecord,
+  type CharacterCreateRequest,
+  type CharacterUpdateRequest,
+} from "../utils/api/characters";
 import type {
   Character,
   InventoryItem,
@@ -136,17 +141,6 @@ type CharacterMutationPayload = {
   flaws?: string;
   spellcasting?: SpellcastingInfo;
 };
-
-type CharacterCreateInput = Omit<
-  Character,
-  | "id"
-  | "created_at"
-  | "updated_at"
-  | "last_played"
-  | "createdAt"
-  | "updatedAt"
-  | "lastPlayed"
->;
 
 const toNumber = (value: NumericLike, fallback = 0) => {
   if (typeof value === "number" && Number.isFinite(value)) {
@@ -352,6 +346,41 @@ const buildUpdatePayload = (
   };
 };
 
+const toCreateRequest = (payload: CharacterMutationPayload): CharacterCreateRequest => {
+  const request: CharacterCreateRequest = {
+    userId: payload.userId,
+    name: payload.name,
+    className: payload.class,
+    level: payload.level,
+    race: payload.race,
+    background: payload.background,
+    hitPoints: payload.hitPoints,
+    armorClass: payload.armorClass,
+    speed: payload.speed,
+    proficiencyBonus: payload.proficiencyBonus,
+    abilities: payload.abilities,
+    savingThrows: payload.savingThrows,
+    skills: payload.skills,
+    inventory: payload.inventory,
+    equipment: payload.equipment,
+  };
+
+  if (payload.backstory !== undefined) request.backstory = payload.backstory;
+  if (payload.personality !== undefined) request.personality = payload.personality;
+  if (payload.ideals !== undefined) request.ideals = payload.ideals;
+  if (payload.bonds !== undefined) request.bonds = payload.bonds;
+  if (payload.flaws !== undefined) request.flaws = payload.flaws;
+  if (payload.spellcasting !== undefined) request.spellcasting = payload.spellcasting ?? null;
+
+  return request;
+};
+
+const toUpdateRequest = (payload: CharacterMutationPayload): CharacterUpdateRequest => {
+  const request = toCreateRequest(payload) as CharacterUpdateRequest;
+  request.userId = payload.userId;
+  return request;
+};
+
 const getAbilityModifier = (score: number) => Math.floor((score - 10) / 2);
 
 const formatDate = (value?: string | Date | null) => {
@@ -397,7 +426,7 @@ export function CharacterManager({ command, onCharactersChanged }: CharacterMana
     }
 
     try {
-      const data = await characterHelpers.getCharactersByUser(user.id);
+      const data = await listUserCharacters(user.id);
       setCharacters(data ?? []);
     } catch (err) {
       console.error("Failed to load characters", err);
@@ -563,9 +592,7 @@ export function CharacterManager({ command, onCharactersChanged }: CharacterMana
     try {
       if (formMode === "create") {
         const payload = buildCreatePayload(formState, user.id);
-        const created = await characterHelpers.createCharacter(
-          payload as unknown as CharacterCreateInput,
-        );
+        const created = await createCharacterRecord(toCreateRequest(payload));
         if (!created) {
           throw new Error("Character was not created by the backend");
         }
@@ -577,9 +604,9 @@ export function CharacterManager({ command, onCharactersChanged }: CharacterMana
           throw new Error("No character selected for editing");
         }
         const payload = buildUpdatePayload(formState, user.id, selectedCharacter);
-        const updated = await characterHelpers.updateCharacter(
+        const updated = await updateCharacterRecord(
           selectedCharacter.id,
-          payload as unknown as Partial<Character>,
+          toUpdateRequest(payload),
         );
         if (!updated) {
           throw new Error("Character changes were not persisted");
@@ -608,7 +635,7 @@ export function CharacterManager({ command, onCharactersChanged }: CharacterMana
     if (!deleteTarget) return;
     setOperationPending(true);
     try {
-      await characterHelpers.deleteCharacter(deleteTarget.id);
+      await deleteCharacterRecord(deleteTarget.id);
       toast.success("Character deleted");
       setDeleteTarget(null);
       await loadCharacters("refresh");

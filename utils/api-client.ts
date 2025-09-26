@@ -149,7 +149,7 @@ export interface ApiRequestOptions {
   signal?: AbortSignal;
 }
 
-const buildJsonRequestInit = (
+export const buildJsonRequestInit = (
   method: string,
   body: unknown | undefined,
   options: ApiRequestOptions = {},
@@ -172,7 +172,7 @@ const buildJsonRequestInit = (
   return init;
 };
 
-const ensurePayload = <T>(data: T | undefined, errorMessage: string): T => {
+export const ensurePayload = <T>(data: T | undefined, errorMessage: string): T => {
   if (data === undefined || data === null) {
     throw new Error(errorMessage);
   }

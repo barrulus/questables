@@ -88,3 +88,69 @@
 - `npx eslint components/session-manager.tsx --ext ts,tsx` (pass)
 - `2025-09-24` — `npx eslint server/database-server.js --ext js` (fails: legacy unused-variable debt predates the markers endpoint; command output unchanged aside from newly added route)
 - `2025-09-24` — `npx eslint API_DOCUMENTATION.md --ext md` (fails: Markdown parsing unsupported in the ESLint configuration; aborts at line 1)
+- \ — \
+/home/barrulus/1_projects/questables/server/database-server.js
+    17:23  warning  'query' is defined but never used. Allowed unused vars must match /^_/u                            no-unused-vars
+    17:23  error    'query' is defined but never used                                                                  @typescript-eslint/no-unused-vars
+    28:3   warning  'authRateLimit' is defined but never used. Allowed unused vars must match /^_/u                    no-unused-vars
+    28:3   error    'authRateLimit' is defined but never used                                                          @typescript-eslint/no-unused-vars
+    33:3   warning  'sanitizeFilename' is defined but never used. Allowed unused vars must match /^_/u                 no-unused-vars
+    33:3   error    'sanitizeFilename' is defined but never used                                                       @typescript-eslint/no-unused-vars
+    39:3   warning  'logDatabaseOperation' is defined but never used. Allowed unused vars must match /^_/u             no-unused-vars
+    39:3   error    'logDatabaseOperation' is defined but never used                                                   @typescript-eslint/no-unused-vars
+    40:3   warning  'logUserActivity' is defined but never used. Allowed unused vars must match /^_/u                  no-unused-vars
+    40:3   error    'logUserActivity' is defined but never used                                                        @typescript-eslint/no-unused-vars
+    41:3   warning  'logSecurityEvent' is defined but never used. Allowed unused vars must match /^_/u                 no-unused-vars
+    41:3   error    'logSecurityEvent' is defined but never used                                                       @typescript-eslint/no-unused-vars
+   290:18  warning  'error' is defined but never used                                                                  no-unused-vars
+   290:18  error    'error' is defined but never used                                                                  @typescript-eslint/no-unused-vars
+   397:7   warning  'cacheMiddleware' is assigned a value but never used. Allowed unused vars must match /^_/u         no-unused-vars
+   397:7   error    'cacheMiddleware' is assigned a value but never used                                               @typescript-eslint/no-unused-vars
+   688:7   warning  'validateCharacterData' is assigned a value but never used. Allowed unused vars must match /^_/u   no-unused-vars
+   688:7   error    'validateCharacterData' is assigned a value but never used                                         @typescript-eslint/no-unused-vars
+   794:14  warning  'error' is defined but never used                                                                  no-unused-vars
+   794:14  error    'error' is defined but never used                                                                  @typescript-eslint/no-unused-vars
+  1288:7   warning  'fetchNpcWithCampaign' is assigned a value but never used. Allowed unused vars must match /^_/u    no-unused-vars
+  1288:7   error    'fetchNpcWithCampaign' is assigned a value but never used                                          @typescript-eslint/no-unused-vars
+  1300:7   warning  'ENCOUNTER_TYPE_CONFIG' is assigned a value but never used. Allowed unused vars must match /^_/u   no-unused-vars
+  1300:7   error    'ENCOUNTER_TYPE_CONFIG' is assigned a value but never used                                         @typescript-eslint/no-unused-vars
+  1319:7   warning  'ENCOUNTER_DIFFICULTIES' is assigned a value but never used. Allowed unused vars must match /^_/u  no-unused-vars
+  1319:7   error    'ENCOUNTER_DIFFICULTIES' is assigned a value but never used                                        @typescript-eslint/no-unused-vars
+  1530:54  warning  'apiKey' is defined but never used. Allowed unused args must match /^_/u                           no-unused-vars
+  1530:54  error    'apiKey' is defined but never used                                                                 @typescript-eslint/no-unused-vars
+  1568:21  warning  'client' is defined but never used. Allowed unused args must match /^_/u                           no-unused-vars
+  1568:21  error    'client' is defined but never used                                                                 @typescript-eslint/no-unused-vars
+  1572:24  warning  'client' is defined but never used. Allowed unused args must match /^_/u                           no-unused-vars
+  1572:24  error    'client' is defined but never used                                                                 @typescript-eslint/no-unused-vars
+  1576:20  warning  'client' is defined but never used. Allowed unused args must match /^_/u                           no-unused-vars
+  1576:20  error    'client' is defined but never used                                                                 @typescript-eslint/no-unused-vars
+  1581:7   warning  'queryWithRetry' is assigned a value but never used. Allowed unused vars must match /^_/u          no-unused-vars
+  1581:7   error    'queryWithRetry' is assigned a value but never used                                                @typescript-eslint/no-unused-vars
+  1862:11  warning  'derivedInteraction' is assigned a value but never used. Allowed unused vars must match /^_/u      no-unused-vars
+  1862:11  error    'derivedInteraction' is assigned a value but never used                                            @typescript-eslint/no-unused-vars
+  4696:11  warning  'result' is assigned a value but never used. Allowed unused vars must match /^_/u                  no-unused-vars
+  4696:11  error    'result' is assigned a value but never used                                                        @typescript-eslint/no-unused-vars
+  5342:16  warning  'parseError' is defined but never used                                                             no-unused-vars
+  5342:16  error    'parseError' is defined but never used                                                             @typescript-eslint/no-unused-vars
+  5399:16  warning  'parseError' is defined but never used                                                             no-unused-vars
+  5399:16  error    'parseError' is defined but never used                                                             @typescript-eslint/no-unused-vars
+  5448:16  warning  'parseError' is defined but never used                                                             no-unused-vars
+  5448:16  error    'parseError' is defined but never used                                                             @typescript-eslint/no-unused-vars
+  5488:16  warning  'parseError' is defined but never used                                                             no-unused-vars
+  5488:16  error    'parseError' is defined but never used                                                             @typescript-eslint/no-unused-vars
+  5519:9   warning  'paramCount' is assigned a value but never used. Allowed unused vars must match /^_/u              no-unused-vars
+  5519:9   error    'paramCount' is assigned a value but never used                                                    @typescript-eslint/no-unused-vars
+  7175:11  warning  'result' is assigned a value but never used. Allowed unused vars must match /^_/u                  no-unused-vars
+  7175:11  error    'result' is assigned a value but never used                                                        @typescript-eslint/no-unused-vars
+
+✖ 52 problems (26 errors, 26 warnings) (fails: longstanding unused-variable debt in \; new pool helper passes lint)
+- `2025-09-25` — `npx eslint server/db/pool.js server/database-server.js --ext js` (fails: longstanding unused-variable debt in `server/database-server.js`; new pool helper introduces no additional lint errors)
+- `2025-09-25` — `npx eslint server/routes/characters.routes.js server/routes/campaigns.routes.js server/routes/chat.routes.js server/validation/common.js server/validation/characters.js server/validation/campaigns.js server/validation/chat.js server/services/campaigns/*.js --ext js` (fails: legacy lint debt persists in untouched modules; new routers introduce no additional errors)
+
+- `npx eslint server/database-server.js server/routes/maps.routes.js server/routes/sessions.routes.js server/routes/encounters.routes.js server/routes/npcs.routes.js server/routes/uploads.routes.js server/services/sessions/service.js server/services/encounters/service.js --ext js` (pass)
+- `npx eslint server/routes/maps.routes.js server/services/maps/service.js --ext js` (pass)
+- `npx eslint server/routes/chat.routes.js server/services/chat/service.js --ext js` (pass)
+- `npx eslint server/routes/narratives.routes.js server/services/narratives/service.js --ext js` (pass)
+- `npx eslint server/routes/uploads.routes.js server/services/uploads/service.js server/services/maps/service.js --ext js` (pass)
+- `npx eslint server/routes/npcs.routes.js server/services/npcs/service.js --ext js` (pass)
+- `2025-09-27` — `npx eslint components/character-manager.tsx components/character-sheet.tsx components/expandable-panel.tsx components/inventory.tsx components/spellbook.tsx components/map-data-loader.tsx components/register-modal.tsx contexts/UserContext.tsx utils/api/auth.ts utils/api/users.ts utils/api/characters.ts utils/api/maps.ts server/routes/maps.routes.js server/routes/users.routes.js server/services/maps/service.js server/services/users/service.js --ext ts,tsx,js` (pass)
