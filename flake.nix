@@ -49,6 +49,7 @@
             packages = with pkgs; [
               nodejs_24
               corepack
+              tegola
               git
               jq
             ];
