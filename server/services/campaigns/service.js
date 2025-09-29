@@ -1,4 +1,5 @@
 import { DEFAULT_VISIBILITY_RADIUS, DEFAULT_MAX_MOVE_DISTANCE, DEFAULT_MIN_MOVE_INTERVAL_MS } from './utils.js';
+import { getMovementConfig, snapToGrid, computeDistance } from './movement-config.js';
 
 export const MOVE_MODES = ['walk', 'ride', 'boat', 'fly', 'teleport', 'gm'];
 export const MOVE_MODE_SET = new Set(MOVE_MODES);
@@ -50,7 +51,7 @@ export const parseBounds = (bounds) => {
     ? (() => {
         try {
           return JSON.parse(bounds);
-        } catch (error) {
+        } catch {
           return null;
         }
       })()
@@ -167,6 +168,10 @@ export const performPlayerMovement = async ({
     throw error;
   }
 
+  const movementConfig = getMovementConfig();
+  const requestedTarget = { x: targetX, y: targetY };
+  const snappedTarget = snapToGrid(targetX, targetY);
+
   if (enforceClamp) {
     const { rows: boundsRows } = await client.query(
       'SELECT bounds FROM public.maps_world mw JOIN public.campaigns c ON c.world_map_id = mw.id WHERE c.id = $1',
@@ -174,7 +179,7 @@ export const performPlayerMovement = async ({
     );
 
     const bounds = boundsRows[0]?.bounds;
-    if (bounds && !pointWithinBounds(bounds, targetX, targetY)) {
+    if (bounds && !pointWithinBounds(bounds, snappedTarget.x, snappedTarget.y)) {
       const error = new Error('Target location is outside the campaign map bounds');
       error.status = 400;
       error.code = 'target_out_of_bounds';
@@ -182,22 +187,141 @@ export const performPlayerMovement = async ({
     }
   }
 
+  const { rows: currentRows } = await client.query(
+    `SELECT id,
+            user_id,
+            campaign_id,
+            visibility_state,
+            last_located_at,
+            ST_X(loc_current) AS prev_x,
+            ST_Y(loc_current) AS prev_y
+       FROM public.campaign_players
+      WHERE campaign_id = $1
+        AND id = $2
+      FOR UPDATE`,
+    [campaignId, playerId],
+  );
+
+  if (currentRows.length === 0) {
+    const error = new Error('Campaign player not found');
+    error.status = 404;
+    error.code = 'player_not_found';
+    throw error;
+  }
+
+  const existing = currentRows[0];
+  const hasPrevious = existing.prev_x !== null && existing.prev_y !== null;
+  const previousPoint = hasPrevious
+    ? { x: Number(existing.prev_x), y: Number(existing.prev_y) }
+    : { x: snappedTarget.x, y: snappedTarget.y };
+  const previousTimestamp = existing.last_located_at
+    ? new Date(existing.last_located_at).getTime() / 1000
+    : Date.now() / 1000;
+
   await client.query(
     `UPDATE public.campaign_players
         SET loc_current = ST_SetSRID(ST_MakePoint($1, $2), 0),
             last_located_at = NOW()
       WHERE campaign_id = $3
         AND id = $4`,
-    [targetX, targetY, campaignId, playerId],
+    [snappedTarget.x, snappedTarget.y, campaignId, playerId],
   );
+
+  const updateResult = await client.query(
+    `SELECT id,
+            visibility_state,
+            ST_AsGeoJSON(loc_current)::json AS geometry,
+            last_located_at
+       FROM public.campaign_players
+      WHERE campaign_id = $1 AND id = $2`,
+    [campaignId, playerId],
+  );
+  const updatedPlayer = updateResult.rows[0] ?? null;
+
+  if (!updatedPlayer) {
+    const error = new Error('Failed to load updated player state');
+    error.status = 500;
+    error.code = 'player_state_missing';
+    throw error;
+  }
+
+  const nowTimestamp = updatedPlayer.last_located_at
+    ? new Date(updatedPlayer.last_located_at).getTime() / 1000
+    : Date.now() / 1000;
+
+  const distance = hasPrevious ? computeDistance(previousPoint, snappedTarget) : null;
 
   await client.query(
     `INSERT INTO public.player_movement_audit
         (campaign_id, player_id, moved_by, mode, reason, previous_loc, new_loc)
      VALUES
-        ($1, $2, $3, $4, $5, NULL, ST_SetSRID(ST_MakePoint($6, $7), 0))`,
-    [campaignId, playerId, requestorUserId, mode, reason, targetX, targetY],
+        ($1, $2, $3, $4, $5,
+         ST_SetSRID(ST_MakePoint($6, $7), 0),
+         ST_SetSRID(ST_MakePoint($8, $9), 0))`,
+    [
+      campaignId,
+      playerId,
+      requestorUserId,
+      mode,
+      reason,
+      previousPoint.x,
+      previousPoint.y,
+      snappedTarget.x,
+      snappedTarget.y,
+    ],
   );
+
+  const pathInsert = await client.query(
+    `INSERT INTO public.player_movement_paths (
+        campaign_id,
+        player_id,
+        path,
+        mode,
+        moved_by,
+        reason
+     )
+     VALUES (
+        $1,
+        $2,
+        ST_SetSRID(ST_MakeLine(ARRAY[
+          ST_MakePoint($3, $4, $5),
+          ST_MakePoint($6, $7, $8)
+        ]), 0),
+        $9,
+        $10,
+        $11
+     )
+     RETURNING id, created_at`,
+    [
+      campaignId,
+      playerId,
+      previousPoint.x,
+      previousPoint.y,
+      previousTimestamp,
+      snappedTarget.x,
+      snappedTarget.y,
+      nowTimestamp,
+      mode,
+      requestorUserId,
+      reason ?? null,
+    ],
+  );
+
+  const pathRecord = pathInsert.rows[0] ?? null;
+
+  return {
+    player: updatedPlayer,
+    requestedDistance: distance,
+    requestedTarget,
+    snappedTarget,
+    grid: {
+      type: movementConfig.gridType,
+      size: movementConfig.gridSize,
+      origin: { x: movementConfig.originX, y: movementConfig.originY },
+    },
+    pathId: pathRecord?.id ?? null,
+    pathRecordedAt: pathRecord?.created_at ?? null,
+  };
 };
 
 export {
@@ -208,3 +332,5 @@ export {
 
 export const MAX_MOVE_DISTANCE = DEFAULT_MAX_MOVE_DISTANCE;
 export const MIN_MOVE_INTERVAL_MS = DEFAULT_MIN_MOVE_INTERVAL_MS;
+
+export { getMovementConfig } from './movement-config.js';

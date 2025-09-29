@@ -1121,6 +1121,71 @@ export function OpenLayersMap() {
     }
   }, [applyTileSetConstraints, updateViewExtent]);
 
+  const applyTileSetConstraintsRef = useRef(applyTileSetConstraints);
+  useEffect(() => {
+    applyTileSetConstraintsRef.current = applyTileSetConstraints;
+  }, [applyTileSetConstraints]);
+
+  const updateViewExtentRef = useRef(updateViewExtent);
+  useEffect(() => {
+    updateViewExtentRef.current = updateViewExtent;
+  }, [updateViewExtent]);
+
+  const loadInitialDataRef = useRef(loadInitialData);
+  useEffect(() => {
+    loadInitialDataRef.current = loadInitialData;
+  }, [loadInitialData]);
+
+  const getBurgStyleRef = useRef(getBurgStyle);
+  useEffect(() => {
+    getBurgStyleRef.current = getBurgStyle;
+    if (burgsLayerRef.current) {
+      burgsLayerRef.current.changed();
+    }
+  }, [getBurgStyle]);
+
+  const getRouteStyleRef = useRef(getRouteStyle);
+  useEffect(() => {
+    getRouteStyleRef.current = getRouteStyle;
+    if (routesLayerRef.current) {
+      routesLayerRef.current.changed();
+    }
+  }, [getRouteStyle]);
+
+  const getMarkerStyleRef = useRef(getMarkerStyle);
+  useEffect(() => {
+    getMarkerStyleRef.current = getMarkerStyle;
+    if (markersLayerRef.current) {
+      markersLayerRef.current.changed();
+    }
+  }, [getMarkerStyle]);
+
+  const getCampaignLocationStyleRef = useRef(getCampaignLocationStyle);
+  useEffect(() => {
+    getCampaignLocationStyleRef.current = getCampaignLocationStyle;
+    if (campaignLayerRef.current) {
+      campaignLayerRef.current.changed();
+    }
+  }, [getCampaignLocationStyle]);
+
+  const getPlayerTokenStyleRef = useRef(getPlayerTokenStyle);
+  useEffect(() => {
+    getPlayerTokenStyleRef.current = getPlayerTokenStyle;
+    if (playerLayerRef.current) {
+      playerLayerRef.current.changed();
+    }
+  }, [getPlayerTokenStyle]);
+
+  const layerVisibilityRef = useRef(layerVisibility);
+  useEffect(() => {
+    layerVisibilityRef.current = layerVisibility;
+  }, [layerVisibility]);
+
+  const mapModeRef = useRef(mapMode);
+  useEffect(() => {
+    mapModeRef.current = mapMode;
+  }, [mapMode]);
+
   // Initialize OpenLayers map
 
   // Update tile source with current world bounds
@@ -1445,6 +1510,11 @@ export function OpenLayersMap() {
     }
   }, [layerVisibility.cells, toggleLayer]);
 
+  const handleZoomChangeRef = useRef(handleZoomChange);
+  useEffect(() => {
+    handleZoomChangeRef.current = handleZoomChange;
+  }, [handleZoomChange]);
+
   const handlePointerMove = useCallback((event: any) => {
     const map = mapInstanceRef.current;
     if (!map) return;
@@ -1485,6 +1555,16 @@ export function OpenLayersMap() {
       setPopupContent(null);
     }
   }, [buildPopupDetails, getFeatureType, selectedTool]);
+
+  const handlePointerMoveRef = useRef(handlePointerMove);
+  useEffect(() => {
+    handlePointerMoveRef.current = handlePointerMove;
+  }, [handlePointerMove]);
+
+  const handleMapClickRef = useRef(handleMapClick);
+  useEffect(() => {
+    handleMapClickRef.current = handleMapClick;
+  }, [handleMapClick]);
 
   const loadWorldMapData = useCallback(async () => {
     if (!selectedWorldMap || mapMode !== 'world') return;
@@ -1558,8 +1638,16 @@ export function OpenLayersMap() {
     }
   }, [loadWorldMapData, mapMode]);
 
+  const handleMapMoveEndRef = useRef(handleMapMoveEnd);
+  useEffect(() => {
+    handleMapMoveEndRef.current = handleMapMoveEnd;
+  }, [handleMapMoveEnd]);
+
   useEffect(() => {
     if (!mapRef.current || mapInstanceRef.current) return;
+
+    const initialVisibility = layerVisibilityRef.current;
+    const initialMode = mapModeRef.current;
 
     // Base tile layer; source assigned after database tile sets load
     const baseLayer = new TileLayer({
@@ -1570,64 +1658,64 @@ export function OpenLayersMap() {
     // Vector layers for different data types
     const burgsLayer = new VectorLayer({
       source: new VectorSource({ wrapX: false }),
-      style: (feature, resolution) => getBurgStyle(feature, resolution),
-      visible: layerVisibility.burgs
+      style: (feature, resolution) => getBurgStyleRef.current(feature, resolution),
+      visible: initialVisibility.burgs
     });
     burgsLayerRef.current = burgsLayer;
 
     const routesLayer = new VectorLayer({
       source: new VectorSource({ wrapX: false }),
-      style: (feature, resolution) => getRouteStyle(feature, resolution),
-      visible: layerVisibility.routes
+      style: (feature, resolution) => getRouteStyleRef.current(feature, resolution),
+      visible: initialVisibility.routes
     });
     routesLayerRef.current = routesLayer;
 
     const riversLayer = new VectorLayer({
       source: new VectorSource({ wrapX: false }),
       style: getRiverStyle,
-      visible: layerVisibility.rivers
+      visible: initialVisibility.rivers
     });
     riversLayerRef.current = riversLayer;
 
     const cellsLayer = new VectorLayer({
       source: new VectorSource({ wrapX: false }),
       style: getCellStyle,
-      visible: layerVisibility.cells
+      visible: initialVisibility.cells
     });
     cellsLayerRef.current = cellsLayer;
 
     const markersLayer = new VectorLayer({
       source: new VectorSource({ wrapX: false }),
-      style: (feature, resolution) => getMarkerStyle(feature, resolution),
-      visible: layerVisibility.markers
+      style: (feature, resolution) => getMarkerStyleRef.current(feature, resolution),
+      visible: initialVisibility.markers
     });
     markersLayerRef.current = markersLayer;
 
     const campaignLayer = new VectorLayer({
       source: new VectorSource({ wrapX: false }),
-      style: (feature, resolution) => getCampaignLocationStyle(feature, resolution),
-      visible: layerVisibility.campaignLocations
+      style: (feature, resolution) => getCampaignLocationStyleRef.current(feature, resolution),
+      visible: initialVisibility.campaignLocations
     });
     campaignLayerRef.current = campaignLayer;
 
     const playerTrailLayer = new VectorLayer({
       source: new VectorSource({ wrapX: false }),
       style: getPlayerTrailStyle,
-      visible: layerVisibility.playerTrails
+      visible: initialVisibility.playerTrails
     });
     playerTrailLayerRef.current = playerTrailLayer;
 
     const playerLayer = new VectorLayer({
       source: new VectorSource({ wrapX: false }),
-      style: (feature, resolution) => getPlayerTokenStyle(feature, resolution),
-      visible: layerVisibility.playerTokens
+      style: (feature, resolution) => getPlayerTokenStyleRef.current(feature, resolution),
+      visible: initialVisibility.playerTokens
     });
     playerLayerRef.current = playerLayer;
 
     const encounterLayer = new VectorLayer({
       source: new VectorSource({ wrapX: false }),
       style: getEncounterStyle,
-      visible: mapMode === 'encounter'
+      visible: initialMode === 'encounter'
     });
     encounterLayerRef.current = encounterLayer;
 
@@ -1678,14 +1766,34 @@ export function OpenLayersMap() {
     });
 
     mapInstanceRef.current = map;
-    applyTileSetConstraints(null);
+    applyTileSetConstraintsRef.current?.(null);
+
+    if (process.env.NODE_ENV === 'test') {
+      const globalObject = globalThis as Record<string, unknown>;
+      const currentCount = typeof globalObject.__questablesMapInitCount === 'number'
+        ? globalObject.__questablesMapInitCount
+        : 0;
+      globalObject.__questablesMapInitCount = currentCount + 1;
+    }
 
     // Event handlers
     const view = map.getView();
-    const mapClickListener = (event: any) => handleMapClick(event);
-    const mapMoveEndListener = () => handleMapMoveEnd();
-    const pointerMoveListener = (event: any) => handlePointerMove(event);
-    const zoomChangeListener = () => handleZoomChange();
+    const mapClickListener = (event: any) => {
+      const handler = handleMapClickRef.current;
+      if (handler) handler(event);
+    };
+    const mapMoveEndListener = () => {
+      const handler = handleMapMoveEndRef.current;
+      if (handler) handler();
+    };
+    const pointerMoveListener = (event: any) => {
+      const handler = handlePointerMoveRef.current;
+      if (handler) handler(event);
+    };
+    const zoomChangeListener = () => {
+      const handler = handleZoomChangeRef.current;
+      if (handler) handler();
+    };
 
     map.on('click', mapClickListener);
     map.on('moveend', mapMoveEndListener);
@@ -1693,7 +1801,7 @@ export function OpenLayersMap() {
     view.on('change:resolution', zoomChangeListener);
 
     // Load initial data
-    loadInitialData();
+    loadInitialDataRef.current?.();
 
     return () => {
       map.un('click', mapClickListener);
@@ -1703,7 +1811,7 @@ export function OpenLayersMap() {
       map.dispose();
       mapInstanceRef.current = null;
     };
-  }, [applyTileSetConstraints, loadInitialData, handleMapClick, handleMapMoveEnd, handlePointerMove, handleZoomChange, layerVisibility.burgs, layerVisibility.routes, layerVisibility.rivers, layerVisibility.cells, layerVisibility.markers, layerVisibility.campaignLocations, layerVisibility.playerTokens, layerVisibility.playerTrails, mapMode, getBurgStyle, getRouteStyle, getMarkerStyle, getCampaignLocationStyle, getPlayerTokenStyle]);
+  }, []);
 
   useEffect(() => {
     if (tileSets.length === 0) {

@@ -154,3 +154,8 @@
 - `npx eslint server/routes/uploads.routes.js server/services/uploads/service.js server/services/maps/service.js --ext js` (pass)
 - `npx eslint server/routes/npcs.routes.js server/services/npcs/service.js --ext js` (pass)
 - `2025-09-27` — `npx eslint components/character-manager.tsx components/character-sheet.tsx components/expandable-panel.tsx components/inventory.tsx components/spellbook.tsx components/map-data-loader.tsx components/register-modal.tsx contexts/UserContext.tsx utils/api/auth.ts utils/api/users.ts utils/api/characters.ts utils/api/maps.ts server/routes/maps.routes.js server/routes/users.routes.js server/services/maps/service.js server/services/users/service.js --ext ts,tsx,js` (pass)
+
+- `npx eslint components/openlayers-map.tsx components/__tests__/openlayers-map.health.test.tsx --ext ts,tsx` (pass)
+
+- `npx eslint server/routes/tiles.routes.js server/utils/tegola-client.js server/tegola/generate-config.js --ext js` (pass)
+- `npx eslint server/routes/campaigns.routes.js server/services/campaigns/service.js server/services/campaigns/movement-config.js --ext js` (pass)

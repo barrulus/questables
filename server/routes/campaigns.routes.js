@@ -29,10 +29,8 @@ import {
   MOVE_MODES,
   MOVE_MODE_SET,
   TELEPORT_MODES,
-  ENCOUNTER_TYPES,
   normalizeTargetCoordinates,
   parseBounds,
-  pointWithinBounds,
   ensureDmControl,
   getViewerContextOrThrow,
   performPlayerMovement,
@@ -647,7 +645,6 @@ router.get(
   async (req, res) => {
     const { campaignId } = req.params;
     const client = await getClient();
-    const wsServer = req.app?.locals?.wsServer ?? null;
 
     try {
       const viewer = await getViewerContextOrThrow(client, campaignId, req.user);
@@ -755,7 +752,14 @@ router.post(
         throw error;
       }
 
-      const { player, requestedDistance } = await performPlayerMovement({
+      const {
+        player,
+        requestedDistance,
+        requestedTarget,
+        snappedTarget,
+        grid,
+        pathId,
+      } = await performPlayerMovement({
         client,
         campaignId,
         playerId,
@@ -781,6 +785,10 @@ router.post(
           updatedAt: player.last_located_at,
           distance: typeof requestedDistance === 'number' ? requestedDistance : null,
           reason: reason ?? null,
+          target: requestedTarget,
+          snapped: snappedTarget,
+          grid,
+          pathId: pathId ?? null,
         });
       }
 
@@ -794,6 +802,10 @@ router.post(
         mode: modeRaw,
         distance: typeof requestedDistance === 'number' ? requestedDistance : null,
         reason: reason ?? null,
+        target: requestedTarget,
+        snapped: snappedTarget,
+        grid,
+        pathId: pathId ?? null,
       });
     } catch (error) {
       await client.query('ROLLBACK').catch(() => {});
@@ -892,7 +904,13 @@ router.post(
         : null;
       const reason = sanitizeReason(req.body?.reason ?? inferredReason);
 
-      const { player } = await performPlayerMovement({
+      const {
+        player,
+        requestedTarget,
+        snappedTarget,
+        grid,
+        pathId,
+      } = await performPlayerMovement({
         client,
         campaignId,
         playerId,
@@ -925,6 +943,10 @@ router.post(
             : null,
           reason: reason ?? null,
           updatedAt: player.last_located_at,
+          target: requestedTarget,
+          snapped: snappedTarget,
+          grid,
+          pathId: pathId ?? null,
         });
       }
 
@@ -1661,6 +1683,7 @@ router.put('/api/objectives/:objectiveId', requireAuth, async (req, res) => {
 router.delete('/api/objectives/:objectiveId', requireAuth, async (req, res) => {
   const { objectiveId } = req.params;
   const client = await getClient();
+  const wsServer = req.app?.locals?.wsServer ?? null;
   let transactionStarted = false;
   try {
     await client.query('BEGIN');
@@ -2193,7 +2216,7 @@ router.delete('/api/campaigns/:id', async (req, res) => {
       return res.status(403).json({ error: 'Only the DM can delete this campaign' });
     }
     
-    const result = await client.query('DELETE FROM campaigns WHERE id = $1 RETURNING *', [id]);
+    await client.query('DELETE FROM campaigns WHERE id = $1 RETURNING *', [id]);
     client.release();
 
     res.json({ message: 'Campaign deleted successfully' });

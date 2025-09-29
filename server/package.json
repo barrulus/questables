@@ -7,7 +7,8 @@
   "scripts": {
     "start": "node database-server.js",
     "dev": "nodemon database-server.js",
-    "setup": "node setup-database.js"
+    "setup": "node setup-database.js",
+    "tegola:config": "node tegola/generate-config.js"
   },
   "dependencies": {
     "@types/multer": "^2.0.0",

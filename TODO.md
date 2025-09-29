@@ -41,3 +41,27 @@
   2. Strip or regenerate the content using the updated assist flow.
   3. Document the data cleanup process and outcomes in the clearance log.
   4. Note any lint/tests executed.
+
+## 6. Prevent Health Check from Reinitialising Map (Completed)
+- **Goal:** Ensure periodic `/api/health` polling doesn’t tear down and rebuild the map (currently triggered by `DatabaseProvider` re-renders).
+- **Steps:**
+  1. Decouple the `OpenLayersMap` mount effect from volatile dependencies—e.g., move initialization into a ref-driven effect that runs once and updates handlers via mutable refs.
+  2. Verify that health status changes still surface in the UI without forcing map reinitialization.
+  3. Add regression coverage (manual or automated) confirming the map doesn’t reload during health checks.
+  4. Log the change and associated lint/tests per the charter requirements.
+- **Status:** ✅ Addressed by MAP-06 refactor (2025-09-27); see `clearance_and_connect_tasks_documentation.md`.
+
+## 7. Change Mapping Architecture.
+- **Goal:** Replace OpenLayers with: -
+  * Client (browser):
+  MapLibre GL JS for the base map, stacking your PNG pyramids with opacity & blend order. (maplibre.org)
+  deck.gl overlays for tokens, movement trails, reach cones, grid/hex, and performant filtering/hover. (deck.gl)
+
+  * Tile services:
+  Tegola (config-rich) to emit MVT from PostGIS layers: regions, roads, encounter zones, LOS blockers. 
+
+  * Additional VTT-specific touches:
+  Layer ordering & blending: parchment → terrain → labels → effects (fog “mask”) → tokens (deck.gl).
+  Fog of war: maintain a raster or vector mask layer; toggle via MapLibre layer visibility or render a deck.gl BitmapLayer/polygon mask.
+  Hex/square grids: render a lightweight grid as a vector tile (cheap to draw at all zooms).
+  Snap-to-grid movement + PostGIS writes: send token moves to a /move API; store paths in LINESTRINGZ with timestamps for replay.

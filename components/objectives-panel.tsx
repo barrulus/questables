@@ -41,6 +41,14 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from ".
 import { Separator } from "./ui/separator";
 import { LoadingSpinner } from "./ui/loading-spinner";
 import { Alert, AlertDescription, AlertTitle } from "./ui/alert";
+import {
+  Command,
+  CommandEmpty,
+  CommandGroup,
+  CommandInput,
+  CommandItem,
+  CommandList,
+} from "./ui/command";
 import { cn } from "./ui/utils";
 import {
   Plus,
@@ -100,7 +108,8 @@ interface MarkerOption {
 
 const ROOT_PARENT_VALUE = "__root__";
 const CLEAR_LINK_VALUE = "__clear__";
-const DEFAULT_LOCATION_RADIUS = 1500;
+const DEFAULT_LOCATION_RADIUS = 150000;
+const MAP_RADIUS_FRACTION = 0.05;
 
 interface BoundsEnvelope {
   west: number;
@@ -339,6 +348,8 @@ const ObjectiveDialog = ({
   assistDisabledReason,
 }: ObjectiveDialogProps) => {
   const [pinPickerOpen, setPinPickerOpen] = useState(false);
+  const [burgBrowserOpen, setBurgBrowserOpen] = useState(false);
+  const [markerBrowserOpen, setMarkerBrowserOpen] = useState(false);
 
   useEffect(() => {
     if (!open) {
@@ -395,6 +406,7 @@ const ObjectiveDialog = ({
   };
 
   return (
+    <>
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="max-h-[90vh] overflow-y-auto sm:max-w-4xl">
         <DialogHeader>
@@ -661,7 +673,22 @@ const ObjectiveDialog = ({
                           </SelectItem>
                         ))}
                       </SelectContent>
-                    </Select>
+                      </Select>
+                    {burgOptions.length === 0 && (
+                      <p className="text-xs text-muted-foreground">
+                        No burgs found near the campaign spawn. Adjust the spawn or populate the map dataset.
+                      </p>
+                    )}
+                    {burgOptions.length > 0 && (
+                      <Button
+                        type="button"
+                        variant="outline"
+                        size="xs"
+                        onClick={() => setBurgBrowserOpen(true)}
+                      >
+                        Browse burgs
+                      </Button>
+                    )}
                   </div>
                 )}
                 {values.locationType === "marker" && !markerUnavailable && (
@@ -669,26 +696,41 @@ const ObjectiveDialog = ({
                     <Label htmlFor="objective-marker" className="text-xs text-muted-foreground">
                       Markers are loaded live from PostGIS. Choose one to link this objective.
                     </Label>
-                    <Select
-                      value={values.locationMarkerId ?? CLEAR_LINK_VALUE}
-                      onValueChange={(value) =>
-                        onChange({ ...values, locationMarkerId: value === CLEAR_LINK_VALUE ? null : value })
-                      }
-                      disabled={disabled}
-                    >
-                      <SelectTrigger id="objective-marker">
-                        <SelectValue placeholder="Select marker" />
-                      </SelectTrigger>
-                      <SelectContent>
-                        <SelectItem value={CLEAR_LINK_VALUE}>Clear marker link</SelectItem>
-                        {markerOptions.map((marker) => (
-                          <SelectItem key={marker.id} value={marker.id}>
-                            {marker.label}
-                            {marker.icon ? ` · ${marker.icon}` : ""}
-                          </SelectItem>
-                        ))}
-                      </SelectContent>
-                    </Select>
+                      <Select
+                        value={values.locationMarkerId ?? CLEAR_LINK_VALUE}
+                        onValueChange={(value) =>
+                          onChange({ ...values, locationMarkerId: value === CLEAR_LINK_VALUE ? null : value })
+                        }
+                        disabled={disabled}
+                      >
+                        <SelectTrigger id="objective-marker">
+                          <SelectValue placeholder="Select marker" />
+                        </SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value={CLEAR_LINK_VALUE}>Clear marker link</SelectItem>
+                          {markerOptions.map((marker) => (
+                            <SelectItem key={marker.id} value={marker.id}>
+                              {marker.label}
+                              {marker.icon ? ` · ${marker.icon}` : ""}
+                            </SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                      {markerOptions.length === 0 && (
+                        <p className="text-xs text-muted-foreground">
+                          No markers found near the campaign spawn.
+                        </p>
+                      )}
+                      {markerOptions.length > 0 && (
+                        <Button
+                          type="button"
+                          variant="outline"
+                          size="xs"
+                          onClick={() => setMarkerBrowserOpen(true)}
+                        >
+                          Browse markers
+                        </Button>
+                      )}
                   </div>
                 )}
               </div>
@@ -705,6 +747,79 @@ const ObjectiveDialog = ({
         </DialogFooter>
       </DialogContent>
     </Dialog>
+    <Dialog open={burgBrowserOpen} onOpenChange={setBurgBrowserOpen}>
+      <DialogContent className="max-w-lg">
+        <DialogHeader>
+          <DialogTitle>Select burg</DialogTitle>
+          <DialogDescription>
+            Search the burgs near the campaign spawn and link one to this objective.
+          </DialogDescription>
+        </DialogHeader>
+        <Command>
+          <CommandInput placeholder="Search burgs…" />
+          <CommandEmpty>No burgs found.</CommandEmpty>
+          <CommandList>
+            <CommandGroup heading="Burgs">
+              {burgOptions.map((burg) => (
+                <CommandItem
+                  key={burg.id}
+                  value={`${burg.name} ${burg.id}`}
+                  onSelect={() => {
+                    onChange({ ...values, locationBurgId: burg.id });
+                    setBurgBrowserOpen(false);
+                  }}
+                >
+                  <div className="flex flex-col">
+                    <span className="font-medium">{burg.name}</span>
+                    {burg.population ? (
+                      <span className="text-xs text-muted-foreground">
+                        Population {burg.population.toLocaleString()}
+                      </span>
+                    ) : null}
+                  </div>
+                </CommandItem>
+              ))}
+            </CommandGroup>
+          </CommandList>
+        </Command>
+      </DialogContent>
+    </Dialog>
+    <Dialog open={markerBrowserOpen} onOpenChange={setMarkerBrowserOpen}>
+      <DialogContent className="max-w-lg">
+        <DialogHeader>
+          <DialogTitle>Select marker</DialogTitle>
+          <DialogDescription>
+            Search the available markers near the campaign spawn and link one.
+          </DialogDescription>
+        </DialogHeader>
+        <Command>
+          <CommandInput placeholder="Search markers…" />
+          <CommandEmpty>No markers found.</CommandEmpty>
+          <CommandList>
+            <CommandGroup heading="Markers">
+              {markerOptions.map((marker) => (
+                <CommandItem
+                  key={marker.id}
+                  value={`${marker.label} ${marker.id}`}
+                  onSelect={() => {
+                    onChange({ ...values, locationMarkerId: marker.id });
+                    setMarkerBrowserOpen(false);
+                  }}
+                >
+                  <div className="flex flex-col">
+                    <span className="font-medium">{marker.label}</span>
+                    {marker.icon ? (
+                      <span className="text-xs text-muted-foreground">Icon: {marker.icon}</span>
+                    ) : null}
+                  </div>
+                </CommandItem>
+              ))}
+            </CommandGroup>
+          </CommandList>
+        </Command>
+      </DialogContent>
+    </Dialog>
+    </>
   );
 };
 
@@ -1135,9 +1250,17 @@ export function ObjectivesPanel({ campaign, canEdit, worldMap, worldMapLoading, 
       return null;
     }
 
-    const radius = Number.isFinite(playerVisibilityRadius ?? NaN) && (playerVisibilityRadius ?? 0) > 0
+    const baseRadius = Number.isFinite(playerVisibilityRadius ?? NaN) && (playerVisibilityRadius ?? 0) > 0
       ? (playerVisibilityRadius as number)
       : DEFAULT_LOCATION_RADIUS;
+
+    const bounds = worldMap?.bounds;
+    const spanX = bounds ? Math.abs(bounds.east - bounds.west) : null;
+    const spanY = bounds ? Math.abs(bounds.north - bounds.south) : null;
+    const spanRadius = spanX && spanY
+      ? Math.max(baseRadius, Math.min(spanX, spanY) * MAP_RADIUS_FRACTION)
+      : baseRadius;
+    const radius = spanRadius;
 
     return {
       west: x - radius,
@@ -1145,7 +1268,7 @@ export function ObjectivesPanel({ campaign, canEdit, worldMap, worldMapLoading, 
       east: x + radius,
       north: y + radius,
     };
-  }, [spawn, playerVisibilityRadius]);
+  }, [spawn, playerVisibilityRadius, worldMap?.bounds]);
 
   const fetchBurgs = useCallback(async () => {
     if (!worldMap?.id || !spawnLoaded) {
@@ -1170,6 +1293,7 @@ export function ObjectivesPanel({ campaign, canEdit, worldMap, worldMapLoading, 
         setBurgOptions([]);
         return;
       }
+
       const options: BurgOption[] = payload
         .map((raw) => {
           if (!raw || typeof raw !== "object") {
@@ -1192,6 +1316,7 @@ export function ObjectivesPanel({ campaign, canEdit, worldMap, worldMapLoading, 
           return { id, name, population };
         })
         .filter((item): item is BurgOption => Boolean(item));
+
       setBurgOptions(options);
     } catch (error) {
       console.error("[ObjectivesPanel] Failed to load burg options", error);
@@ -1229,6 +1354,7 @@ export function ObjectivesPanel({ campaign, canEdit, worldMap, worldMapLoading, 
         setMarkerOptions([]);
         return;
       }
+
       const options: MarkerOption[] = payload
         .map((raw) => {
           if (!raw || typeof raw !== "object") {
@@ -1251,6 +1377,7 @@ export function ObjectivesPanel({ campaign, canEdit, worldMap, worldMapLoading, 
           return { id, label, icon };
         })
         .filter((item): item is MarkerOption => Boolean(item));
+
       setMarkerOptions(options);
       setMarkerUnavailable(false);
     } catch (error) {

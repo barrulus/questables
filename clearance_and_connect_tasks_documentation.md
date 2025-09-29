@@ -930,3 +930,62 @@ Always append new entries; do not erase or rewrite previous log items except to 
 - **Documentation Updates:** docs/database_layer_reference.md:21-31 (router table), API_DOCUMENTATION.md:17-2200 (new endpoint coverage), database_cleanup_task_list.md:13-15 (DB-03 status), lint_report.md:150 (recorded ESLint run).
 - **Tests & Verification:** `npx eslint server/database-server.js server/routes/maps.routes.js server/routes/sessions.routes.js server/routes/encounters.routes.js server/routes/npcs.routes.js server/routes/uploads.routes.js server/services/sessions/service.js server/services/encounters/service.js --ext js` (pass).
 - **Remaining Gaps / Blockers:** None for DB-03; remaining follow-ups (validation polish, realtime wiring) are tracked under subsequent tasks.
+
+## Task MAP-06 – Stabilize OpenLayers Map Health Polling
+- **Date:** 2025-09-27
+- **Engineer(s):** Codex Agent
+- **Work Done:**
+  - Refactored `components/openlayers-map.tsx` to initialize the OpenLayers instance once by shifting event handlers and style functions onto mutable refs, preventing `/api/health` context updates from tearing down the map.
+  - Added test-only instrumentation that records map initialization count under `globalThis.__questablesMapInitCount`, enabling deterministic regression checks without altering production behaviour.
+  - Introduced `components/__tests__/openlayers-map.health.test.tsx` with comprehensive mocks that verify health-check re-renders do not trigger additional map mounts.
+- **Cleanups:**
+  - Replaced ad-hoc inline style function captures with reusable ref-updating helpers so layer visibility and styles can react without re-instantiating layers.
+  - Removed dependency-driven map effect reexecution to align with the no-dummy charter for live map data.
+- **Documentation Updates:**
+  - `lint_report.md` (recorded targeted ESLint run for the map component and regression test).
+- **Tests & Verification:**
+  - `npx eslint components/openlayers-map.tsx components/__tests__/openlayers-map.health.test.tsx --ext ts,tsx` *(pass)*
+  - `npx jest components/__tests__/openlayers-map.health.test.tsx --runInBand` *(pass)*
+- **Remaining Gaps / Blockers:** None; map now remains stable under DatabaseProvider health polling.
+
+## Task MAP-07 – Map Refactor Readiness Audit
+- **Date:** 2025-09-27
+- **Engineer(s):** Codex Agent
+- **Work Done:**
+  - Catalogued current OpenLayers behaviours (`components/openlayers-map.tsx:360-2445`), including layer stack (burgs, routes, rivers, cells, markers, campaign locations, player tokens, trails, encounter placeholder), movement tooling, websocket refresh cycle, tile-set switching, and world/encounter mode gating.
+  - Checked toggle coverage and UI affordances (`TOGGLEABLE_LAYER_OPTIONS` and layerVisibility refs) to flag gaps versus new requirements (e.g., rivers/cells lack user toggles, encounter layer unused placeholder, measurement tool stub).
+  - Reviewed `database/schema.sql` to confirm all spatial tables already enforce SRID 0 and expose required layers (maps_* tables, campaign spawns, objectives, NPC positioning, player trails).
+  - Extracted runtime configuration from `.env.local` to list existing URLs, TLS cert paths, and defaults that must be re-consumed by the MapLibre/deck.gl stack; noted absence of map-specific envs.
+  - Verified current build surface (Vite, React 19) and dependency graph (OpenLayers only; MapLibre/deck.gl not present) for upcoming rip-and-replace.
+- **Cleanups:** None (read-only audit).
+- **Documentation Updates:** `MAP_REFACTOR_TASKS.md` (readiness notes integrated into task 1 scope).
+- **Tests & Verification:** Not applicable (analysis only).
+- **Remaining Gaps / Blockers:** Need to design Tegola configs, enumerate layer toggles for all views, and plan viewport/resize/collapse behaviours during implementation.
+
+## Task MAP-08 – Tegola Service Integration Skeleton
+- **Date:** 2025-09-27
+- **Engineer(s):** Codex Agent
+- **Work Done:**
+  - Added Tegola configuration tooling (`server/tegola/tegola.template.toml`, `server/tegola/generate-config.js`, `server/tegola/README.md`) so configs are generated from `.env.local` without hardcoded defaults; appended Tegola environment keys to `.env.local` and ignored the rendered `tegola.toml` + cache.
+  - Created helper views in `database/schema.sql` (`v_campaign_objective_points`, `v_campaign_player_positions`, `v_npc_world_positions`) to expose SRID-0 geometries for campaign overlays without fabricating data.
+  - Implemented authenticated tile proxy endpoints (`server/routes/tiles.routes.js`, registered in `server/database-server.js`) with health/capabilities checks and strict error surfacing; documented the API contract in `API_DOCUMENTATION.md` and refreshed `MAP_REFACTOR_TASKS.md`.
+  - Added Tegola client utility (`server/utils/tegola-client.js`) and linted the new modules; recorded the run in `lint_report.md`.
+- **Cleanups:** None (new assets only).
+- **Documentation Updates:** `.env.local`, `API_DOCUMENTATION.md`, `MAP_REFACTOR_TASKS.md`, `server/tegola/README.md`.
+- **Tests & Verification:**
+  - `npx eslint server/routes/tiles.routes.js server/utils/tegola-client.js server/tegola/generate-config.js --ext js` *(pass)*
+- **Remaining Gaps / Blockers:** Need to provision Tegola binary in deployment, wire deck.gl/MapLibre clients, and expand layer toggles when OpenLayers is replaced.
+
+## Task MAP-09 – Movement Grid & Path Persistence
+- **Date:** 2025-09-27
+- **Engineer(s):** Codex Agent
+- **Work Done:**
+  - Introduced strict movement grid configuration (`MOVEMENT_GRID_*` in `.env.local`) and loader (`server/services/campaigns/movement-config.js`) so snap-to-grid always uses live settings and fails fast when misconfigured.
+  - Extended `performPlayerMovement` to snap coordinates, lock player rows, and persist `LineStringZ` segments plus audit history (`player_movement_paths`, enriched `player_movement_audit`); responses now include requested/snapped targets, grid metadata, and recorded path id.
+  - Updated campaign movement routes to publish the new metadata via REST + websocket broadcasts, and refreshed API docs/plan entries to reflect the contract.
+  - Added SRID-0 storage for paths (`database/schema.sql`: new table + updated `v_player_recent_trails`) ensuring deck.gl overlays can stream real trajectories without dummy data.
+- **Cleanups:** None; existing triggers still populate `campaign_player_locations` for legacy consumers.
+- **Documentation Updates:** `.env.local`, `API_DOCUMENTATION.md`, `MAP_REFACTOR_TASKS.md`.
+- **Tests & Verification:**
+  - `npx eslint server/routes/campaigns.routes.js server/services/campaigns/service.js server/services/campaigns/movement-config.js --ext js` *(pass)*
+- **Remaining Gaps / Blockers:** Frontend must consume the new grid metadata and snapped coordinates when MapLibre/deck.gl landing; Tegola vector layer wiring will leverage `player_movement_paths` in later tasks.

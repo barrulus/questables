@@ -322,6 +322,21 @@ CREATE INDEX IF NOT EXISTS idx_campaign_player_locations_lookup
 CREATE INDEX IF NOT EXISTS idx_campaign_player_locations_loc_gix
     ON public.campaign_player_locations USING GIST (loc);
 
+CREATE TABLE IF NOT EXISTS public.player_movement_paths (
+    id BIGSERIAL PRIMARY KEY,
+    campaign_id UUID REFERENCES public.campaigns(id) ON DELETE CASCADE NOT NULL,
+    player_id UUID REFERENCES public.campaign_players(id) ON DELETE CASCADE NOT NULL,
+    path geometry(LineStringZ, 0) NOT NULL,
+    mode TEXT NOT NULL CHECK (mode IN ('walk', 'ride', 'boat', 'fly', 'teleport', 'gm')),
+    moved_by UUID REFERENCES public.user_profiles(id) ON DELETE SET NULL,
+    reason TEXT,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW() NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_player_movement_paths_campaign_created
+    ON public.player_movement_paths (campaign_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_player_movement_paths_player_created
+    ON public.player_movement_paths (player_id, created_at DESC);
+
 -- auto-log player location changes
 CREATE OR REPLACE FUNCTION public.log_campaign_player_location()
 RETURNS trigger LANGUAGE plpgsql AS $$
@@ -349,18 +364,21 @@ CREATE OR REPLACE VIEW public.v_player_recent_trails AS
 SELECT
   ranked.campaign_id,
   ranked.player_id,
-  ST_SetSRID(ST_MakeLine(ranked.loc ORDER BY ranked.recorded_at), 0) AS trail_geom,
-  MIN(ranked.recorded_at) AS recorded_from,
-  MAX(ranked.recorded_at) AS recorded_to,
-  COUNT(*) AS point_count
+  ST_LineMerge(ST_Collect(ranked.path)) AS trail_geom,
+  MIN(ranked.created_at) AS recorded_from,
+  MAX(ranked.created_at) AS recorded_to,
+  COUNT(*) AS segment_count
 FROM (
   SELECT
-    cpl.campaign_id,
-    cpl.player_id,
-    cpl.loc,
-    cpl.recorded_at,
-    ROW_NUMBER() OVER (PARTITION BY cpl.campaign_id, cpl.player_id ORDER BY cpl.recorded_at DESC) AS rn
-  FROM public.campaign_player_locations cpl
+    pmp.campaign_id,
+    pmp.player_id,
+    pmp.path,
+    pmp.created_at,
+    ROW_NUMBER() OVER (
+      PARTITION BY pmp.campaign_id, pmp.player_id
+      ORDER BY pmp.created_at DESC
+    ) AS rn
+  FROM public.player_movement_paths pmp
 ) AS ranked
 WHERE ranked.rn <= 30
 GROUP BY ranked.campaign_id, ranked.player_id;
@@ -429,6 +447,46 @@ DROP TRIGGER IF EXISTS _touch_campaign_objectives ON public.campaign_objectives;
 CREATE TRIGGER _touch_campaign_objectives
 BEFORE UPDATE ON public.campaign_objectives
 FOR EACH ROW EXECUTE FUNCTION public.tg_touch_updated_at();
+
+-- Objective geometry view (SRID 0)
+CREATE OR REPLACE VIEW public.v_campaign_objective_points AS
+SELECT
+  obj.id AS objective_id,
+  obj.campaign_id,
+  obj.title,
+  obj.is_major,
+  obj.order_index,
+  COALESCE(obj.location_pin, burg.geom, marker.geom) AS geom
+FROM public.campaign_objectives obj
+LEFT JOIN public.maps_burgs burg ON obj.location_burg_id = burg.id
+LEFT JOIN public.maps_markers marker ON obj.location_marker_id = marker.id
+WHERE COALESCE(obj.location_pin, burg.geom, marker.geom) IS NOT NULL;
+
+-- Current campaign player positions (SRID 0)
+CREATE OR REPLACE VIEW public.v_campaign_player_positions AS
+SELECT
+  cp.id AS campaign_player_id,
+  cp.campaign_id,
+  cp.user_id,
+  cp.character_id,
+  cp.role,
+  cp.visibility_state,
+  cp.last_located_at,
+  cp.loc_current AS geom
+FROM public.campaign_players cp
+WHERE cp.loc_current IS NOT NULL;
+
+-- Normalized NPC world positions (SRID 0)
+CREATE OR REPLACE VIEW public.v_npc_world_positions AS
+SELECT
+  npc.id,
+  npc.campaign_id,
+  npc.name,
+  npc.occupation,
+  COALESCE(npc.world_position, loc.world_position) AS geom
+FROM public.npcs npc
+LEFT JOIN public.locations loc ON npc.current_location_id = loc.id
+WHERE COALESCE(npc.world_position, loc.world_position) IS NOT NULL;
 
 -- movement audit log
 CREATE TABLE IF NOT EXISTS public.player_movement_audit (

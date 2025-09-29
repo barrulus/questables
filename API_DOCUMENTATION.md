@@ -19,6 +19,7 @@ This document describes the REST API endpoints provided by the Questables databa
 - Session endpoints → `server/routes/sessions.routes.js`
 - Encounter endpoints → `server/routes/encounters.routes.js`
 - NPC endpoints → `server/routes/npcs.routes.js`
+- Tiles API → `server/routes/tiles.routes.js`
 - Upload endpoints → `server/routes/uploads.routes.js`
 
 ## Maps API
@@ -106,6 +107,57 @@ Return terrain cells from `maps_cells` constrained by a required SRID-0 bounding
 
 Return all active tile set configurations from `tile_sets`, ordered by `name ASC`.
 
+## Tiles API
+
+Vector tiles are proxied through the Questables API so authentication and telemetry stay aligned
+with the rest of the platform. Tegola failures always bubble up—MapLibre clients never fall back to
+placeholders.
+
+All endpoints require:
+- `Authorization: Bearer <token>`
+
+### GET /api/tiles/health
+
+Return the upstream Tegola health payload.
+
+**Success (200):**
+```json
+{
+  "healthy": true,
+  "details": { "cache": "file", "gc_count": 0 }
+}
+```
+
+**Failure (5xx/4xx):**
+```json
+{
+  "healthy": false,
+  "error": "Tegola service unreachable",
+  "body": null
+}
+```
+
+### GET /api/tiles/capabilities
+
+Proxy `/capabilities` from Tegola. Useful for layer discovery and debugging.
+
+### GET /api/tiles/vector/:map/:layer/:z/:x/:y.mvt
+
+Fetch a single MVT tile. Query parameters (e.g. `campaign_id`, `world_id`) are forwarded directly to
+Tegola.
+
+**Path Parameters:**
+- `map` — Tegola map identifier (e.g. `questables_world`)
+- `layer` — Provider layer name (e.g. `world_cells`)
+- `z/x/y` — Tile coordinates
+
+**Success (200):** binary payload with `Content-Type: application/x-protobuf`.
+
+**Failure:**
+- `401` — missing/invalid credentials
+- `404` — Tegola returned not found for the requested tile
+- `5xx` — Tegola error; body includes `tegola_tile_failed`
+
 ### POST /api/campaigns/:campaignId/locations
 
 Create a campaign location optionally linked to a world map or parent location.
@@ -127,6 +179,48 @@ numeric; the service writes the SRID-0 point via `ST_SetSRID(ST_MakePoint(...), 
 
 **Response (201 Created):**
 The inserted row with derived `lng`/`lat` values when a world position is present.
+
+### POST /api/campaigns/:campaignId/players/:playerId/move
+
+Move a player's token. The service snaps incoming coordinates to the configured grid (see
+`MOVEMENT_GRID_*` variables in `.env.local`) before updating the database.
+
+**Headers:**
+- `Authorization: Bearer <token>`
+
+**Request Body:**
+```json
+{
+  "target": { "x": 345.6, "y": 812.4 },
+  "mode": "walk",
+  "reason": "Crossing the bridge"
+}
+```
+
+**Response (200 OK):**
+```json
+{
+  "playerId": "player-uuid",
+  "geometry": { "type": "Point", "coordinates": [350, 800] },
+  "visibilityState": "visible",
+  "lastLocatedAt": "2025-09-27T14:02:11.123Z",
+  "mode": "walk",
+  "distance": 12.4,
+  "reason": "Crossing the bridge",
+  "target": { "x": 345.6, "y": 812.4 },
+  "snapped": { "x": 350, "y": 800 },
+  "grid": {
+    "type": "square",
+    "size": 50,
+    "origin": { "x": 0, "y": 0 }
+  },
+  "pathId": 1284
+}
+```
+
+The service records each movement segment as a `LineStringZ` in `player_movement_paths` (Z stores
+timestamps for replay) and mirrors the change to `player_movement_audit`. Out-of-bounds targets or
+misconfigured environments raise errors; no placeholder data is returned.
 
 ### GET /api/campaigns/:campaignId/locations
 
