@@ -1,15 +1,12 @@
 import { useState } from 'react';
 import { Badge } from './ui/badge';
-import { Button } from './ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from './ui/card';
-import { 
-  Database, 
-  Wifi, 
-  WifiOff, 
-  AlertTriangle, 
+import {
+  Database,
+  WifiOff,
+  AlertTriangle,
   CheckCircle,
-  Clock,
-  Loader2
+  Loader2,
 } from 'lucide-react';
 import { useDatabaseHealth } from '../utils/database-health';
 

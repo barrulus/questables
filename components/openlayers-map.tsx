@@ -1,6 +1,6 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
 import { useEffect, useRef, useState, useCallback, useMemo } from "react";
-import type { RefObject, ReactNode } from "react";
+import type { ReactNode } from "react";
 import { Card, CardContent, CardHeader, CardTitle } from "./ui/card";
 import { Button } from "./ui/button";
 import { Tabs, TabsList, TabsTrigger } from "./ui/tabs";
@@ -28,16 +28,19 @@ import {
 } from "lucide-react";
 
 // OpenLayers imports
-import Map from 'ol/Map';
+import OLMap from 'ol/Map';
 import View from 'ol/View';
 import TileLayer from 'ol/layer/Tile';
 import VectorLayer from 'ol/layer/Vector';
 import VectorSource from 'ol/source/Vector';
 import XYZ from 'ol/source/XYZ';
 import Feature from 'ol/Feature';
+import type { FeatureLike } from 'ol/Feature';
 import Point from 'ol/geom/Point';
 import LineString from 'ol/geom/LineString';
+import type Geometry from 'ol/geom/Geometry';
 import GeoJSON from 'ol/format/GeoJSON';
+import type { GeoJSONFeature } from 'ol/format/GeoJSON';
 import { Style, Fill, Stroke, Circle as CircleStyle, Text } from 'ol/style';
 import 'ol/ol.css';
 import TileGrid from 'ol/tilegrid/TileGrid';
@@ -68,7 +71,7 @@ interface PlayerToken {
 }
 
 interface PlayerTrailMeta {
-  feature: Feature<LineString>;
+  feature: TrailFeature;
   fetchedAt: number;
 }
 
@@ -86,6 +89,19 @@ interface CampaignCharacterRow {
   conditions?: unknown;
   loc_geometry?: unknown;
   last_located_at?: string | null;
+}
+
+interface CampaignRosterEntry {
+  characterId: string;
+  name: string;
+  avatarUrl: string | null;
+  userId: string;
+  role: string;
+  status: string;
+  visibilityState: PlayerToken['visibilityState'];
+  hitPoints: { current: number; max: number; temporary: number };
+  conditions: string[];
+  lastLocatedAt: string | null;
 }
 
 interface WorldMapSummary {
@@ -170,7 +186,34 @@ const MARKER_TYPE_ICONS: Record<string, string> = {
 const INTERACTIVE_FEATURE_TYPES = new Set(['burg', 'marker', 'player']);
 const MOVE_PROMPT_TOAST_ID = 'player-move-selection';
 const MOVE_MODES = ['walk', 'ride', 'boat', 'fly', 'teleport', 'gm'] as const;
+type MoveMode = typeof MOVE_MODES[number];
 const TRAIL_CACHE_TTL_MS = 60_000;
+
+const isPlainObject = (value: unknown): value is Record<string, unknown> =>
+  typeof value === 'object' && value !== null;
+
+const extractPlayerId = (event: unknown): string | null => {
+  if (!isPlainObject(event)) {
+    return null;
+  }
+
+  const data = isPlainObject(event.data) ? event.data : null;
+  if (!data) {
+    return null;
+  }
+
+  const candidate = data.playerId ?? data.player_id;
+  return typeof candidate === 'string' && candidate.trim().length > 0 ? candidate : null;
+};
+
+type GeometryFeature = Feature<Geometry>;
+type GeometrySource = VectorSource<GeometryFeature>;
+type GeometryLayer = VectorLayer<GeometrySource>;
+type TrailFeature = Feature<LineString>;
+type TrailSource = VectorSource<TrailFeature>;
+type TrailLayer = VectorLayer<TrailSource>;
+
+const asGeometryFeature = (feature: FeatureLike): GeometryFeature => feature as GeometryFeature;
 
 const formatTypeLabel = (type: unknown): string => {
   if (typeof type !== 'string' || type.length === 0) {
@@ -425,7 +468,7 @@ const createGeographicTileSource = (tileSet: TileSetConfig, worldBounds?: WorldM
 export function OpenLayersMap() {
   const mapRef = useRef<HTMLDivElement>(null);
   const popupRef = useRef<HTMLDivElement>(null);
-  const mapInstanceRef = useRef<Map | null>(null);
+  const mapInstanceRef = useRef<OLMap | null>(null);
   const overlayRef = useRef<Overlay | null>(null);
   const tileSetMinZoomRef = useRef<number>(0);
   const enforcedMinZoomRef = useRef<number>(0);
@@ -451,7 +494,7 @@ export function OpenLayersMap() {
     coordinate: [number, number];
     currentPosition: [number, number];
   } | null>(null);
-  const [moveMode, setMoveMode] = useState<string>('walk');
+  const [moveMode, setMoveMode] = useState<MoveMode>('walk');
   const [selectedPlayerId, setSelectedPlayerId] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const [currentZoom, setCurrentZoom] = useState(0);
@@ -510,8 +553,12 @@ export function OpenLayersMap() {
     [playerTokens]
   );
 
-  const availableMoveModes = useMemo(
-    () => (canTeleport ? MOVE_MODES : MOVE_MODES.filter((mode) => mode !== 'teleport' && mode !== 'gm')),
+  const availableMoveModes = useMemo<MoveMode[]>(
+    () => (
+      canTeleport
+        ? [...MOVE_MODES]
+        : MOVE_MODES.filter((mode): mode is MoveMode => mode !== 'teleport' && mode !== 'gm')
+    ),
     [canTeleport]
   );
 
@@ -566,7 +613,7 @@ export function OpenLayersMap() {
     }
   }, []);
 
-  const addTrailFeature = useCallback((playerId: string, feature: Feature) => {
+  const addTrailFeature = useCallback((playerId: string, feature: TrailFeature) => {
     const layer = playerTrailLayerRef.current;
     if (!layer) return;
     const source = layer.getSource();
@@ -575,7 +622,7 @@ export function OpenLayersMap() {
     feature.set('playerId', playerId);
     source.addFeature(feature);
     playerTrailCacheRef.current.set(playerId, {
-      feature: feature as Feature<LineString>,
+      feature,
       fetchedAt: Date.now(),
     });
   }, [removeTrailFeature]);
@@ -606,12 +653,19 @@ export function OpenLayersMap() {
         return { success: false, hidden: false, message: 'Trail geometry is unavailable.' };
       }
 
-      const feature = geoJsonFormat.readFeature({
+      const geoJsonFeature: GeoJSONFeature = {
         type: 'Feature',
-        geometry: payload.geometry as any,
+        geometry: payload.geometry as unknown,
         properties: { playerId },
-      });
+      };
 
+      const rawFeature = geoJsonFormat.readFeature(geoJsonFeature) as GeometryFeature;
+      const geometry = rawFeature.getGeometry();
+      if (!(geometry instanceof LineString)) {
+        return { success: false, hidden: false, message: 'Trail geometry is unsupported.' };
+      }
+
+      const feature = rawFeature as TrailFeature;
       addTrailFeature(playerId, feature);
       return { success: true, hidden: false };
     } catch (error) {
@@ -740,18 +794,18 @@ export function OpenLayersMap() {
 
   // Layer references
   const baseLayerRef = useRef<TileLayer | null>(null);
-  const burgsLayerRef = useRef<VectorLayer | null>(null);
-  const routesLayerRef = useRef<VectorLayer | null>(null);
-  const riversLayerRef = useRef<VectorLayer | null>(null);
-  const cellsLayerRef = useRef<VectorLayer | null>(null);
-  const markersLayerRef = useRef<VectorLayer | null>(null);
-  const campaignLayerRef = useRef<VectorLayer | null>(null);
-  const playerLayerRef = useRef<VectorLayer | null>(null);
-  const playerTrailLayerRef = useRef<VectorLayer | null>(null);
-  const encounterLayerRef = useRef<VectorLayer | null>(null);
+  const burgsLayerRef = useRef<GeometryLayer | null>(null);
+  const routesLayerRef = useRef<GeometryLayer | null>(null);
+  const riversLayerRef = useRef<GeometryLayer | null>(null);
+  const cellsLayerRef = useRef<GeometryLayer | null>(null);
+  const markersLayerRef = useRef<GeometryLayer | null>(null);
+  const campaignLayerRef = useRef<GeometryLayer | null>(null);
+  const playerLayerRef = useRef<GeometryLayer | null>(null);
+  const playerTrailLayerRef = useRef<TrailLayer | null>(null);
+  const encounterLayerRef = useRef<GeometryLayer | null>(null);
   const playerTrailCacheRef = useRef<Map<string, PlayerTrailMeta>>(new Map());
-  const rosterByCharacterRef = useRef<Map<string, any>>(new Map());
-  const rosterByPlayerRef = useRef<Map<string, any>>(new Map());
+  const rosterByCharacterRef = useRef<Map<string, CampaignRosterEntry>>(new Map());
+  const rosterByPlayerRef = useRef<Map<string, CampaignRosterEntry>>(new Map());
   const rosterLoadedForCampaignRef = useRef<string | null>(null);
   const burgStyleCacheRef = useRef<Record<string, Style>>({});
   const markerIconCacheRef = useRef<Record<string, Style>>({});
@@ -837,10 +891,11 @@ export function OpenLayersMap() {
     };
   }, [getFeatureType]);
 
-  const getBurgStyle = useCallback((feature: Feature, resolution: number) => {
+  const getBurgStyle = useCallback((featureLike: FeatureLike, resolution: number) => {
+    const feature = asGeometryFeature(featureLike);
     const data = feature.get('data');
     const zoom = getZoomForResolution(resolution);
-    if (!Number.isFinite(zoom)) return null;
+    if (!Number.isFinite(zoom)) return undefined;
 
     const effectiveZoom = Math.floor(zoom);
     const population = Number(
@@ -849,7 +904,7 @@ export function OpenLayersMap() {
     const minPopulation = getMinPopulationForZoom(effectiveZoom);
 
     if (population < minPopulation || effectiveZoom < 3) {
-      return null;
+      return undefined;
     }
 
     const category = getBurgCategory(population);
@@ -888,12 +943,13 @@ export function OpenLayersMap() {
     return style;
   }, [getZoomForResolution]);
 
-  const getRouteStyle = useCallback((feature: Feature, resolution: number) => {
+  const getRouteStyle = useCallback((featureLike: FeatureLike, resolution: number) => {
+    const feature = asGeometryFeature(featureLike);
     const data = feature.get('data') ?? feature.getProperties();
     const zoom = getZoomForResolution(resolution);
 
     if (!Number.isFinite(zoom)) {
-      return null;
+      return undefined;
     }
 
     const routeType = String(data?.type ?? feature.get('type') ?? '');
@@ -901,20 +957,21 @@ export function OpenLayersMap() {
 
     if (config) {
       if ((zoom as number) < config.minZoom) {
-        return null;
+        return undefined;
       }
       return config.styles;
     }
 
-    return (zoom as number) >= 3 ? DEFAULT_ROUTE_STYLES : null;
+    return (zoom as number) >= 3 ? DEFAULT_ROUTE_STYLES : undefined;
   }, [getZoomForResolution]);
 
-  const getMarkerStyle = useCallback((feature: Feature, resolution: number) => {
+  const getMarkerStyle = useCallback((featureLike: FeatureLike, resolution: number) => {
+    const feature = asGeometryFeature(featureLike);
     const data = feature.get('data') ?? feature.getProperties();
     const zoom = getZoomForResolution(resolution);
 
     if (!Number.isFinite(zoom) || (zoom as number) < LABEL_VISIBILITY.markers) {
-      return null;
+      return undefined;
     }
 
     const type = String(data?.type ?? feature.get('type') ?? '');
@@ -958,7 +1015,8 @@ export function OpenLayersMap() {
     return [iconStyle, labelStyle];
   }, [getZoomForResolution]);
 
-  const getCampaignLocationStyle = useCallback((feature: Feature, resolution: number) => {
+  const getCampaignLocationStyle = useCallback((featureLike: FeatureLike, resolution: number) => {
+    const feature = asGeometryFeature(featureLike);
     const data = feature.get('data') ?? feature.getProperties();
     const zoom = getZoomForResolution(resolution);
     const showLabel = zoom >= LABEL_VISIBILITY.campaignLocations;
@@ -979,7 +1037,8 @@ export function OpenLayersMap() {
     });
   }, [getZoomForResolution]);
 
-  const getPlayerTokenStyle = useCallback((feature: Feature, resolution: number) => {
+  const getPlayerTokenStyle = useCallback((featureLike: FeatureLike, resolution: number) => {
+    const feature = asGeometryFeature(featureLike);
     const data = feature.get('data') as PlayerToken | undefined;
     const zoom = getZoomForResolution(resolution);
     const showLabel = zoom >= LABEL_VISIBILITY.pins;
@@ -1039,7 +1098,7 @@ export function OpenLayersMap() {
     });
   }, [getZoomForResolution, selectedPlayerId]);
 
-  const layerRefMap = useMemo<Record<keyof LayerVisibility, RefObject<VectorLayer | null>>>(() => ({
+  const layerRefMap = useMemo(() => ({
     burgs: burgsLayerRef,
     routes: routesLayerRef,
     rivers: riversLayerRef,
@@ -1223,8 +1282,8 @@ export function OpenLayersMap() {
         return;
       }
 
-      const byCharacter = new Map<string, any>();
-      const byPlayer = new Map<string, any>();
+      const byCharacter = new Map<string, CampaignRosterEntry>();
+      const byPlayer = new Map<string, CampaignRosterEntry>();
 
       rows.forEach((row) => {
         const hitPointsRaw = parseJsonValue(row.hit_points, { current: 0, max: 0, temporary: 0 }) as {
@@ -1238,7 +1297,7 @@ export function OpenLayersMap() {
           temporary: Number.isFinite(hitPointsRaw.temporary) ? Number(hitPointsRaw.temporary) : 0,
         };
 
-        const metadata = {
+        const metadata: CampaignRosterEntry = {
           characterId: row.id,
           name: row.name,
           avatarUrl: row.avatar_url ?? null,
@@ -1656,64 +1715,64 @@ export function OpenLayersMap() {
     baseLayerRef.current = baseLayer;
 
     // Vector layers for different data types
-    const burgsLayer = new VectorLayer({
-      source: new VectorSource({ wrapX: false }),
+    const burgsLayer = new VectorLayer<GeometrySource>({
+      source: new VectorSource<GeometryFeature>({ wrapX: false }),
       style: (feature, resolution) => getBurgStyleRef.current(feature, resolution),
       visible: initialVisibility.burgs
     });
     burgsLayerRef.current = burgsLayer;
 
-    const routesLayer = new VectorLayer({
-      source: new VectorSource({ wrapX: false }),
+    const routesLayer = new VectorLayer<GeometrySource>({
+      source: new VectorSource<GeometryFeature>({ wrapX: false }),
       style: (feature, resolution) => getRouteStyleRef.current(feature, resolution),
       visible: initialVisibility.routes
     });
     routesLayerRef.current = routesLayer;
 
-    const riversLayer = new VectorLayer({
-      source: new VectorSource({ wrapX: false }),
+    const riversLayer = new VectorLayer<GeometrySource>({
+      source: new VectorSource<GeometryFeature>({ wrapX: false }),
       style: getRiverStyle,
       visible: initialVisibility.rivers
     });
     riversLayerRef.current = riversLayer;
 
-    const cellsLayer = new VectorLayer({
-      source: new VectorSource({ wrapX: false }),
+    const cellsLayer = new VectorLayer<GeometrySource>({
+      source: new VectorSource<GeometryFeature>({ wrapX: false }),
       style: getCellStyle,
       visible: initialVisibility.cells
     });
     cellsLayerRef.current = cellsLayer;
 
-    const markersLayer = new VectorLayer({
-      source: new VectorSource({ wrapX: false }),
+    const markersLayer = new VectorLayer<GeometrySource>({
+      source: new VectorSource<GeometryFeature>({ wrapX: false }),
       style: (feature, resolution) => getMarkerStyleRef.current(feature, resolution),
       visible: initialVisibility.markers
     });
     markersLayerRef.current = markersLayer;
 
-    const campaignLayer = new VectorLayer({
-      source: new VectorSource({ wrapX: false }),
+    const campaignLayer = new VectorLayer<GeometrySource>({
+      source: new VectorSource<GeometryFeature>({ wrapX: false }),
       style: (feature, resolution) => getCampaignLocationStyleRef.current(feature, resolution),
       visible: initialVisibility.campaignLocations
     });
     campaignLayerRef.current = campaignLayer;
 
-    const playerTrailLayer = new VectorLayer({
-      source: new VectorSource({ wrapX: false }),
+    const playerTrailLayer = new VectorLayer<TrailSource>({
+      source: new VectorSource<TrailFeature>({ wrapX: false }),
       style: getPlayerTrailStyle,
       visible: initialVisibility.playerTrails
     });
     playerTrailLayerRef.current = playerTrailLayer;
 
-    const playerLayer = new VectorLayer({
-      source: new VectorSource({ wrapX: false }),
+    const playerLayer = new VectorLayer<GeometrySource>({
+      source: new VectorSource<GeometryFeature>({ wrapX: false }),
       style: (feature, resolution) => getPlayerTokenStyleRef.current(feature, resolution),
       visible: initialVisibility.playerTokens
     });
     playerLayerRef.current = playerLayer;
 
-    const encounterLayer = new VectorLayer({
-      source: new VectorSource({ wrapX: false }),
+    const encounterLayer = new VectorLayer<GeometrySource>({
+      source: new VectorSource<GeometryFeature>({ wrapX: false }),
       style: getEncounterStyle,
       visible: initialMode === 'encounter'
     });
@@ -1731,7 +1790,7 @@ export function OpenLayersMap() {
     overlayRef.current = overlay;
 
     // Create map
-    const map = new Map({
+    const map = new OLMap({
       target: mapRef.current,
       layers: [
         baseLayer,
@@ -1998,7 +2057,7 @@ export function OpenLayersMap() {
       return;
     }
     setMoveMode((prev) => (
-      availableMoveModes.includes(prev as typeof MOVE_MODES[number])
+      availableMoveModes.includes(prev)
         ? prev
         : availableMoveModes[0]
     ));
@@ -2018,8 +2077,8 @@ export function OpenLayersMap() {
       void loadVisiblePlayers(activeCampaignId);
       const affectedPlayerIds = new Set<string>();
       [...movementEvents, ...teleportEvents].forEach((event) => {
-        const playerId = event?.data?.playerId ?? event?.data?.player_id;
-        if (typeof playerId === 'string') {
+        const playerId = extractPlayerId(event);
+        if (playerId) {
           affectedPlayerIds.add(playerId);
         }
       });
@@ -2341,8 +2400,7 @@ export function OpenLayersMap() {
                       <Switch
                         checked={trailEnabled}
                         onCheckedChange={(checked) => {
-                          if (checked === 'indeterminate') return;
-                          void handleTrailToggle(token, checked === true);
+                          void handleTrailToggle(token, checked);
                         }}
                         disabled={!token.canViewHistory && !canControlPlayer(token)}
                       />
@@ -2485,7 +2543,7 @@ export function OpenLayersMap() {
               </div>
               <div className="space-y-1">
                 <label className="text-sm font-medium text-foreground">Movement mode</label>
-                <Select value={moveMode} onValueChange={setMoveMode}>
+                <Select value={moveMode} onValueChange={(value) => setMoveMode(value as MoveMode)}>
                   <SelectTrigger className="w-full">
                     <SelectValue placeholder="Select mode" />
                   </SelectTrigger>
@@ -2520,7 +2578,8 @@ export function OpenLayersMap() {
   );
 }
 
-function getRiverStyle(feature: Feature) {
+function getRiverStyle(featureLike: FeatureLike) {
+  const feature = asGeometryFeature(featureLike);
   const data = feature.get('data');
   return new Style({
     stroke: new Stroke({
@@ -2530,7 +2589,8 @@ function getRiverStyle(feature: Feature) {
   });
 }
 
-function getCellStyle(feature: Feature) {
+function getCellStyle(featureLike: FeatureLike) {
+  const feature = asGeometryFeature(featureLike);
   const data = feature.get('data');
   return new Style({
     fill: new Fill({

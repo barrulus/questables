@@ -521,7 +521,7 @@ export function NarrativeConsole() {
             {selectedSession?.status && <Badge variant="outline">{selectedSession.status}</Badge>}
             <Button
               variant="outline"
-              size="xs"
+              size="sm"
               className="h-7"
               onClick={() => void loadSessions()}
               disabled={sessionsLoading}
@@ -530,7 +530,7 @@ export function NarrativeConsole() {
             </Button>
             <Button
               variant="outline"
-              size="xs"
+              size="sm"
               className="h-7"
               onClick={() => void loadNpcs()}
               disabled={npcsLoading}

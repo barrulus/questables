@@ -110,6 +110,31 @@ const ROOT_PARENT_VALUE = "__root__";
 const CLEAR_LINK_VALUE = "__clear__";
 const DEFAULT_LOCATION_RADIUS = 150000;
 const MAP_RADIUS_FRACTION = 0.05;
+const WARNING_ALERT_CLASS = "border-amber-500/40 bg-amber-500/10 text-amber-900";
+
+const isPlainObject = (value: unknown): value is Record<string, unknown> =>
+  typeof value === "object" && value !== null;
+
+const isObjectiveRecord = (value: unknown): value is ObjectiveRecord => {
+  if (!isPlainObject(value)) {
+    return false;
+  }
+
+  return (
+    typeof value.id === "string" && value.id.trim().length > 0
+    && typeof value.campaignId === "string" && value.campaignId.trim().length > 0
+    && typeof value.title === "string"
+  );
+};
+
+const toStringArray = (value: unknown): string[] | null => {
+  if (!Array.isArray(value)) {
+    return null;
+  }
+
+  const items = value.filter((entry): entry is string => typeof entry === "string" && entry.trim().length > 0);
+  return items.length ? items : [];
+};
 
 interface BoundsEnvelope {
   west: number;
@@ -365,7 +390,7 @@ const ObjectiveDialog = ({
     return (
       <Button
         type="button"
-        size="xs"
+        size="sm"
         variant="outline"
         onClick={() => onRequestAssist(field)}
         disabled={disabledAssist}
@@ -586,7 +611,7 @@ const ObjectiveDialog = ({
                   </SelectContent>
                 </Select>
                 {markerUnavailable && (
-                  <Alert variant="warning">
+                  <Alert variant="default" className={WARNING_ALERT_CLASS}>
                     <AlertTitle>Markers endpoint unavailable</AlertTitle>
                     <AlertDescription>
                       The backend does not yet expose `/api/maps/:worldId/markers`. Notify the backend team before enabling marker links.
@@ -596,7 +621,7 @@ const ObjectiveDialog = ({
                 {values.locationType === "pin" && (
                   <div className="space-y-2">
                     {!worldMap && (
-                      <Alert variant="warning">
+                      <Alert variant="default" className={WARNING_ALERT_CLASS}>
                         <AlertTitle>World map required</AlertTitle>
                         <AlertDescription>
                           Link a world map to the campaign before setting pin-based objective locations.
@@ -679,16 +704,16 @@ const ObjectiveDialog = ({
                         No burgs found near the campaign spawn. Adjust the spawn or populate the map dataset.
                       </p>
                     )}
-                    {burgOptions.length > 0 && (
-                      <Button
-                        type="button"
-                        variant="outline"
-                        size="xs"
-                        onClick={() => setBurgBrowserOpen(true)}
-                      >
-                        Browse burgs
-                      </Button>
-                    )}
+                      {burgOptions.length > 0 && (
+                        <Button
+                          type="button"
+                          variant="outline"
+                          size="sm"
+                          onClick={() => setBurgBrowserOpen(true)}
+                        >
+                          Browse burgs
+                        </Button>
+                      )}
                   </div>
                 )}
                 {values.locationType === "marker" && !markerUnavailable && (
@@ -725,7 +750,7 @@ const ObjectiveDialog = ({
                         <Button
                           type="button"
                           variant="outline"
-                          size="xs"
+                          size="sm"
                           onClick={() => setMarkerBrowserOpen(true)}
                         >
                           Browse markers
@@ -1036,7 +1061,7 @@ const ObjectiveTree = ({
                 <div className="flex flex-wrap gap-2">
                   <Button
                     type="button"
-                    size="xs"
+                    size="sm"
                     variant="outline"
                     onClick={() => onEdit(record)}
                     disabled={!canEdit || reordering}
@@ -1045,7 +1070,7 @@ const ObjectiveTree = ({
                   </Button>
                   <Button
                     type="button"
-                    size="xs"
+                    size="sm"
                     variant="outline"
                     onClick={() => onAddChild(record)}
                     disabled={!canEdit || reordering}
@@ -1054,7 +1079,7 @@ const ObjectiveTree = ({
                   </Button>
                   <Button
                     type="button"
-                    size="xs"
+                    size="sm"
                     variant="outline"
                     className="text-destructive"
                     onClick={() => onDelete(record)}
@@ -1294,28 +1319,30 @@ export function ObjectivesPanel({ campaign, canEdit, worldMap, worldMapLoading, 
         return;
       }
 
-      const options: BurgOption[] = payload
-        .map((raw) => {
-          if (!raw || typeof raw !== "object") {
-            return null;
-          }
-          const item = raw as Record<string, unknown>;
-          const idCandidate = item.id ?? item.burg_id ?? "";
-          const id = String(idCandidate);
-          if (!id.trim()) {
-            return null;
-          }
-          const nameCandidate = item.name;
-          const name = typeof nameCandidate === "string" && nameCandidate.trim().length > 0
-            ? nameCandidate
-            : `Burg ${id}`;
-          const populationValue = typeof item.population === "number"
-            ? item.population
-            : Number(item.population);
-          const population = Number.isFinite(populationValue) ? Number(populationValue) : null;
-          return { id, name, population };
-        })
-        .filter((item): item is BurgOption => Boolean(item));
+      const options = payload.reduce<BurgOption[]>((acc, raw, index) => {
+        if (!isPlainObject(raw)) {
+          return acc;
+        }
+
+        const idCandidate = raw.id ?? raw.burg_id ?? index;
+        const id = typeof idCandidate === "string" ? idCandidate : String(idCandidate);
+        if (!id.trim()) {
+          return acc;
+        }
+
+        const nameCandidate = raw.name;
+        const name = typeof nameCandidate === "string" && nameCandidate.trim().length > 0
+          ? nameCandidate
+          : `Burg ${id}`;
+
+        const populationValue = typeof raw.population === "number"
+          ? raw.population
+          : Number(raw.population);
+        const population = Number.isFinite(populationValue) ? Number(populationValue) : null;
+
+        acc.push({ id, name, population });
+        return acc;
+      }, []);
 
       setBurgOptions(options);
     } catch (error) {
@@ -1355,28 +1382,29 @@ export function ObjectivesPanel({ campaign, canEdit, worldMap, worldMapLoading, 
         return;
       }
 
-      const options: MarkerOption[] = payload
-        .map((raw) => {
-          if (!raw || typeof raw !== "object") {
-            return null;
-          }
-          const item = raw as Record<string, unknown>;
-          const idCandidate = item.id ?? item.marker_id ?? "";
-          const id = String(idCandidate);
-          if (!id.trim()) {
-            return null;
-          }
-          const note = typeof item.note === "string" ? item.note : null;
-          const type = typeof item.type === "string" ? item.type : null;
-          const label = note && note.trim().length > 0
-            ? note
-            : type && type.trim().length > 0
-              ? type
-              : `Marker ${id}`;
-          const icon = typeof item.icon === "string" ? item.icon : null;
-          return { id, label, icon };
-        })
-        .filter((item): item is MarkerOption => Boolean(item));
+      const options = payload.reduce<MarkerOption[]>((acc, raw, index) => {
+        if (!isPlainObject(raw)) {
+          return acc;
+        }
+
+        const idCandidate = raw.id ?? raw.marker_id ?? index;
+        const id = typeof idCandidate === "string" ? idCandidate : String(idCandidate);
+        if (!id.trim()) {
+          return acc;
+        }
+
+        const note = typeof raw.note === "string" ? raw.note : null;
+        const type = typeof raw.type === "string" ? raw.type : null;
+        const label = note && note.trim().length > 0
+          ? note
+          : type && type.trim().length > 0
+            ? type
+            : `Marker ${id}`;
+        const icon = typeof raw.icon === "string" ? raw.icon : null;
+
+        acc.push({ id, label, icon });
+        return acc;
+      }, []);
 
       setMarkerOptions(options);
       setMarkerUnavailable(false);
@@ -1399,10 +1427,20 @@ export function ObjectivesPanel({ campaign, canEdit, worldMap, worldMapLoading, 
       return;
     }
 
-    pendingMessages.forEach((envelope) => {
-      if (!envelope || typeof envelope !== "object") return;
-      if (envelope.type === "objective-created" && envelope.data?.objective) {
-        const record = envelope.data.objective as ObjectiveRecord;
+    pendingMessages.forEach((message) => {
+      if (!isPlainObject(message)) {
+        return;
+      }
+
+      const type = typeof message.type === "string" ? message.type : null;
+      if (!type) {
+        return;
+      }
+
+      const data = isPlainObject(message.data) ? message.data : null;
+
+      if (type === "objective-created" && data && isObjectiveRecord(data.objective)) {
+        const record = data.objective;
         setObjectives((prev) => {
           const exists = prev.some((item) => item.id === record.id);
           if (exists) {
@@ -1410,11 +1448,14 @@ export function ObjectivesPanel({ campaign, canEdit, worldMap, worldMapLoading, 
           }
           return [...prev, record];
         });
-      } else if (envelope.type === "objective-updated" && envelope.data?.objective) {
-        const record = envelope.data.objective as ObjectiveRecord;
+      } else if (type === "objective-updated" && data && isObjectiveRecord(data.objective)) {
+        const record = data.objective;
         setObjectives((prev) => prev.map((item) => (item.id === record.id ? record : item)));
-      } else if (envelope.type === "objective-deleted" && Array.isArray(envelope.data?.deletedObjectiveIds)) {
-        const ids: string[] = envelope.data.deletedObjectiveIds;
+      } else if (type === "objective-deleted" && data) {
+        const ids = toStringArray(data.deletedObjectiveIds);
+        if (!ids) {
+          return;
+        }
         setObjectives((prev) => prev.filter((item) => !ids.includes(item.id)));
       }
     });
@@ -1840,7 +1881,7 @@ export function ObjectivesPanel({ campaign, canEdit, worldMap, worldMapLoading, 
               </div>
             )}
             {worldMapError && (
-              <Alert variant="warning">
+              <Alert variant="default" className={WARNING_ALERT_CLASS}>
                 <AlertTitle>World map unavailable</AlertTitle>
                 <AlertDescription>{worldMapError}</AlertDescription>
               </Alert>

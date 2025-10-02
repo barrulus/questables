@@ -15,78 +15,8 @@ import { fetchJson } from '../utils/api-client';
 import { PIXEL_PROJECTION_CODE } from './map-projection';
 import GeoJSON from 'ol/format/GeoJSON';
 import Feature from 'ol/Feature';
-import type { Geometry as GeoJsonGeometry } from 'geojson';
 
 export type WorldMapBounds = MapBounds;
-
-export interface BurgData {
-  id: string;
-  world_id: string;
-  burg_id: number;
-  name: string;
-  state: string;
-  province: string;
-  culture: string;
-  religion: string;
-  population: number;
-  capital: boolean;
-  port: boolean;
-  xworld: number;
-  yworld: number;
-  geom?: unknown;
-  geometry?: unknown;
-}
-
-export interface RouteData {
-  id: string;
-  world_id: string;
-  route_id: number;
-  name: string;
-  type: string;
-  geom?: unknown;
-  geometry?: unknown;
-}
-
-export interface RiverData {
-  id: string;
-  world_id: string;
-  river_id: number;
-  name: string;
-  type: string;
-  discharge: number;
-  length: number;
-  width: number;
-  geom?: unknown;
-  geometry?: unknown;
-}
-
-export interface CellData {
-  id: string;
-  world_id: string;
-  cell_id: number;
-  biome: number;
-  type: string;
-  population: number;
-  state: number;
-  culture: number;
-  religion: number;
-  height: number;
-  geom?: unknown;
-  geometry?: unknown;
-}
-
-export interface MarkerData {
-  id: string;
-  world_id: string;
-  marker_id: number;
-  type: string;
-  icon: string;
-  note: string;
-  x_px?: number;
-  y_px?: number;
-  geom?: unknown;
-  geometry?: unknown;
-}
 
 export class MapDataLoader {
   private tileSetCache: Record<string, unknown>[] | null = null;
@@ -95,6 +25,57 @@ export class MapDataLoader {
     dataProjection: PIXEL_PROJECTION_CODE,
     featureProjection: PIXEL_PROJECTION_CODE
   });
+
+  private static isRecord(value: unknown): value is Record<string, unknown> {
+    return typeof value === 'object' && value !== null;
+  }
+
+  private static toRecordArray(value: unknown): Record<string, unknown>[] {
+    if (!Array.isArray(value)) {
+      return [];
+    }
+    return value.filter(MapDataLoader.isRecord);
+  }
+
+  private static resolveString(record: Record<string, unknown>, ...keys: string[]): string | null {
+    for (const key of keys) {
+      const candidate = record[key];
+      if (typeof candidate === 'string' && candidate.trim()) {
+        return candidate;
+      }
+    }
+    return null;
+  }
+
+  private static resolveNumericId(record: Record<string, unknown>, ...keys: string[]): string | null {
+    for (const key of keys) {
+      const candidate = record[key];
+      if (typeof candidate === 'number' && Number.isFinite(candidate)) {
+        return String(candidate);
+      }
+    }
+    return null;
+  }
+
+  private static notNull<T>(value: T | null | undefined): value is T {
+    return value !== null && value !== undefined;
+  }
+
+  private isGeoJsonGeometry(candidate: Record<string, unknown>): boolean {
+    if (typeof candidate.type !== 'string') {
+      return false;
+    }
+
+    if ('coordinates' in candidate) {
+      return candidate.coordinates !== undefined;
+    }
+
+    if (candidate.type === 'GeometryCollection' && 'geometries' in candidate) {
+      return Array.isArray((candidate as { geometries?: unknown }).geometries);
+    }
+
+    return false;
+  }
 
   private readGeometry(input: unknown) {
     if (input === null || input === undefined) {
@@ -112,10 +93,11 @@ export class MapDataLoader {
       }
     }
 
-    if (typeof candidate === 'object' && candidate !== null) {
-      const geometryObject = candidate as Partial<GeoJsonGeometry> & { coordinates?: unknown };
-      if (typeof geometryObject.type === 'string' && geometryObject.coordinates !== undefined) {
-        return this.geoJsonFormat.readGeometry(geometryObject as GeoJsonGeometry);
+    if (MapDataLoader.isRecord(candidate) && this.isGeoJsonGeometry(candidate)) {
+      try {
+        return this.geoJsonFormat.readGeometry(candidate as Record<string, unknown>);
+      } catch (error) {
+        console.error('Failed to read geometry from map data loader', error);
       }
     }
 
@@ -130,61 +112,73 @@ export class MapDataLoader {
   async loadBurgs(worldMapId: string, bounds?: WorldMapBounds): Promise<Feature[]> {
     const rows = await listWorldBurgs(worldMapId, bounds as MapBounds | undefined);
 
-    return (rows || [])
-      .map((burg: BurgData) => {
-        const geometry = this.readGeometry(burg.geometry ?? burg.geom);
+    return MapDataLoader.toRecordArray(rows)
+      .map((record, index) => {
+        const geometry = this.readGeometry(record.geometry ?? record.geom);
         if (!geometry) return null;
 
-        const feature = new Feature({
+        const id = MapDataLoader.resolveString(record, 'id')
+          ?? MapDataLoader.resolveNumericId(record, 'burg_id', 'world_id', 'id')
+          ?? `burg-${index}`;
+        const name = MapDataLoader.resolveString(record, 'name') ?? `Burg ${index + 1}`;
+
+        return new Feature({
           geometry,
-          id: burg.id,
+          id,
           type: 'burg',
-          name: burg.name,
-          data: burg
+          name,
+          data: record,
         });
-        
-        
-        return feature;
       })
-      .filter((feature): feature is Feature => !!feature);
+      .filter(MapDataLoader.notNull);
   }
 
   async loadRoutes(worldMapId: string, bounds?: WorldMapBounds): Promise<Feature[]> {
     const rows = await listWorldRoutes(worldMapId, bounds as MapBounds | undefined);
 
-    return (rows || [])
-      .map((route: RouteData) => {
-        const geometry = this.readGeometry(route.geometry ?? route.geom);
+    return MapDataLoader.toRecordArray(rows)
+      .map((record, index) => {
+        const geometry = this.readGeometry(record.geometry ?? record.geom);
         if (!geometry) return null;
+
+        const id = MapDataLoader.resolveString(record, 'id')
+          ?? MapDataLoader.resolveNumericId(record, 'route_id', 'world_id', 'id')
+          ?? `route-${index}`;
+        const name = MapDataLoader.resolveString(record, 'name') ?? `Route ${index + 1}`;
 
         return new Feature({
           geometry,
-          id: route.id,
+          id,
           type: 'route',
-          name: route.name,
-          data: route
+          name,
+          data: record,
         });
       })
-      .filter((feature): feature is Feature => !!feature);
+      .filter(MapDataLoader.notNull);
   }
 
   async loadRivers(worldMapId: string, bounds?: WorldMapBounds): Promise<Feature[]> {
     const rows = await listWorldRivers(worldMapId, bounds as MapBounds | undefined);
 
-    return (rows || [])
-      .map((river: RiverData) => {
-        const geometry = this.readGeometry(river.geometry ?? river.geom);
+    return MapDataLoader.toRecordArray(rows)
+      .map((record, index) => {
+        const geometry = this.readGeometry(record.geometry ?? record.geom);
         if (!geometry) return null;
+
+        const id = MapDataLoader.resolveString(record, 'id')
+          ?? MapDataLoader.resolveNumericId(record, 'river_id', 'world_id', 'id')
+          ?? `river-${index}`;
+        const name = MapDataLoader.resolveString(record, 'name') ?? `River ${index + 1}`;
 
         return new Feature({
           geometry,
-          id: river.id,
+          id,
           type: 'river',
-          name: river.name,
-          data: river
+          name,
+          data: record,
         });
       })
-      .filter((feature): feature is Feature => !!feature);
+      .filter(MapDataLoader.notNull);
   }
 
   async loadCells(worldMapId: string, bounds?: WorldMapBounds): Promise<Feature[]> {
@@ -201,38 +195,47 @@ export class MapDataLoader {
 
     const rows = await listWorldCells(worldMapId, bounds as MapBounds);
 
-    return (rows || [])
-      .map((cell: CellData) => {
-        const geometry = this.readGeometry(cell.geometry ?? cell.geom);
+    return MapDataLoader.toRecordArray(rows)
+      .map((record, index) => {
+        const geometry = this.readGeometry(record.geometry ?? record.geom);
         if (!geometry) return null;
+
+        const id = MapDataLoader.resolveString(record, 'id')
+          ?? MapDataLoader.resolveNumericId(record, 'cell_id', 'world_id', 'id')
+          ?? `cell-${index}`;
 
         return new Feature({
           geometry,
-          id: cell.id,
+          id,
           type: 'cell',
-          data: cell
+          data: record,
         });
       })
-      .filter((feature): feature is Feature => !!feature);
+      .filter(MapDataLoader.notNull);
   }
 
   async loadMarkers(worldMapId: string, bounds?: WorldMapBounds): Promise<Feature[]> {
     const rows = await listWorldMarkers(worldMapId, bounds as MapBounds | undefined);
 
-    return (rows || [])
-      .map((marker: MarkerData) => {
-        const geometry = this.readGeometry(marker.geometry ?? marker.geom);
+    return MapDataLoader.toRecordArray(rows)
+      .map((record, index) => {
+        const geometry = this.readGeometry(record.geometry ?? record.geom);
         if (!geometry) return null;
+
+        const id = MapDataLoader.resolveString(record, 'id')
+          ?? MapDataLoader.resolveNumericId(record, 'marker_id', 'world_id', 'id')
+          ?? `marker-${index}`;
+        const name = MapDataLoader.resolveString(record, 'note', 'name', 'type') ?? `Marker ${index + 1}`;
 
         return new Feature({
           geometry,
-          id: marker.id,
+          id,
           type: 'marker',
-          name: marker.note || `${marker.type} marker`,
-          data: marker
+          name,
+          data: record,
         });
       })
-      .filter((feature): feature is Feature => !!feature);
+      .filter(MapDataLoader.notNull);
   }
 
   async loadCampaignLocations(campaignId: string): Promise<Feature[]> {

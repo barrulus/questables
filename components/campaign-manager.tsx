@@ -55,7 +55,7 @@ import { CampaignPrep } from "./campaign-prep";
 interface WorldMapSummary {
   id: string;
   name: string;
-  description?: string | null;
+  description: string | null;
 }
 
 type NumericInputValue = number | '';
@@ -146,20 +146,36 @@ export function CampaignManager() {
         setWorldMaps([]);
         return;
       }
-      const maps = payload
-        .map((item) => {
-          if (!item || typeof item !== 'object') return null;
-          const record = item as Record<string, unknown>;
-          const id = typeof record.id === 'string' ? record.id : null;
-          const name = typeof record.name === 'string' && record.name.trim() ? record.name : null;
-          if (!id || !name) return null;
-          return {
-            id,
-            name,
-            description: typeof record.description === 'string' ? record.description : null,
-          } satisfies WorldMapSummary;
-        })
-        .filter((value): value is WorldMapSummary => Boolean(value));
+
+      const toWorldMapSummary = (item: unknown): WorldMapSummary | null => {
+        if (!item || typeof item !== 'object') {
+          return null;
+        }
+
+        const record = item as Record<string, unknown>;
+        const id = typeof record.id === 'string' && record.id.trim() ? record.id : null;
+        const rawName = typeof record.name === 'string' ? record.name.trim() : '';
+
+        if (!id || !rawName) {
+          return null;
+        }
+
+        const descriptionValue = record.description;
+        const description = typeof descriptionValue === 'string' && descriptionValue.trim()
+          ? descriptionValue
+          : null;
+
+        return {
+          id,
+          name: rawName,
+          description,
+        } satisfies WorldMapSummary;
+      };
+
+      const maps: WorldMapSummary[] = payload
+        .map(toWorldMapSummary)
+        .filter((value): value is WorldMapSummary => value !== null);
+
       setWorldMaps(maps);
     } catch (err) {
       if (err instanceof DOMException && err.name === 'AbortError') {

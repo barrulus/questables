@@ -1,24 +1,29 @@
 import { useState } from 'react';
-import { Button } from './ui/button';
 import { Input } from './ui/input';
 import { Progress } from './ui/progress';
 import { Card, CardContent, CardHeader, CardTitle } from './ui/card';
 import { Alert, AlertDescription } from './ui/alert';
 import { Upload, FileText, Image, AlertCircle, CheckCircle } from 'lucide-react';
+import { apiFetch, readErrorMessage, readJsonBody } from '../utils/api-client';
 
-interface FileUploadProps {
+interface FileUploadProps<TResult = unknown> {
   endpoint: string;
   acceptedTypes: string[];
   maxSize: number;
-  onUploadComplete: (result: any) => void;
-  onError: (error: string) => void;
+  onUploadComplete: (_result: TResult) => void;
+  onError: (_error: string) => void;
   title?: string;
   description?: string;
   multiple?: boolean;
   additionalFields?: { [key: string]: string };
 }
 
-export default function FileUpload({ 
+interface UploadCallbacks<TResult = unknown> {
+  onUploadComplete: (_result: TResult) => void;
+  onError: (_error: string) => void;
+}
+
+export default function FileUpload<TResult = unknown>({ 
   endpoint, 
   acceptedTypes, 
   maxSize, 
@@ -28,7 +33,7 @@ export default function FileUpload({
   description = "Select a file to upload",
   multiple = false,
   additionalFields = {}
-}: FileUploadProps) {
+}: FileUploadProps<TResult>) {
   const [uploading, setUploading] = useState(false);
   const [progress, setProgress] = useState(0);
   const [dragActive, setDragActive] = useState(false);
@@ -79,28 +84,19 @@ export default function FileUpload({
         formData.append(key, additionalFields[key]);
       });
 
-      // Simulate progress (in a real implementation, you'd track actual upload progress)
-      const progressInterval = setInterval(() => {
-        setProgress(prev => {
-          const newProgress = prev + Math.random() * 30;
-          return newProgress >= 90 ? 90 : newProgress;
-        });
-      }, 200);
-
-      const response = await fetch(endpoint, {
+      const response = await apiFetch(endpoint, {
         method: 'POST',
-        body: formData
+        body: formData,
       });
 
-      clearInterval(progressInterval);
       setProgress(100);
 
       if (!response.ok) {
-        const errorData = await response.json();
-        throw new Error(errorData.error || 'Upload failed');
+        const message = await readErrorMessage(response, 'Upload failed');
+        throw new Error(message);
       }
 
-      const result = await response.json();
+      const result = await readJsonBody<TResult>(response);
       setUploadStatus('success');
       setStatusMessage('File uploaded successfully!');
       onUploadComplete(result);
@@ -244,11 +240,11 @@ export default function FileUpload({
 }
 
 // Convenience components for common upload types
-export function AvatarUpload({ onUploadComplete, onError, userId }: {
-  onUploadComplete: (result: any) => void;
-  onError: (error: string) => void;
+interface AvatarUploadProps extends UploadCallbacks {
   userId?: string;
-}) {
+}
+
+export function AvatarUpload({ onUploadComplete, onError, userId }: AvatarUploadProps) {
   return (
     <FileUpload
       endpoint="/api/upload/avatar"
@@ -263,11 +259,11 @@ export function AvatarUpload({ onUploadComplete, onError, userId }: {
   );
 }
 
-export function MapUpload({ onUploadComplete, onError, uploadedBy }: {
-  onUploadComplete: (result: any) => void;
-  onError: (error: string) => void;
+interface MapUploadProps extends UploadCallbacks {
   uploadedBy: string;
-}) {
+}
+
+export function MapUpload({ onUploadComplete, onError, uploadedBy }: MapUploadProps) {
   return (
     <FileUpload
       endpoint="/api/upload/map"
@@ -282,11 +278,11 @@ export function MapUpload({ onUploadComplete, onError, uploadedBy }: {
   );
 }
 
-export function CampaignAssetUpload({ campaignId, onUploadComplete, onError }: {
+interface CampaignAssetUploadProps extends UploadCallbacks {
   campaignId: string;
-  onUploadComplete: (result: any) => void;
-  onError: (error: string) => void;
-}) {
+}
+
+export function CampaignAssetUpload({ campaignId, onUploadComplete, onError }: CampaignAssetUploadProps) {
   return (
     <FileUpload
       endpoint={`/api/campaigns/${campaignId}/assets`}

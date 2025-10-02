@@ -119,11 +119,16 @@ class Configuration {
     }
 
     // Load from import.meta.env (Vite)
-    if (typeof import.meta !== 'undefined' && import.meta.env) {
+    const viteEnv = typeof import.meta !== 'undefined'
+      ? (import.meta as { env?: Record<string, unknown> }).env ?? undefined
+      : undefined;
+
+    if (viteEnv) {
       Object.keys(DEFAULT_CONFIG).forEach(key => {
         const viteKey = key.startsWith('VITE_') ? key : `VITE_${key}`;
-        if (import.meta.env[viteKey]) {
-          envConfig[key] = import.meta.env[viteKey] as string;
+        const value = viteEnv[viteKey];
+        if (typeof value === 'string') {
+          envConfig[key] = value;
         }
       });
     }

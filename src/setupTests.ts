@@ -48,26 +48,61 @@ if (win) {
 }
 
 // Mock ResizeObserver
-globalThis.ResizeObserver = class ResizeObserver {
-  constructor(cb) {
-    this.cb = cb;
+if (typeof globalThis.ResizeObserver === 'undefined') {
+  class ResizeObserverStub implements ResizeObserver {
+    constructor(_callback: ResizeObserverCallback) {
+      void _callback;
+    }
+
+    observe(): void {
+      // no-op
+    }
+
+    unobserve(): void {
+      // no-op
+    }
+
+    disconnect(): void {
+      // no-op
+    }
+
+    takeRecords(): ResizeObserverEntry[] {
+      return [];
+    }
   }
 
-  observe() {}
-  unobserve() {}
-  disconnect() {}
-};
+  globalThis.ResizeObserver = ResizeObserverStub;
+}
 
 // Mock IntersectionObserver
-globalThis.IntersectionObserver = class IntersectionObserver {
-  constructor(cb) {
-    this.cb = cb;
+if (typeof globalThis.IntersectionObserver === 'undefined') {
+  class IntersectionObserverStub implements IntersectionObserver {
+    readonly root: Element | Document | null = null;
+    readonly rootMargin: string = '0px';
+    readonly thresholds: ReadonlyArray<number> = [];
+    constructor(_callback: IntersectionObserverCallback) {
+      void _callback;
+    }
+
+    observe(): void {
+      // no-op
+    }
+
+    unobserve(): void {
+      // no-op
+    }
+
+    disconnect(): void {
+      // no-op
+    }
+
+    takeRecords(): IntersectionObserverEntry[] {
+      return [];
+    }
   }
 
-  observe() {}
-  unobserve() {}
-  disconnect() {}
-};
+  globalThis.IntersectionObserver = IntersectionObserverStub;
+}
 
 // Mock scrollTo
 globalThis.scrollTo = jest.fn();

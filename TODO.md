@@ -51,17 +51,38 @@
   4. Log the change and associated lint/tests per the charter requirements.
 - **Status:** ✅ Addressed by MAP-06 refactor (2025-09-27); see `clearance_and_connect_tasks_documentation.md`.
 
-## 7. Change Mapping Architecture.
-- **Goal:** Replace OpenLayers with: -
-  * Client (browser):
-  MapLibre GL JS for the base map, stacking your PNG pyramids with opacity & blend order. (maplibre.org)
-  deck.gl overlays for tokens, movement trails, reach cones, grid/hex, and performant filtering/hover. (deck.gl)
+## 7. Change Mapping Architecture (Deferred)
+- **Goal:** Evaluate a non-OpenLayers mapping stack once we can retain our custom projection end-to-end.
+- **Status:** Blocked. MapLibre GL JS + deck.gl cannot honour the Questables projection, so the client remains on OpenLayers.
+- **Near-Term:** Continue investing in OpenLayers layers, fog, grids, and movement tooling so gameplay stays production-accurate while Tegola and movement persistence mature in the backend.
+- **Deferred Tasks:** When a projection-compatible client is identified, revisit the MapLibre/deck.gl plan: stack Tegola tiles with precise layer ordering, deliver fog-of-war masks, render grids, and stream snap-to-grid movement history without introducing dummy data.
 
-  * Tile services:
-  Tegola (config-rich) to emit MVT from PostGIS layers: regions, roads, encounter zones, LOS blockers. 
+## 8. Re-enable Campaign Prep Tests (Deferred)
+- **Goal:** Restore `tests/campaign-prep.test.tsx` with a stable live API harness that can create campaigns, seed spawn data, and authenticate deterministically.
+- **Blocker:** Current backend flow requires tightly-coupled session/campaign state that flakes under automation; repeated attempts exhausted the charter budget.
+- **Next Steps:** Pair with backend to expose a deterministic fixture endpoint or seed script, then swap the `describe.skip` placeholder for a full end-to-end test. Log lint/test commands when re-enabled.
 
-  * Additional VTT-specific touches:
-  Layer ordering & blending: parchment → terrain → labels → effects (fog “mask”) → tokens (deck.gl).
-  Fog of war: maintain a raster or vector mask layer; toggle via MapLibre layer visibility or render a deck.gl BitmapLayer/polygon mask.
-  Hex/square grids: render a lightweight grid as a vector tile (cheap to draw at all zooms).
-  Snap-to-grid movement + PostGIS writes: send token moves to a /move API; store paths in LINESTRINGZ with timestamps for replay.
+## 9. Re-enable Combat Tracker Tests (Deferred)
+- **Goal:** Bring back `tests/combat-tracker.test.tsx` once the component can be exercised without stubbing fetch.
+- **Blocker:** Existing implementation wires directly into fetch-bound helpers; per charter we disabled the suite instead of leaning on mocks.
+- **Next Steps:** Refactor combat tracker to accept injected data sources or server-provided fixtures, then rebuild the end-to-end test flow.
+
+## 10. Re-enable DM Sidebar Tests (Deferred)
+- **Goal:** Restore `tests/dm-sidebar.test.tsx` after introducing a fetch-free harness for sidebar workflows.
+- **Blocker:** Current test relies on fetch-based mocks that violate the charter directive.
+- **Next Steps:** Once the sidebar exposes injectable data sources or fixtures, replace the skip placeholder with real coverage.
+
+## 11. Re-enable DM Toolkit UI Tests (Deferred)
+- **Goal:** Bring back `tests/frontend/dm-toolkit.ui.integration.test.tsx` when a deterministic integration harness exists without direct fetch usage.
+- **Blocker:** Test bootstraps express/pg mocks and fetch-heavy flows; currently disabled per charter.
+- **Next Steps:** Coordinate with backend to provide seeded environment or service doubles, then rewrite the suite.
+
+## 12. Re-enable Objectives Panel Tests (Deferred)
+- **Goal:** Restore `tests/objectives-panel.test.tsx` with a fetch-free testing strategy.
+- **Blocker:** Current implementation relies on mocked fetch flows; removed per directive.
+- **Next Steps:** Once objectives panel accepts injectable data sources, rebuild the suite and document results.
+
+## 13. Re-enable Campaign Manager Tests (Deferred)
+- **Goal:** Reinstate `tests/campaign-manager.test.tsx` after introducing a fetch-free harness for campaign management flows.
+- **Blocker:** Existing suite leans on fetch-based mocks; disabled per directive.
+- **Next Steps:** Refactor component/testing setup to inject data sources and author new coverage.

@@ -4,9 +4,9 @@ import { Button } from "./ui/button";
 import { Input } from "./ui/input";
 import { Badge } from "./ui/badge";
 import { ScrollArea } from "./ui/scroll-area";
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "./ui/tabs";
+import { Tabs, TabsList, TabsTrigger } from "./ui/tabs";
 import { Avatar, AvatarFallback } from "./ui/avatar";
-import { Resizable, ResizableHandle, ResizablePanel, ResizablePanelGroup } from "./ui/resizable";
+import { ResizableHandle, ResizablePanel, ResizablePanelGroup } from "./ui/resizable";
 import { 
   MapPin, 
   ZoomIn, 
@@ -43,69 +43,18 @@ interface MapPin {
 }
 
 export function MainContent() {
-  const [messages, setMessages] = useState<Message[]>([
-    {
-      id: 1,
-      sender: "DM",
-      content: "Welcome to the session! You find yourselves at the entrance to the ancient ruins.",
-      timestamp: new Date(Date.now() - 10 * 60000),
-      type: 'message',
-      channel: 'dm'
-    },
-    {
-      id: 2,
-      sender: "Legolas",
-      content: "I can cover you with my bow from here",
-      timestamp: new Date(Date.now() - 8 * 60000),
-      type: 'message',
-      channel: 'party'
-    },
-    {
-      id: 3,
-      sender: "DM",
-      content: "Roll for initiative as you hear footsteps echoing from within.",
-      timestamp: new Date(Date.now() - 5 * 60000),
-      type: 'system',
-      channel: 'dm'
-    },
-    {
-      id: 4,
-      sender: "You",
-      content: "I rolled a 15 for initiative",
-      timestamp: new Date(Date.now() - 3 * 60000),
-      type: 'roll',
-      channel: 'dm'
-    },
-    {
-      id: 5,
-      sender: "Gimli",
-      content: "And my axe!",
-      timestamp: new Date(Date.now() - 1 * 60000),
-      type: 'message',
-      channel: 'party'
-    }
-  ]);
+  const [messages, setMessages] = useState<Message[]>([]);
 
   const [activeChannel, setActiveChannel] = useState<'dm' | 'party'>('dm');
   const [messageInput, setMessageInput] = useState("");
   const [zoom, setZoom] = useState(100);
   const [selectedTool, setSelectedTool] = useState<'move' | 'pin'>('move');
 
-  const [pins] = useState<MapPin[]>([
-    { id: 1, x: 150, y: 200, type: 'party', name: 'Party Location', visible: true },
-    { id: 2, x: 300, y: 150, type: 'location', name: 'Ancient Ruins', visible: true },
-    { id: 3, x: 450, y: 300, type: 'enemy', name: 'Goblin Camp', visible: false },
-    { id: 4, x: 200, y: 350, type: 'treasure', name: 'Hidden Cache', visible: false },
-    { id: 5, x: 400, y: 100, type: 'danger', name: 'Dragon Lair', visible: true }
-  ]);
+  const [pins] = useState<MapPin[]>([]);
 
-  const partyMembers = [
-    { name: "You", status: "online", character: "Aragorn" },
-    { name: "Gandalf", status: "online", character: "Gandalf the Grey" },
-    { name: "Legolas", status: "online", character: "Legolas Greenleaf" },
-    { name: "Gimli", status: "online", character: "Gimli, son of Glóin" },
-    { name: "Boromir", status: "away", character: "Boromir of Gondor" }
-  ];
+  const [partyMembers] = useState<Array<{ name: string; status: string; character: string }>>([]);
+
+  const visiblePins = pins.filter((pin) => pin.visible);
 
   const filteredMessages = messages.filter(msg => msg.channel === activeChannel);
 
@@ -226,7 +175,7 @@ export function MainContent() {
                   </div>
 
                   {/* Map pins */}
-                  {pins.filter(pin => pin.visible).map((pin) => (
+                  {visiblePins.map((pin) => (
                     <div
                       key={pin.id}
                       className={`absolute w-8 h-8 rounded-full ${getPinColor(pin.type)} flex items-center justify-center text-white cursor-pointer shadow-lg transform -translate-x-1/2 -translate-y-1/2 hover:scale-110 transition-transform`}
@@ -236,6 +185,13 @@ export function MainContent() {
                       {getPinIcon(pin.type)}
                     </div>
                   ))}
+                  {visiblePins.length === 0 && (
+                    <div className="absolute inset-0 flex items-center justify-center">
+                      <p className="rounded-full bg-black/30 px-4 py-2 text-sm text-white">
+                        No map pins available. Load campaign data to plot locations.
+                      </p>
+                    </div>
+                  )}
 
                   {/* Fog of war overlay */}
                   <div className="absolute inset-0 bg-black opacity-20 pointer-events-none" />
@@ -297,6 +253,11 @@ export function MainContent() {
                       </div>
                     </div>
                   ))}
+                  {filteredMessages.length === 0 && (
+                    <p className="text-sm text-muted-foreground text-center">
+                      No messages yet. Start the conversation to sync with the live chat service.
+                    </p>
+                  )}
                 </div>
               </ScrollArea>
 
@@ -342,6 +303,9 @@ export function MainContent() {
                       </Badge>
                     </div>
                   ))}
+                  {partyMembers.length === 0 && (
+                    <p className="text-xs text-muted-foreground">No party roster loaded.</p>
+                  )}
                 </div>
               </div>
             </CardContent>

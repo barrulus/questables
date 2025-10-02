@@ -35,7 +35,7 @@ interface NPC {
   appearance?: string;
   motivations?: string;
   secrets?: string;
-  current_location_id?: string;
+  current_location_id: string | null;
   location_name?: string;
   avatar_url?: string;
   stats?: NPCStats;
@@ -79,8 +79,9 @@ interface NPCRelationship {
   strength: number;
 }
 
-type NpcApiRecord = Omit<NPC, 'stats'> & {
+type NpcApiRecord = Omit<NPC, 'stats' | 'current_location_id'> & {
   stats?: NPCStats | string | null;
+  current_location_id?: string | null;
 };
 
 interface LocationSummary {
@@ -99,9 +100,14 @@ const parseNpcRecord = (npc: NpcApiRecord): NPC => {
     }
   }
 
+  const currentLocationId = typeof npc.current_location_id === 'string' && npc.current_location_id.trim()
+    ? npc.current_location_id
+    : null;
+
   return {
     ...npc,
     stats,
+    current_location_id: currentLocationId,
   } as NPC;
 };
 

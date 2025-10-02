@@ -196,23 +196,20 @@ function parseLevelRange(value: unknown): LevelRange {
 }
 
 function parseRoutes(value: unknown): RouteSummary[] {
-  const routes = parseJsonField(value, [] as RouteSummary[]);
-  if (!Array.isArray(routes)) return [];
+  const records = parseJsonField<Record<string, unknown>[]>(value, []);
+  if (!Array.isArray(records)) return [];
 
-  return routes
-    .filter((route) => route && typeof route === "object")
-    .map((route, index) => {
-      const typed = route as Record<string, unknown>;
-      return {
-        id: String(typed.id ?? index),
-        name: String(typed.name ?? `Route ${index + 1}`),
-        from: typeof typed.from === "string" ? typed.from : undefined,
-        to: typeof typed.to === "string" ? typed.to : undefined,
-        distance: typeof typed.distance === "string" ? typed.distance : null,
-        difficulty: typeof typed.difficulty === "string" ? typed.difficulty : null,
-        description: typeof typed.description === "string" ? typed.description : undefined
-      };
-    });
+  return records
+    .filter((record): record is Record<string, unknown> => record !== null && typeof record === "object")
+    .map((record, index) => ({
+      id: String(record.id ?? index),
+      name: String(record.name ?? `Route ${index + 1}`),
+      from: typeof record.from === "string" ? record.from : undefined,
+      to: typeof record.to === "string" ? record.to : undefined,
+      distance: typeof record.distance === "string" ? record.distance : null,
+      difficulty: typeof record.difficulty === "string" ? record.difficulty : null,
+      description: typeof record.description === "string" ? record.description : undefined,
+    }));
 }
 
 function normaliseCampaignStatus(value: unknown): CampaignStatus {
@@ -497,7 +494,7 @@ export function DMDashboard({ user, onEnterGame, onLogout }: DMDashboardProps) {
     [campaigns]
   );
 
-  const filteredPlayerCampaigns = useMemo(() => {
+  const filteredPublicCampaigns = useMemo(() => {
     if (!searchQuery) return publicCampaigns;
     const lowered = searchQuery.toLowerCase();
     return publicCampaigns.filter((campaign) =>
@@ -586,6 +583,20 @@ export function DMDashboard({ user, onEnterGame, onLogout }: DMDashboardProps) {
 
       <div className="p-6">
         <Tabs value={activeTab} onValueChange={setActiveTab} className="space-y-6">
+          <TabsList className="grid w-full gap-2 sm:grid-cols-3">
+            <TabsTrigger value="campaigns" className="flex items-center gap-2">
+              <MapIcon className="w-4 h-4" />
+              <span>Campaigns</span>
+            </TabsTrigger>
+            <TabsTrigger value="players" className="flex items-center gap-2">
+              <Users className="w-4 h-4" />
+              <span>Player Slots</span>
+            </TabsTrigger>
+            <TabsTrigger value="characters" className="flex items-center gap-2">
+              <Shield className="w-4 h-4" />
+              <span>Characters</span>
+            </TabsTrigger>
+          </TabsList>
 
           <TabsContent value="campaigns" className="space-y-6">
             <CampaignManager />
@@ -778,6 +789,184 @@ export function DMDashboard({ user, onEnterGame, onLogout }: DMDashboardProps) {
                         </CardContent>
                       </Card>
                     )}
+                  </div>
+                )}
+              </CardContent>
+            </Card>
+          </TabsContent>
+
+          <TabsContent value="players" className="space-y-6">
+            <Card>
+              <CardHeader>
+                <CardTitle>My Player Campaigns</CardTitle>
+                <CardDescription>Campaigns where you currently take a player seat.</CardDescription>
+              </CardHeader>
+              <CardContent>
+                {playerCampaigns.length === 0 ? (
+                  <p className="text-sm text-muted-foreground">You are not enrolled in any campaigns as a player yet.</p>
+                ) : (
+                  <div className="grid gap-4 lg:grid-cols-2">
+                    {playerCampaigns.map((campaign) => (
+                      <div key={campaign.id} className="rounded-md border p-4 space-y-3">
+                        <div className="flex items-start justify-between gap-3">
+                          <div>
+                            <p className="font-medium leading-tight">{campaign.name}</p>
+                            <p className="text-xs text-muted-foreground">DM: {campaign.dmName}</p>
+                          </div>
+                          <Badge className={`${statusColorMap[campaign.status]} text-white capitalize`}>
+                            {campaign.status}
+                          </Badge>
+                        </div>
+                        <div className="flex flex-wrap items-center gap-3 text-xs text-muted-foreground">
+                          <span className="flex items-center gap-1">
+                            <Users className="h-3 w-3" />
+                            {campaign.playerCount}/{campaign.maxPlayers} players
+                          </span>
+                          <span className="flex items-center gap-1">
+                            <Star className="h-3 w-3" />
+                            Levels {campaign.levelRange.min}-{campaign.levelRange.max}
+                          </span>
+                          {campaign.nextSession && (
+                            <span className="flex items-center gap-1">
+                              <Calendar className="h-3 w-3" />
+                              Next: {campaign.nextSession.toLocaleDateString()}
+                            </span>
+                          )}
+                        </div>
+                        {campaign.characterName && (
+                          <p className="text-xs text-muted-foreground">Character: {campaign.characterName}</p>
+                        )}
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </CardContent>
+            </Card>
+
+            <Card>
+              <CardHeader>
+                <CardTitle>Public Campaigns</CardTitle>
+                <CardDescription>Live recruiting slots pulled directly from the backend.</CardDescription>
+              </CardHeader>
+              <CardContent className="space-y-4">
+                <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+                  <p className="text-sm text-muted-foreground">Filter by campaign name, tag, or description.</p>
+                  <div className="relative w-full sm:w-72">
+                    <Search className="absolute left-2 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+                    <Input
+                      value={searchQuery}
+                      onChange={(event) => setSearchQuery(event.target.value)}
+                      placeholder="Search open campaigns"
+                      className="pl-8"
+                    />
+                  </div>
+                </div>
+
+                {filteredPublicCampaigns.length === 0 ? (
+                  <p className="text-sm text-muted-foreground">No public campaigns match your search right now.</p>
+                ) : (
+                  <div className="grid gap-4 lg:grid-cols-2">
+                    {filteredPublicCampaigns.map((campaign) => (
+                      <div key={campaign.id} className="space-y-3 rounded-md border p-4">
+                        <div className="flex items-start justify-between gap-3">
+                          <div>
+                            <p className="font-medium leading-tight">{campaign.name}</p>
+                            <p className="text-xs text-muted-foreground">DM: {campaign.dmName}</p>
+                          </div>
+                          <Badge className={`${statusColorMap[campaign.status]} text-white capitalize`}>
+                            {campaign.status}
+                          </Badge>
+                        </div>
+                        <div className="space-y-1 text-xs text-muted-foreground">
+                          <div className="flex items-center gap-2">
+                            <Users className="h-3 w-3" />
+                            <span>{campaign.playerCount}/{campaign.maxPlayers} players</span>
+                          </div>
+                          <div className="flex items-center gap-2">
+                            <Star className="h-3 w-3" />
+                            <span>Levels {campaign.levelRange.min}-{campaign.levelRange.max}</span>
+                          </div>
+                          {campaign.nextSession && (
+                            <div className="flex items-center gap-2">
+                              <Calendar className="h-3 w-3" />
+                              <span>Next: {campaign.nextSession.toLocaleDateString()}</span>
+                            </div>
+                          )}
+                        </div>
+                        <p className="text-sm text-muted-foreground">
+                          {campaign.description || "No public description provided."}
+                        </p>
+                        {campaign.tags.length > 0 && (
+                          <div className="flex flex-wrap gap-1">
+                            {campaign.tags.map((tag) => (
+                              <Badge key={tag} variant="outline" className="text-xs">
+                                {tag}
+                              </Badge>
+                            ))}
+                          </div>
+                        )}
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </CardContent>
+            </Card>
+          </TabsContent>
+
+          <TabsContent value="characters" className="space-y-6">
+            <Card>
+              <CardHeader>
+                <CardTitle>Character Roster</CardTitle>
+                <CardDescription>Latest character stats synced from the questables backend.</CardDescription>
+              </CardHeader>
+              <CardContent>
+                {characters.length === 0 ? (
+                  <p className="text-sm text-muted-foreground">No characters detected for your account.</p>
+                ) : (
+                  <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
+                    {characters.map((character) => {
+                      const hpPercent = character.hitPoints.max > 0
+                        ? Math.min(100, Math.max(0, (character.hitPoints.current / character.hitPoints.max) * 100))
+                        : 0;
+                      return (
+                        <div key={character.id} className="space-y-3 rounded-md border p-4">
+                          <div className="flex items-start justify-between gap-3">
+                            <div>
+                              <p className="font-medium leading-tight">{character.name}</p>
+                              <p className="text-xs text-muted-foreground">
+                                Level {character.level} {character.race} {character.className}
+                              </p>
+                            </div>
+                            <Badge variant="outline">{character.background}</Badge>
+                          </div>
+                          <div>
+                            <div className="flex items-center justify-between text-xs text-muted-foreground">
+                              <span className="flex items-center gap-1">
+                                <Heart className="h-3 w-3" />
+                                HP {character.hitPoints.current}/{character.hitPoints.max}
+                              </span>
+                              <span className="flex items-center gap-1">
+                                <Shield className="h-3 w-3" />
+                                AC {character.armorClass}
+                              </span>
+                            </div>
+                            <Progress value={hpPercent} className="mt-2" />
+                          </div>
+                          <div className="flex flex-wrap gap-2 text-xs text-muted-foreground">
+                            <span className="flex items-center gap-1">
+                              <MapIcon className="h-3 w-3" />
+                              {character.campaigns.length} campaign{character.campaigns.length === 1 ? "" : "s"}
+                            </span>
+                            {character.lastPlayed && (
+                              <span className="flex items-center gap-1">
+                                <Calendar className="h-3 w-3" />
+                                Last played {character.lastPlayed.toLocaleDateString()}
+                              </span>
+                            )}
+                          </div>
+                        </div>
+                      );
+                    })}
                   </div>
                 )}
               </CardContent>

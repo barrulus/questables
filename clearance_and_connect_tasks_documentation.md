@@ -955,8 +955,8 @@ Always append new entries; do not erase or rewrite previous log items except to 
   - Catalogued current OpenLayers behaviours (`components/openlayers-map.tsx:360-2445`), including layer stack (burgs, routes, rivers, cells, markers, campaign locations, player tokens, trails, encounter placeholder), movement tooling, websocket refresh cycle, tile-set switching, and world/encounter mode gating.
   - Checked toggle coverage and UI affordances (`TOGGLEABLE_LAYER_OPTIONS` and layerVisibility refs) to flag gaps versus new requirements (e.g., rivers/cells lack user toggles, encounter layer unused placeholder, measurement tool stub).
   - Reviewed `database/schema.sql` to confirm all spatial tables already enforce SRID 0 and expose required layers (maps_* tables, campaign spawns, objectives, NPC positioning, player trails).
-  - Extracted runtime configuration from `.env.local` to list existing URLs, TLS cert paths, and defaults that must be re-consumed by the MapLibre/deck.gl stack; noted absence of map-specific envs.
-  - Verified current build surface (Vite, React 19) and dependency graph (OpenLayers only; MapLibre/deck.gl not present) for upcoming rip-and-replace.
+  - Extracted runtime configuration from `.env.local` to list existing URLs, TLS cert paths, and defaults needed by any future non-OpenLayers client; documented that MapLibre/deck.gl cannot be used until it supports our custom projection.
+  - Verified current build surface (Vite, React 19) and dependency graph (OpenLayers only) and recorded the MapLibre/deck.gl migration as deferred rather than imminent.
 - **Cleanups:** None (read-only audit).
 - **Documentation Updates:** `MAP_REFACTOR_TASKS.md` (readiness notes integrated into task 1 scope).
 - **Tests & Verification:** Not applicable (analysis only).
@@ -974,7 +974,7 @@ Always append new entries; do not erase or rewrite previous log items except to 
 - **Documentation Updates:** `.env.local`, `API_DOCUMENTATION.md`, `MAP_REFACTOR_TASKS.md`, `server/tegola/README.md`.
 - **Tests & Verification:**
   - `npx eslint server/routes/tiles.routes.js server/utils/tegola-client.js server/tegola/generate-config.js --ext js` *(pass)*
-- **Remaining Gaps / Blockers:** Need to provision Tegola binary in deployment, wire deck.gl/MapLibre clients, and expand layer toggles when OpenLayers is replaced.
+- **Remaining Gaps / Blockers:** Need to provision Tegola binary in deployment. MapLibre/deck.gl client work is blocked until a projection-compatible stack is identified, so we continue expanding OpenLayers layer toggles in the interim.
 
 ## Task MAP-09 – Movement Grid & Path Persistence
 - **Date:** 2025-09-27
@@ -988,4 +988,4 @@ Always append new entries; do not erase or rewrite previous log items except to 
 - **Documentation Updates:** `.env.local`, `API_DOCUMENTATION.md`, `MAP_REFACTOR_TASKS.md`.
 - **Tests & Verification:**
   - `npx eslint server/routes/campaigns.routes.js server/services/campaigns/service.js server/services/campaigns/movement-config.js --ext js` *(pass)*
-- **Remaining Gaps / Blockers:** Frontend must consume the new grid metadata and snapped coordinates when MapLibre/deck.gl landing; Tegola vector layer wiring will leverage `player_movement_paths` in later tasks.
+- **Remaining Gaps / Blockers:** Frontend must consume the new grid metadata and snapped coordinates once we adopt a projection-compatible client; Tegola vector layer wiring will leverage `player_movement_paths` when that work resumes. OpenLayers remains the active consumer.

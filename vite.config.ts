@@ -1,4 +1,6 @@
 import { defineConfig, loadEnv } from 'vite'
+import type { ConfigEnv, HmrOptions, UserConfig, BuildOptions } from 'vite'
+import type { PreRenderedChunk } from 'rollup'
 import react from '@vitejs/plugin-react'
 import tailwindcss from '@tailwindcss/vite'
 import path from 'path'
@@ -8,7 +10,7 @@ import { fileURLToPath } from 'url'
 const __filename = fileURLToPath(import.meta.url)
 const __dirname = path.dirname(__filename)
 
-export default defineConfig(({ mode }) => {
+export default defineConfig(({ mode }: ConfigEnv): UserConfig => {
   const env = loadEnv(mode, process.cwd(), '')
 
   const defaultTlsCertPath = env.DEV_SERVER_TLS_CERT || path.resolve(__dirname, 'quixote.tail3f19fe.ts.net.crt')
@@ -47,14 +49,38 @@ export default defineConfig(({ mode }) => {
   const publicHmrPort = env.DEV_SERVER_PUBLIC_PORT ? parseInt(env.DEV_SERVER_PUBLIC_PORT, 10) : undefined;
   const publicHmrClientPort = env.DEV_SERVER_PUBLIC_CLIENT_PORT ? parseInt(env.DEV_SERVER_PUBLIC_CLIENT_PORT, 10) : undefined;
 
-  const hmrConfig = publicHmrHost
+  const hmrConfig: HmrOptions | undefined = publicHmrHost
     ? {
         host: publicHmrHost,
         port: publicHmrPort ?? 3000,
         clientPort: publicHmrClientPort ?? publicHmrPort ?? 3000,
         protocol: httpsOptions ? 'wss' : 'ws',
       }
-    : (httpsOptions ? { protocol: 'wss' as const } : undefined);
+    : (httpsOptions ? { protocol: 'wss' } : undefined);
+
+  const buildConfig: BuildOptions = {
+    outDir: 'dist',
+    sourcemap: process.env.NODE_ENV === 'development',
+    rollupOptions: {
+      output: {
+        manualChunks: {
+          vendor: ['react', 'react-dom'],
+          ui: ['lucide-react', '@radix-ui/react-dialog', '@radix-ui/react-tabs'],
+          utils: ['date-fns', 'clsx', 'tailwind-merge']
+        },
+        chunkFileNames: (chunkInfo: PreRenderedChunk) => {
+          const facadeModuleId = chunkInfo.facadeModuleId
+            ? chunkInfo.facadeModuleId.split('/').pop()?.replace(/\.tsx?$/, '')
+            : 'chunk';
+          return `assets/${facadeModuleId}-[hash].js`;
+        }
+      }
+    },
+    minify: 'esbuild',
+    chunkSizeWarningLimit: 1000,
+    assetsInlineLimit: 4096,
+    cssCodeSplit: false
+  }
 
   return {
     plugins: [react(), tailwindcss()],
@@ -67,47 +93,7 @@ export default defineConfig(({ mode }) => {
         '@': path.resolve(__dirname, './'),
       },
     },
-    build: {
-      outDir: 'dist',
-      sourcemap: process.env.NODE_ENV === 'development',
-
-      // Code splitting optimization
-      rollupOptions: {
-        output: {
-          manualChunks: {
-            // Separate vendor chunks for better caching
-            vendor: ['react', 'react-dom'],
-            ui: ['lucide-react', '@radix-ui/react-dialog', '@radix-ui/react-tabs'],
-            utils: ['date-fns', 'clsx', 'tailwind-merge']
-          },
-          // Optimize chunk file names
-          chunkFileNames: (chunkInfo) => {
-            const facadeModuleId = chunkInfo.facadeModuleId ?
-              chunkInfo.facadeModuleId.split('/').pop()?.replace('.tsx', '').replace('.ts', '') :
-              'chunk';
-            return `assets/${facadeModuleId}-[hash].js`;
-          }
-        }
-      },
-
-      // Compression and minification
-      minify: 'terser',
-      terserOptions: {
-        compress: {
-          drop_console: process.env.NODE_ENV === 'production',
-          drop_debugger: process.env.NODE_ENV === 'production'
-        }
-      },
-
-      // Bundle size limits
-      chunkSizeWarningLimit: 1000,
-
-      // Asset optimization
-      assetsInlineLimit: 4096, // 4kb
-
-      // Disable CSS code splitting for better performance
-      cssCodeSplit: false
-    },
+    build: buildConfig,
     server: {
       port: 3000,
       host: true,
@@ -117,9 +103,12 @@ export default defineConfig(({ mode }) => {
         ignored: ['**/map_data/**','**/public/**'],
       },
     },
+    esbuild: process.env.NODE_ENV === 'production'
+      ? { drop: ['console', 'debugger'] }
+      : undefined,
     define: {
       // This helps ensure environment variables are accessible
-      'process.env': {}
+      'process.env': {} as Record<string, string>
     }
   }
 })

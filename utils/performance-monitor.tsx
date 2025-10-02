@@ -1,11 +1,31 @@
 // Performance monitoring and tracking utilities
 import { logPerformance, logInfo, logWarn, logError } from "./logger";
 
+interface TimedRequest {
+  method?: string;
+}
+
+interface TimedResponse {
+  statusCode?: number;
+  end: (..._args: unknown[]) => unknown;
+}
+
+type NextHandler = () => void;
+
+export interface PerformanceSnapshot {
+  count: number;
+  average: number;
+  min: number;
+  max: number;
+  p95: number;
+}
+
 // Performance measurement utilities
 export class PerformanceMonitor {
   private static instance: PerformanceMonitor;
   private measurements: Map<string, number> = new Map();
   private metrics: Map<string, number[]> = new Map();
+  private metricUpdatedAt: Map<string, number> = new Map();
 
   static getInstance(): PerformanceMonitor {
     if (!PerformanceMonitor.instance) {
@@ -40,18 +60,13 @@ export class PerformanceMonitor {
       this.metrics.set(name, []);
     }
     this.metrics.get(name)!.push(duration);
+    this.metricUpdatedAt.set(name, Date.now());
 
     return duration;
   }
 
   // Get performance statistics for an operation
-  getStats(operationName: string): {
-    count: number;
-    average: number;
-    min: number;
-    max: number;
-    p95: number;
-  } | null {
+  getStats(operationName: string): PerformanceSnapshot | null {
     const measurements = this.metrics.get(operationName);
     if (!measurements || measurements.length === 0) {
       return null;
@@ -70,17 +85,32 @@ export class PerformanceMonitor {
   }
 
   // Clear old metrics to prevent memory leaks
-  clearOldMetrics(_maxAge: number = 300000): void {
-    // 5 minutes default
-    this.metrics.clear();
-    logInfo("Performance metrics cleared");
+  clearOldMetrics(maxAge: number = 300000): void {
+    const cutoff = Date.now() - maxAge;
+    let removed = 0;
+
+    for (const [name, lastUpdated] of this.metricUpdatedAt.entries()) {
+      if (lastUpdated < cutoff) {
+        this.metricUpdatedAt.delete(name);
+        if (this.metrics.delete(name)) {
+          removed += 1;
+        }
+      }
+    }
+
+    if (removed > 0) {
+      logInfo("Performance metrics pruned", { removed, maxAge });
+    }
   }
 
   // Get all performance statistics
-  getAllStats(): Record<string, unknown> {
-    const stats: Record<string, unknown> = {};
+  getAllStats(): Record<string, PerformanceSnapshot> {
+    const stats: Record<string, PerformanceSnapshot> = {};
     for (const [name] of this.metrics) {
-      stats[name] = this.getStats(name);
+      const summary = this.getStats(name);
+      if (summary) {
+        stats[name] = summary;
+      }
     }
     return stats;
   }
@@ -145,14 +175,24 @@ export const monitorDatabaseQuery = async <T,>(
 
 // API endpoint performance monitoring
 export const monitorAPIEndpoint = (endpointName: string) => {
-  return (req: unknown, res: unknown, next: unknown) => {
+  return <Req extends TimedRequest, Res extends TimedResponse>(
+    req: Req,
+    res: Res,
+    next: NextHandler
+  ) => {
     const monitor = PerformanceMonitor.getInstance();
     const operationId = `api-${endpointName}-${Date.now()}`;
 
     monitor.startTiming(operationId);
 
     const originalEnd = res.end;
-    res.end = function (...args: any[]) {
+    if (typeof originalEnd !== "function") {
+      logWarn(`Response object missing end handler for ${endpointName}`);
+      next();
+      return;
+    }
+
+    res.end = ((...args: unknown[]) => {
       const duration = monitor.endTiming(operationId, `API: ${endpointName}`);
 
       // Log slow endpoints
@@ -164,34 +204,48 @@ export const monitorAPIEndpoint = (endpointName: string) => {
         });
       }
 
-      originalEnd.apply(this, args);
-    };
+      return originalEnd.apply(res, args as Parameters<Res["end"]>);
+    }) as Res["end"];
 
     next();
   };
 };
 
 // Memory usage monitoring
+interface PerformanceMemory {
+  jsHeapSizeLimit: number;
+  totalJSHeapSize: number;
+  usedJSHeapSize: number;
+}
+
 export const monitorMemoryUsage = () => {
   if (
     typeof window !== "undefined" &&
     "performance" in window &&
     "memory" in window.performance
   ) {
-    const memory = (window.performance as any).memory;
+    const performanceWithMemory = window.performance as Performance & {
+      memory?: PerformanceMemory;
+    };
+    const memory = performanceWithMemory.memory;
+
+    if (!memory) {
+      logWarn("Performance memory API unavailable in this browser");
+      return;
+    }
 
     logInfo("Memory usage", {
-      usedJSMemory: `${Math.round(memory.usedJSMemory / 1024 / 1024)} MB`,
-      totalJSMemory: `${Math.round(memory.totalJSMemory / 1024 / 1024)} MB`,
-      jsMemoryLimit: `${Math.round(memory.jsMemoryLimit / 1024 / 1024)} MB`,
+      usedJSHeapSize: `${Math.round(memory.usedJSHeapSize / 1024 / 1024)} MB`,
+      totalJSHeapSize: `${Math.round(memory.totalJSHeapSize / 1024 / 1024)} MB`,
+      jsHeapSizeLimit: `${Math.round(memory.jsHeapSizeLimit / 1024 / 1024)} MB`,
     });
 
     // Warning for high memory usage
-    const usagePercent = (memory.usedJSMemory / memory.jsMemoryLimit) * 100;
+    const usagePercent = (memory.usedJSHeapSize / memory.jsHeapSizeLimit) * 100;
     if (usagePercent > 80) {
       logWarn(`High memory usage detected: ${usagePercent.toFixed(1)}%`);
     }
-  } else if (typeof process !== "undefined") {
+  } else if (typeof process !== "undefined" && typeof process.memoryUsage === "function") {
     const usage = process.memoryUsage();
 
     logInfo("Memory usage", {
@@ -204,7 +258,12 @@ export const monitorMemoryUsage = () => {
 };
 
 // WebSocket latency monitoring
-export const monitorWebSocketLatency = (socket: any) => {
+interface LatencySocket {
+  emit: (_event: string, _payload: unknown) => unknown;
+  on: (_event: string, _handler: (_timestamp: number) => void) => unknown;
+}
+
+export const monitorWebSocketLatency = (socket: LatencySocket) => {
   const startTime = Date.now();
 
   socket.emit("ping", startTime);
@@ -224,8 +283,8 @@ export const monitorResourceLoading = () => {
   if (typeof window !== "undefined" && "performance" in window) {
     const entries = performance.getEntriesByType("resource");
 
-    entries.forEach((entry: any) => {
-      if (entry.duration > 2000) {
+    entries.forEach((entry) => {
+      if (entry instanceof PerformanceResourceTiming && entry.duration > 2000) {
         // Resources taking more than 2 seconds
         logWarn(`Slow resource loading: ${entry.name}`, {
           duration: `${Math.round(entry.duration)}ms`,
@@ -262,23 +321,19 @@ export const generatePerformanceReport = () => {
   const monitor = PerformanceMonitor.getInstance();
   const stats = monitor.getAllStats();
 
+  const apiStats = Object.entries(stats).filter(([name]) => name.startsWith("API:"));
+  const totalApiAverage = apiStats.reduce((sum, [, stat]) => sum + stat.average, 0);
+  const averageApiResponseTime = apiStats.length ? totalApiAverage / apiStats.length : 0;
+
   const report = {
     timestamp: new Date().toISOString(),
     environment: process.env.NODE_ENV,
     metrics: stats,
     summary: {
-      totalOperations: Object.values(stats).reduce(
-        (sum, stat) => sum + (stat?.count || 0),
-        0
-      ),
-      averageResponseTime:
-        Object.entries(stats)
-          .filter(([name]) => name.startsWith("API:"))
-          .reduce((sum, [, stat]) => sum + (stat?.average || 0), 0) /
-          Object.keys(stats).filter((name) => name.startsWith("API:")).length ||
-        0,
+      totalOperations: Object.values(stats).reduce((sum, stat) => sum + stat.count, 0),
+      averageResponseTime: averageApiResponseTime,
       slowOperations: Object.entries(stats)
-        .filter(([, stat]) => stat && stat.p95 > 1000)
+        .filter(([, stat]) => stat.p95 > 1000)
         .map(([name, stat]) => ({ name, p95: stat.p95 })),
     },
   };

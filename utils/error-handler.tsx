@@ -1,27 +1,31 @@
-import React, { Component, ErrorInfo, ReactNode } from 'react';
+import { Component, ErrorInfo, ReactNode } from 'react';
 import { Card, CardContent, CardHeader, CardTitle } from '../components/ui/card';
 import { Button } from '../components/ui/button';
 import { AlertTriangle, RefreshCw, Home } from 'lucide-react';
 
 // Error types for classification
-export enum ErrorType {
-  NETWORK = 'network',
-  VALIDATION = 'validation',
-  SERVER = 'server',
-  DATABASE = 'database',
-  WEBSOCKET = 'websocket',
-  AUTHENTICATION = 'authentication',
-  AUTHORIZATION = 'authorization',
-  UNKNOWN = 'unknown'
-}
+export const ERROR_TYPE = {
+  NETWORK: 'network',
+  VALIDATION: 'validation',
+  SERVER: 'server',
+  DATABASE: 'database',
+  WEBSOCKET: 'websocket',
+  AUTHENTICATION: 'authentication',
+  AUTHORIZATION: 'authorization',
+  UNKNOWN: 'unknown',
+} as const;
+
+export type ErrorType = typeof ERROR_TYPE[keyof typeof ERROR_TYPE];
 
 // Error severity levels
-export enum ErrorSeverity {
-  LOW = 'low',
-  MEDIUM = 'medium',
-  HIGH = 'high',
-  CRITICAL = 'critical'
-}
+export const ERROR_SEVERITY = {
+  LOW: 'low',
+  MEDIUM: 'medium',
+  HIGH: 'high',
+  CRITICAL: 'critical',
+} as const;
+
+export type ErrorSeverity = typeof ERROR_SEVERITY[keyof typeof ERROR_SEVERITY];
 
 // Enhanced error interface
 export interface AppError extends Error {
@@ -30,7 +34,7 @@ export interface AppError extends Error {
   userMessage: string;
   technicalMessage?: string;
   code?: string | number;
-  context?: Record<string, any>;
+  context?: Record<string, unknown>;
   timestamp?: Date;
   retryable?: boolean;
   reportable?: boolean;
@@ -46,13 +50,19 @@ interface ErrorBoundaryState {
 
 interface ErrorBoundaryProps {
   children: ReactNode;
-  fallback?: (error: AppError, reset: () => void) => ReactNode;
-  onError?: (error: AppError, errorInfo: ErrorInfo, errorId: string) => void;
+  fallback?: (_error: AppError, _reset: () => void) => ReactNode;
+  onError?: (_error: AppError, _errorInfo: ErrorInfo, _errorId: string) => void;
 }
 
 // Global error logging function
-export const logError = (error: AppError, context?: Record<string, any>) => {
+export const logError = (error: AppError, context?: Record<string, unknown>) => {
   const errorId = generateErrorId();
+  const combinedContext = {
+    ...(error.context ?? {}),
+    ...(context ?? {}),
+  };
+  const currentUrl = typeof window !== 'undefined' ? window.location.href : undefined;
+  const userAgent = typeof navigator !== 'undefined' ? navigator.userAgent : undefined;
   const logEntry = {
     id: errorId,
     timestamp: new Date().toISOString(),
@@ -62,9 +72,9 @@ export const logError = (error: AppError, context?: Record<string, any>) => {
     severity: error.severity,
     stack: error.stack,
     code: error.code,
-    context: { ...error.context, ...context },
-    url: window.location.href,
-    userAgent: navigator.userAgent,
+    context: combinedContext,
+    url: currentUrl,
+    userAgent,
   };
 
   // Log to console
@@ -86,8 +96,8 @@ const generateErrorId = (): string => {
 // Create app error with proper classification
 export const createAppError = (
   message: string,
-  type: ErrorType = ErrorType.UNKNOWN,
-  severity: ErrorSeverity = ErrorSeverity.MEDIUM,
+  type: ErrorType = ERROR_TYPE.UNKNOWN,
+  severity: ErrorSeverity = ERROR_SEVERITY.MEDIUM,
   userMessage?: string,
   options?: Partial<AppError>
 ): AppError => {
@@ -108,65 +118,132 @@ export const createAppError = (
 // Get user-friendly error messages
 const getUserFriendlyMessage = (type: ErrorType, originalMessage: string): string => {
   const errorMessages: Record<ErrorType, string> = {
-    [ErrorType.NETWORK]: 'Unable to connect to the server. Please check your internet connection and try again.',
-    [ErrorType.VALIDATION]: 'Please check your input and try again.',
-    [ErrorType.SERVER]: 'Something went wrong on our end. Please try again in a moment.',
-    [ErrorType.DATABASE]: 'Unable to save or retrieve your data right now. Please try again.',
-    [ErrorType.WEBSOCKET]: 'Lost connection to real-time updates. Attempting to reconnect...',
-    [ErrorType.AUTHENTICATION]: 'You need to sign in to access this feature.',
-    [ErrorType.AUTHORIZATION]: 'You don\'t have permission to perform this action.',
-    [ErrorType.UNKNOWN]: 'An unexpected error occurred. Please try again.'
+    [ERROR_TYPE.NETWORK]: 'Unable to connect to the server. Please check your internet connection and try again.',
+    [ERROR_TYPE.VALIDATION]: 'Please check your input and try again.',
+    [ERROR_TYPE.SERVER]: 'Something went wrong on our end. Please try again in a moment.',
+    [ERROR_TYPE.DATABASE]: 'Unable to save or retrieve your data right now. Please try again.',
+    [ERROR_TYPE.WEBSOCKET]: 'Lost connection to real-time updates. Attempting to reconnect...',
+    [ERROR_TYPE.AUTHENTICATION]: 'You need to sign in to access this feature.',
+    [ERROR_TYPE.AUTHORIZATION]: 'You don\'t have permission to perform this action.',
+    [ERROR_TYPE.UNKNOWN]: 'An unexpected error occurred. Please try again.'
   };
 
-  return errorMessages[type] || errorMessages[ErrorType.UNKNOWN];
+  const fallback = errorMessages[type] || errorMessages[ERROR_TYPE.UNKNOWN];
+  const normalizedOriginal = originalMessage?.trim();
+
+  if (type === ERROR_TYPE.UNKNOWN && normalizedOriginal && normalizedOriginal !== fallback) {
+    return `${fallback} (details: ${normalizedOriginal})`;
+  }
+
+  return fallback;
+};
+
+interface ErrorDetails {
+  message?: string;
+  status?: number;
+  code?: string | number;
+}
+
+const parseStatus = (status: unknown): number | undefined => {
+  if (typeof status === 'number') {
+    return status;
+  }
+
+  if (typeof status === 'string' && status.trim().length > 0) {
+    const parsed = Number.parseInt(status, 10);
+    if (!Number.isNaN(parsed)) {
+      return parsed;
+    }
+  }
+
+  return undefined;
+};
+
+const normalizeError = (value: unknown): ErrorDetails => {
+  if (value instanceof Error) {
+    const enriched = value as Error & { status?: unknown; code?: unknown };
+    return {
+      message: enriched.message,
+      status: parseStatus(enriched.status),
+      code:
+        typeof enriched.code === 'string' || typeof enriched.code === 'number'
+          ? enriched.code
+          : undefined,
+    };
+  }
+
+  if (typeof value === 'object' && value !== null) {
+    const record = value as Record<string, unknown>;
+    return {
+      message: typeof record.message === 'string' ? record.message : undefined,
+      status: parseStatus(record.status),
+      code:
+        typeof record.code === 'string' || typeof record.code === 'number'
+          ? (record.code as string | number)
+          : undefined,
+    };
+  }
+
+  if (typeof value === 'string' && value.length > 0) {
+    return { message: value };
+  }
+
+  return {};
 };
 
 // Determine if error is retryable
 const isRetryableError = (type: ErrorType): boolean => {
-  const retryableTypes = [ErrorType.NETWORK, ErrorType.SERVER, ErrorType.DATABASE, ErrorType.WEBSOCKET];
+  const retryableTypes: ErrorType[] = [
+    ERROR_TYPE.NETWORK,
+    ERROR_TYPE.SERVER,
+    ERROR_TYPE.DATABASE,
+    ERROR_TYPE.WEBSOCKET,
+  ];
   return retryableTypes.includes(type);
 };
 
 // Error classification helper
-export const classifyError = (error: any): AppError => {
+export const classifyError = (error: unknown): AppError => {
+  const details = normalizeError(error);
+  const message = details.message ?? 'Unknown error';
+  const messageLower = details.message?.toLowerCase() ?? '';
+
   // Network errors
-  if (error.code === 'NETWORK_ERROR' || error.message?.includes('fetch')) {
-    return createAppError(error.message, ErrorType.NETWORK, ErrorSeverity.MEDIUM);
+  if (details.code === 'NETWORK_ERROR' || messageLower.includes('fetch')) {
+    return createAppError(message, ERROR_TYPE.NETWORK, ERROR_SEVERITY.MEDIUM);
   }
 
   // HTTP status code based classification
-  if (error.status) {
-    const status = parseInt(error.status);
-    
-    if (status === 401) {
-      return createAppError(error.message, ErrorType.AUTHENTICATION, ErrorSeverity.MEDIUM);
+  if (typeof details.status === 'number') {
+    if (details.status === 401) {
+      return createAppError(message, ERROR_TYPE.AUTHENTICATION, ERROR_SEVERITY.MEDIUM);
     }
-    
-    if (status === 403) {
-      return createAppError(error.message, ErrorType.AUTHORIZATION, ErrorSeverity.MEDIUM);
+
+    if (details.status === 403) {
+      return createAppError(message, ERROR_TYPE.AUTHORIZATION, ERROR_SEVERITY.MEDIUM);
     }
-    
-    if (status >= 400 && status < 500) {
-      return createAppError(error.message, ErrorType.VALIDATION, ErrorSeverity.LOW);
+
+    if (details.status >= 400 && details.status < 500) {
+      return createAppError(message, ERROR_TYPE.VALIDATION, ERROR_SEVERITY.LOW);
     }
-    
-    if (status >= 500) {
-      return createAppError(error.message, ErrorType.SERVER, ErrorSeverity.HIGH);
+
+    if (details.status >= 500) {
+      return createAppError(message, ERROR_TYPE.SERVER, ERROR_SEVERITY.HIGH);
     }
   }
 
   // Database errors
-  if (error.message?.includes('database') || error.message?.includes('query')) {
-    return createAppError(error.message, ErrorType.DATABASE, ErrorSeverity.HIGH);
+  if (messageLower.includes('database') || messageLower.includes('query')) {
+    return createAppError(message, ERROR_TYPE.DATABASE, ERROR_SEVERITY.HIGH);
   }
 
   // WebSocket errors
-  if (error.message?.includes('websocket') || error.message?.includes('socket')) {
-    return createAppError(error.message, ErrorType.WEBSOCKET, ErrorSeverity.MEDIUM);
+  if (messageLower.includes('websocket') || messageLower.includes('socket')) {
+    return createAppError(message, ERROR_TYPE.WEBSOCKET, ERROR_SEVERITY.MEDIUM);
   }
 
   // Default classification
-  return createAppError(error.message || 'Unknown error', ErrorType.UNKNOWN, ErrorSeverity.MEDIUM);
+  return createAppError(message, ERROR_TYPE.UNKNOWN, ERROR_SEVERITY.MEDIUM);
 };
 
 // React Error Boundary Component
@@ -284,11 +361,11 @@ export class ErrorBoundary extends Component<ErrorBoundaryProps, ErrorBoundarySt
 
 // Hook for handling async errors
 export const useErrorHandler = () => {
-  const handleError = (error: any, context?: Record<string, any>) => {
-    const appError = error instanceof Error && 'type' in error 
-      ? error as AppError 
+  const handleError = (error: unknown, context?: Record<string, unknown>) => {
+    const appError = error instanceof Error && 'type' in error
+      ? (error as AppError)
       : classifyError(error);
-    
+
     logError(appError, context);
     
     // You could also show a toast notification here
@@ -299,7 +376,7 @@ export const useErrorHandler = () => {
 
   const handleAsyncError = async <T,>(
     promise: Promise<T>,
-    context?: Record<string, any>
+    context?: Record<string, unknown>
   ): Promise<T> => {
     try {
       return await promise;
@@ -312,13 +389,13 @@ export const useErrorHandler = () => {
 };
 
 // Utility to wrap async functions with error handling
-export const withErrorHandling = <T extends any[], R>(
-  fn: (...args: T) => Promise<R>,
-  context?: Record<string, any>
+export const withErrorHandling = <T extends unknown[], R>(
+  fn: (..._args: T) => Promise<R>,
+  context?: Record<string, unknown>
 ) => {
-  return async (...args: T): Promise<R> => {
+  return async (...callArgs: T): Promise<R> => {
     try {
-      return await fn(...args);
+      return await fn(...callArgs);
     } catch (error) {
       const appError = classifyError(error);
       logError(appError, context);

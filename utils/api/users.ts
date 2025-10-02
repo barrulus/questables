@@ -42,12 +42,21 @@ export const mapUserFromServer = (payload: Record<string, unknown>): User => {
   const id = typeof payload.id === 'string' ? payload.id : String(payload.id ?? '');
   const username = typeof payload.username === 'string' ? payload.username : '';
   const email = typeof payload.email === 'string' ? payload.email : '';
-  const status = typeof payload.status === 'string' ? payload.status : 'active';
-  const avatarUrl = typeof payload.avatar_url === 'string' ? payload.avatar_url : null;
-  const timezone = typeof payload.timezone === 'string' ? payload.timezone : null;
-  const createdAt = typeof payload.created_at === 'string' ? payload.created_at : null;
-  const updatedAt = typeof payload.updated_at === 'string' ? payload.updated_at : null;
-  const lastLogin = typeof payload.last_login === 'string' ? payload.last_login : null;
+  const normalizedStatus = typeof payload.status === 'string' ? payload.status.toLowerCase().trim() : 'active';
+  const status: User['status'] = normalizedStatus === 'inactive' || normalizedStatus === 'banned'
+    ? normalizedStatus
+    : 'active';
+
+  const avatarUrl = typeof payload.avatar_url === 'string' && payload.avatar_url.trim()
+    ? payload.avatar_url
+    : undefined;
+  const timezone = typeof payload.timezone === 'string' && payload.timezone.trim()
+    ? payload.timezone
+    : undefined;
+
+  const createdAt = typeof payload.created_at === 'string' ? payload.created_at : new Date().toISOString();
+  const updatedAt = typeof payload.updated_at === 'string' ? payload.updated_at : createdAt;
+  const lastLogin = typeof payload.last_login === 'string' ? payload.last_login : undefined;
 
   return {
     id,
@@ -58,12 +67,12 @@ export const mapUserFromServer = (payload: Record<string, unknown>): User => {
     status,
     avatar_url: avatarUrl,
     timezone,
-    created_at: createdAt ?? '',
-    updated_at: updatedAt ?? '',
-    last_login: lastLogin ?? undefined,
-    createdAt: createdAt ?? undefined,
-    updatedAt: updatedAt ?? undefined,
-    lastLogin: lastLogin ?? undefined,
+    created_at: createdAt,
+    updated_at: updatedAt,
+    last_login: lastLogin,
+    createdAt,
+    updatedAt,
+    lastLogin,
   };
 };
 

@@ -1,10 +1,91 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useCallback } from "react";
 import { Card, CardContent, CardHeader, CardTitle } from "./ui/card";
 import { Badge } from "./ui/badge";
 import { Progress } from "./ui/progress";
 import { Separator } from "./ui/separator";
 import { getCharacter } from "../utils/api/characters";
 import { Character } from "../utils/database/data-structures";
+
+type AbilityKey = keyof Character["abilities"];
+
+const ABILITY_KEYS: AbilityKey[] = [
+  "strength",
+  "dexterity",
+  "constitution",
+  "intelligence",
+  "wisdom",
+  "charisma",
+];
+
+const SKILL_DEFINITIONS = [
+  { name: "Acrobatics", ability: "dexterity" },
+  { name: "Animal Handling", ability: "wisdom" },
+  { name: "Arcana", ability: "intelligence" },
+  { name: "Athletics", ability: "strength" },
+  { name: "Deception", ability: "charisma" },
+  { name: "History", ability: "intelligence" },
+  { name: "Insight", ability: "wisdom" },
+  { name: "Intimidation", ability: "charisma" },
+  { name: "Investigation", ability: "intelligence" },
+  { name: "Medicine", ability: "wisdom" },
+  { name: "Nature", ability: "intelligence" },
+  { name: "Perception", ability: "wisdom" },
+  { name: "Performance", ability: "charisma" },
+  { name: "Persuasion", ability: "charisma" },
+  { name: "Religion", ability: "intelligence" },
+  { name: "Sleight of Hand", ability: "dexterity" },
+  { name: "Stealth", ability: "dexterity" },
+  { name: "Survival", ability: "wisdom" },
+] as const satisfies ReadonlyArray<{ name: string; ability: AbilityKey }>;
+
+type AbilitySummary = {
+  ability: AbilityKey;
+  score: number;
+  modifier: number;
+  savingThrow: number;
+};
+
+type SkillSummary = {
+  name: string;
+  bonus: number;
+};
+
+const sanitizeAbilities = (
+  value: Character["abilities"] | null | undefined,
+): Record<AbilityKey, number> | null => {
+  if (!value) {
+    return null;
+  }
+
+  const normalized = {} as Record<AbilityKey, number>;
+  for (const key of ABILITY_KEYS) {
+    const stat = value[key];
+    if (typeof stat !== "number" || Number.isNaN(stat)) {
+      return null;
+    }
+    normalized[key] = stat;
+  }
+
+  return normalized;
+};
+
+const normalizeHitPoints = (
+  value: Character["hit_points"] | Character["hitPoints"] | null | undefined,
+): { current: number; max: number; temporary: number } | null => {
+  if (!value) {
+    return null;
+  }
+
+  const { current, max, temporary } = value;
+
+  if (!Number.isFinite(current) || !Number.isFinite(max)) {
+    return null;
+  }
+
+  const safeTemporary = Number.isFinite(temporary ?? 0) ? Number(temporary ?? 0) : 0;
+
+  return { current, max, temporary: safeTemporary };
+};
 
 interface CharacterSheetProps {
   characterId?: string;
@@ -18,47 +99,40 @@ export function CharacterSheet({ characterId, refreshTrigger }: CharacterSheetPr
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
-  useEffect(() => {
-    if (characterId) {
-      loadCharacter();
-    } else {
-      setLoading(false);
-    }
-  }, [characterId, refreshTrigger]);
-
-  const loadCharacter = async () => {
+  const loadCharacter = useCallback(async (id: string) => {
     try {
       setLoading(true);
       setError(null);
-      const char = await getCharacter(characterId!);
+      const char = await getCharacter(id);
       if (char) {
         setCharacter(char);
-      } else {
-        setError('Character not found');
+        return;
       }
+
+      setCharacter(null);
+      setError("Character not found");
     } catch (error) {
-      console.error('Failed to load character:', error);
-      setError('Failed to load character');
+      console.error("Failed to load character:", error);
+      setError("Failed to load character");
+      setCharacter(null);
     } finally {
       setLoading(false);
     }
-  };
+  }, []);
+
+  useEffect(() => {
+    if (!characterId) {
+      setCharacter(null);
+      setLoading(false);
+      return;
+    }
+
+    void loadCharacter(characterId);
+  }, [characterId, loadCharacter, refreshTrigger]);
 
   // Calculate ability modifier
   const getAbilityModifier = (score: number): number => {
     return Math.floor((score - 10) / 2);
-  };
-
-  // Calculate skill bonus (ability modifier + proficiency if proficient)
-  const getSkillBonus = (skillName: string, abilityScore: number): number => {
-    const modifier = getAbilityModifier(abilityScore);
-    const proficiencyBonus = character?.proficiency_bonus || character?.proficiencyBonus || 2;
-    
-    // Check if character is proficient in this skill
-    const skills = character?.skills || {};
-    const isSkillProficient = skills[skillName] !== undefined;
-    
-    return isSkillProficient ? modifier + proficiencyBonus : modifier;
   };
 
   if (loading) {
@@ -90,63 +164,79 @@ export function CharacterSheet({ characterId, refreshTrigger }: CharacterSheetPr
     );
   }
 
-  // Transform database character data for display
-  const abilities = character.abilities || {
-    strength: 10,
-    dexterity: 10,
-    constitution: 10,
-    intelligence: 10,
-    wisdom: 10,
-    charisma: 10
-  };
+  const abilityScores = sanitizeAbilities(character.abilities);
+  const hitPoints = normalizeHitPoints(character.hit_points ?? character.hitPoints ?? null);
+  const armorClass = typeof character.armor_class === "number"
+    ? character.armor_class
+    : typeof character.armorClass === "number"
+      ? character.armorClass
+      : null;
+  const rawProficiency = character.proficiency_bonus ?? character.proficiencyBonus ?? null;
+  const savingThrows = character.saving_throws ?? character.savingThrows ?? {};
+  const skillRanks = character.skills ?? {};
 
-  const hitPoints = character.hit_points || character.hitPoints || { current: 0, max: 0, temporary: 0 };
-  const armorClass = character.armor_class || character.armorClass || 10;
-  const proficiencyBonus = character.proficiency_bonus || character.proficiencyBonus || 2;
+  if (!abilityScores || !hitPoints || armorClass === null || typeof rawProficiency !== "number" || Number.isNaN(rawProficiency)) {
+    const dataIssues: string[] = [];
+    if (!abilityScores) {
+      dataIssues.push("Ability scores are missing or invalid.");
+    }
+    if (!hitPoints) {
+      dataIssues.push("Hit point totals are missing or invalid.");
+    }
+    if (armorClass === null) {
+      dataIssues.push("Armor class is missing or invalid.");
+    }
+    if (typeof rawProficiency !== "number" || Number.isNaN(rawProficiency)) {
+      dataIssues.push("Proficiency bonus is missing or invalid.");
+    }
 
-  // Calculate initiative (dexterity modifier)
-  const initiative = getAbilityModifier(abilities.dexterity);
+    return (
+      <div className="space-y-6">
+        <Card>
+          <CardHeader>
+            <CardTitle>Character data incomplete</CardTitle>
+          </CardHeader>
+          <CardContent className="space-y-2 text-sm text-muted-foreground">
+            <p>This character record is missing required fields from the live database:</p>
+            <ul className="list-disc space-y-1 pl-5">
+              {dataIssues.map((issue) => (
+                <li key={issue}>{issue}</li>
+              ))}
+            </ul>
+            <p>Refresh once the missing values are populated to render the full sheet.</p>
+          </CardContent>
+        </Card>
+      </div>
+    );
+  }
 
-  // Transform abilities for display
-  const displayAbilities = Object.entries(abilities).map(([name, score]) => {
+  const proficiencyBonus = rawProficiency;
+  const initiative = getAbilityModifier(abilityScores.dexterity);
+
+  const displayAbilities: AbilitySummary[] = ABILITY_KEYS.map((ability) => {
+    const score = abilityScores[ability];
     const modifier = getAbilityModifier(score);
-    const savingThrowBonus = character.saving_throws?.[name] ? modifier + proficiencyBonus : modifier;
-    
-    return [name, {
+    const hasSaveProficiency = Object.prototype.hasOwnProperty.call(savingThrows, ability);
+    const savingThrowBonus = hasSaveProficiency ? modifier + proficiencyBonus : modifier;
+
+    return {
+      ability,
       score,
       modifier,
-      savingThrow: savingThrowBonus
-    }];
-  }).reduce((acc, [name, data]) => ({ ...acc, [name]: data }), {});
+      savingThrow: savingThrowBonus,
+    };
+  });
 
-  // Common D&D skills mapped to abilities
-  const skillList = [
-    { name: "Acrobatics", ability: "dexterity" },
-    { name: "Animal Handling", ability: "wisdom" },
-    { name: "Arcana", ability: "intelligence" },
-    { name: "Athletics", ability: "strength" },
-    { name: "Deception", ability: "charisma" },
-    { name: "History", ability: "intelligence" },
-    { name: "Insight", ability: "wisdom" },
-    { name: "Intimidation", ability: "charisma" },
-    { name: "Investigation", ability: "intelligence" },
-    { name: "Medicine", ability: "wisdom" },
-    { name: "Nature", ability: "intelligence" },
-    { name: "Perception", ability: "wisdom" },
-    { name: "Performance", ability: "charisma" },
-    { name: "Persuasion", ability: "charisma" },
-    { name: "Religion", ability: "intelligence" },
-    { name: "Sleight of Hand", ability: "dexterity" },
-    { name: "Stealth", ability: "dexterity" },
-    { name: "Survival", ability: "wisdom" }
-  ];
+  const displaySkills: SkillSummary[] = SKILL_DEFINITIONS.map(({ name, ability }) => {
+    const abilityScore = abilityScores[ability];
+    const modifier = getAbilityModifier(abilityScore);
+    const isSkillProficient = Object.prototype.hasOwnProperty.call(skillRanks, name);
 
-  // Calculate skill bonuses
-  const displaySkills = skillList.reduce((acc, skill) => {
-    const abilityScore = abilities[skill.ability];
-    const bonus = getSkillBonus(skill.name, abilityScore);
-    return { ...acc, [skill.name]: bonus };
-  }, {});
+    return {
+      name,
+      bonus: isSkillProficient ? modifier + proficiencyBonus : modifier,
+    };
+  });
 
   return (
     <div className="space-y-6">
@@ -219,11 +309,11 @@ export function CharacterSheet({ characterId, refreshTrigger }: CharacterSheetPr
           </CardHeader>
           <CardContent>
             <div className="grid grid-cols-2 gap-3">
-              {Object.entries(displayAbilities).map(([ability, stats]) => (
+              {displayAbilities.map(({ ability, modifier, score }) => (
                 <div key={ability} className="text-center p-3 border rounded">
                   <div className="text-sm font-medium capitalize mb-1">{ability.slice(0, 3)}</div>
-                  <div className="text-2xl font-bold">{stats.modifier >= 0 ? '+' : ''}{stats.modifier}</div>
-                  <div className="text-xs text-muted-foreground">{stats.score}</div>
+                  <div className="text-2xl font-bold">{modifier >= 0 ? '+' : ''}{modifier}</div>
+                  <div className="text-xs text-muted-foreground">{score}</div>
                 </div>
               ))}
             </div>
@@ -237,9 +327,9 @@ export function CharacterSheet({ characterId, refreshTrigger }: CharacterSheetPr
           </CardHeader>
           <CardContent>
             <div className="space-y-2">
-              {Object.entries(displaySkills).map(([skill, bonus]) => (
-                <div key={skill} className="flex justify-between items-center">
-                  <span className="text-sm">{skill}</span>
+              {displaySkills.map(({ name, bonus }) => (
+                <div key={name} className="flex justify-between items-center">
+                  <span className="text-sm">{name}</span>
                   <Badge variant="secondary">{bonus >= 0 ? '+' : ''}{bonus}</Badge>
                 </div>
               ))}

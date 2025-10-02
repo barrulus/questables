@@ -2,7 +2,9 @@
 
 This directory holds the configuration assets for the Questables Tegola instance. The
 goal is to expose PostGIS-backed layers (world geography, campaign overlays, tokens,
-and NPCs) as MapLibre/Deck.gl-ready vector tiles without introducing mock data.
+and NPCs) as OpenLayers-ready vector tiles without introducing mock data. The
+earlier MapLibre/Deck.gl rollout plan is paused because the stack cannot honour the
+Questables custom projection.
 
 ## Environment Variables
 
@@ -55,7 +57,7 @@ bound to localhost or a protected network segment to prevent unauthorised tile a
 
 The Express API exposes `/api/tiles/health` and `/api/tiles/vector/...` endpoints that
 proxy to Tegola using the credentials above. Any Tegola failure surfaces as a 5xx so
-MapLibre clients never fall back to mock data.
+OpenLayers clients never fall back to mock data.
 
 ## Layer Coverage
 

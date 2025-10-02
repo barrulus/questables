@@ -75,6 +75,24 @@ const coerceNumber = (value: unknown, fallback: number): number => {
   return fallback;
 };
 
+const asString = (value: unknown, fallback = ""): string => {
+  if (typeof value === 'string') {
+    return value;
+  }
+  if (typeof value === 'number' && Number.isFinite(value)) {
+    return String(value);
+  }
+  return fallback;
+};
+
+const asOptionalString = (value: unknown): string | undefined => {
+  if (typeof value === 'string') {
+    const trimmed = value.trim();
+    return trimmed.length > 0 ? trimmed : undefined;
+  }
+  return undefined;
+};
+
 const mapCharacterFromServer = (payload: Record<string, unknown>): Character => {
   const id = typeof payload.id === 'string' ? payload.id : String(payload.id ?? '');
   const userId = typeof payload.user_id === 'string'
@@ -105,8 +123,8 @@ const mapCharacterFromServer = (payload: Record<string, unknown>): Character => 
   const inventory = parseJsonField<InventoryItem[]>(payload.inventory, []);
   const equipment = parseJsonField<Equipment>(payload.equipment, { weapons: {}, accessories: {} });
   const spellcasting = parseOptionalJson<SpellcastingInfo>(payload.spellcasting ?? payload.spellCasting);
-  const campaigns = payload.campaigns !== undefined
-    ? parseOptionalJson<string[]>(payload.campaigns) ?? undefined
+  const campaignsRaw = payload.campaigns !== undefined
+    ? parseOptionalJson<string[]>(payload.campaigns)
     : undefined;
 
   const createdAt = typeof payload.created_at === 'string' ? payload.created_at : undefined;
@@ -118,13 +136,17 @@ const mapCharacterFromServer = (payload: Record<string, unknown>): Character => 
   const level = coerceNumber(payload.level, 1);
   const speed = coerceNumber(payload.speed, 30);
 
-  return {
-    ...(payload as Character),
+  const campaigns = campaignsRaw ?? undefined;
+
+  const character: Character = {
     id,
     user_id: userId,
     userId,
+    name: asString(payload.name, 'Unnamed Character'),
     class: className,
     level,
+    race: asString(payload.race, ''),
+    background: asString(payload.background, ''),
     hit_points: hitPoints,
     hitPoints,
     armor_class: armorClass,
@@ -138,6 +160,13 @@ const mapCharacterFromServer = (payload: Record<string, unknown>): Character => 
     skills,
     inventory,
     equipment,
+    avatar_url: asOptionalString(payload.avatar_url ?? payload.avatarUrl),
+    avatar: asOptionalString(payload.avatar),
+    backstory: asOptionalString(payload.backstory),
+    personality: asOptionalString(payload.personality),
+    ideals: asOptionalString(payload.ideals),
+    bonds: asOptionalString(payload.bonds),
+    flaws: asOptionalString(payload.flaws),
     spellcasting: spellcasting ?? undefined,
     campaigns,
     created_at: createdAt ?? '',
@@ -147,6 +176,8 @@ const mapCharacterFromServer = (payload: Record<string, unknown>): Character => 
     updatedAt,
     lastPlayed,
   };
+
+  return character;
 };
 
 export interface CharacterCreateRequest {

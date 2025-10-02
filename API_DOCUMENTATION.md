@@ -110,7 +110,7 @@ Return all active tile set configurations from `tile_sets`, ordered by `name ASC
 ## Tiles API
 
 Vector tiles are proxied through the Questables API so authentication and telemetry stay aligned
-with the rest of the platform. Tegola failures always bubble up—MapLibre clients never fall back to
+with the rest of the platform. Tegola failures always bubble up—OpenLayers clients never fall back to
 placeholders.
 
 All endpoints require:

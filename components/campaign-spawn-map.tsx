@@ -14,7 +14,6 @@ import { defaults as defaultControls } from "ol/control";
 import { mapDataLoader } from "./map-data-loader";
 import { questablesProjection, updateProjectionExtent } from "./map-projection";
 import type { SpawnPoint } from "../utils/api-client";
-
 interface WorldMapBounds {
   north: number;
   south: number;
@@ -90,6 +89,10 @@ const spawnStyle = new Style({
   })
 });
 
+type SpawnFeature = Feature<Point>;
+type SpawnSource = VectorSource<SpawnFeature>;
+type SpawnLayer = VectorLayer<SpawnSource>;
+
 export function CampaignSpawnMap({
   worldMap,
   spawn,
@@ -100,7 +103,7 @@ export function CampaignSpawnMap({
 }: CampaignSpawnMapProps) {
   const mapContainerRef = useRef<HTMLDivElement | null>(null);
   const mapInstanceRef = useRef<Map | null>(null);
-  const spawnLayerRef = useRef<VectorLayer<VectorSource<Point>> | null>(null);
+  const spawnLayerRef = useRef<SpawnLayer | null>(null);
   const [initializing, setInitializing] = useState(true);
 
   const updateSpawnFeature = useCallback((spawnPoint: SpawnPoint | null) => {
@@ -113,7 +116,7 @@ export function CampaignSpawnMap({
       return;
     }
 
-    const feature = new Feature({
+    const feature = new Feature<Point>({
       geometry: new Point([Number(coordinates[0]), Number(coordinates[1])]),
       id: spawnPoint?.id ?? "default-spawn",
     });
@@ -174,8 +177,9 @@ export function CampaignSpawnMap({
           source: buildTileSource(activeTileSet, worldMap.bounds),
         });
 
-        const spawnLayer = new VectorLayer({
-          source: new VectorSource<Point>({ wrapX: false }),
+        const spawnSource: SpawnSource = new VectorSource<SpawnFeature>({ wrapX: false });
+        const spawnLayer: SpawnLayer = new VectorLayer<SpawnSource>({
+          source: spawnSource,
         });
         spawnLayerRef.current = spawnLayer;
 

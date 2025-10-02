@@ -461,16 +461,21 @@ export function Settings() {
                 max="20"
                 value={editForm.minLevel}
                 onChange={(event) => {
-                  const raw = parseInt(event.target.value, 10);
-                  if (Number.isNaN(raw)) {
+                  const raw = Number.parseInt(event.target.value, 10);
+                  if (!Number.isFinite(raw)) {
                     return;
                   }
                   const clamped = clampLevelValue(raw);
-                  setEditForm((prev) => ({
-                    ...prev,
-                    minLevel: clamped,
-                    maxLevel: prev.maxLevel < clamped ? clamped : prev.maxLevel,
-                  }));
+                  setEditForm((prev) => {
+                    const nextMax = typeof prev.maxLevel === 'number' && prev.maxLevel < clamped
+                      ? clamped
+                      : prev.maxLevel;
+                    return {
+                      ...prev,
+                      minLevel: clamped,
+                      maxLevel: nextMax,
+                    };
+                  });
                 }}
                 disabled={detailsDisabled}
               />
@@ -484,15 +489,19 @@ export function Settings() {
                 max="20"
                 value={editForm.maxLevel}
                 onChange={(event) => {
-                  const raw = parseInt(event.target.value, 10);
-                  if (Number.isNaN(raw)) {
+                  const raw = Number.parseInt(event.target.value, 10);
+                  if (!Number.isFinite(raw)) {
                     return;
                   }
                   const clamped = clampLevelValue(raw);
-                  setEditForm((prev) => ({
-                    ...prev,
-                    maxLevel: clamped < prev.minLevel ? prev.minLevel : clamped,
-                  }));
+                  setEditForm((prev) => {
+                    const minLevel = typeof prev.minLevel === 'number' ? prev.minLevel : clamped;
+                    const nextMax = clamped < minLevel ? minLevel : clamped;
+                    return {
+                      ...prev,
+                      maxLevel: nextMax,
+                    };
+                  });
                 }}
                 disabled={detailsDisabled}
               />

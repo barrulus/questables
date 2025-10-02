@@ -1,4 +1,5 @@
 import { useState } from "react";
+import type { CheckedState } from "@radix-ui/react-checkbox";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "./ui/dialog";
 import { Button } from "./ui/button";
 import { Input } from "./ui/input";
@@ -245,7 +246,7 @@ export function RegisterModal(props: RegisterModalProps) {
               <Checkbox 
                 id="terms" 
                 checked={acceptTerms}
-                onCheckedChange={setAcceptTerms}
+                onCheckedChange={(checked: CheckedState) => setAcceptTerms(checked === true)}
               />
               <Label 
                 htmlFor="terms" 

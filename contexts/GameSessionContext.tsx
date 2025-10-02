@@ -129,7 +129,7 @@ function normalizeCampaign(row: RawCampaignRow): CampaignMetadata {
     id: row.id,
     name: row.name,
     status: row.status,
-    system: row.system,
+    system: row.system ?? 'Unknown system',
     setting: row.setting ?? undefined,
     dmUserId: row.dm_user_id,
     dmUsername: row.dm_username ?? undefined,
@@ -139,9 +139,7 @@ function normalizeCampaign(row: RawCampaignRow): CampaignMetadata {
     allowSpectators: row.allow_spectators ?? undefined,
     autoApproveJoinRequests: row.auto_approve_join_requests ?? undefined,
     lastActivity: row.last_activity ?? undefined,
-    visibilityRadius: typeof (row as Record<string, unknown>).visibility_radius === 'number'
-      ? (row as Record<string, unknown>).visibility_radius as number
-      : undefined,
+    visibilityRadius: typeof row.visibility_radius === 'number' ? row.visibility_radius : undefined,
   };
 }
 

@@ -46,6 +46,10 @@ interface TileSetConfig {
 
 const DEFAULT_TILE_SIZE = 256;
 
+type ObjectiveSelectionFeature = Feature<Point>;
+type ObjectiveSelectionSource = VectorSource<ObjectiveSelectionFeature>;
+type ObjectiveSelectionLayer = VectorLayer<ObjectiveSelectionSource>;
+
 const selectionStyle = new Style({
   image: new CircleStyle({
     radius: 7,
@@ -53,6 +57,48 @@ const selectionStyle = new Style({
     stroke: new Stroke({ color: "#fff", width: 2 }),
   }),
 });
+
+const toNumber = (value: unknown): number | null => {
+  if (typeof value === "number" && Number.isFinite(value)) {
+    return value;
+  }
+  if (typeof value === "string") {
+    const parsed = Number(value);
+    if (Number.isFinite(parsed)) {
+      return parsed;
+    }
+  }
+  return null;
+};
+
+const parseTileSetRecord = (raw: unknown): TileSetConfig | null => {
+  if (!raw || typeof raw !== "object") {
+    return null;
+  }
+
+  const record = raw as Record<string, unknown>;
+  const baseUrl = typeof record.base_url === "string" ? record.base_url.trim() : "";
+  if (!baseUrl) {
+    return null;
+  }
+
+  const minZoom = toNumber(record.min_zoom);
+  const maxZoom = toNumber(record.max_zoom);
+  const tileSize = toNumber(record.tile_size);
+
+  return {
+    id: String(record.id ?? "default"),
+    name:
+      typeof record.name === "string" && record.name.trim()
+        ? record.name
+        : String(record.id ?? "Tile Set"),
+    base_url: baseUrl,
+    attribution: typeof record.attribution === "string" ? record.attribution : null,
+    min_zoom: minZoom,
+    max_zoom: maxZoom,
+    tile_size: tileSize,
+  };
+};
 
 const buildTileSource = (tileSet: TileSetConfig, bounds: WorldMapBounds) => {
   const minZoom = Number.isFinite(tileSet.min_zoom)
@@ -92,7 +138,8 @@ const buildTileSource = (tileSet: TileSetConfig, bounds: WorldMapBounds) => {
 export function ObjectivePinMap({ worldMap, value, onSelect, className }: ObjectivePinMapProps) {
   const containerRef = useRef<HTMLDivElement | null>(null);
   const mapRef = useRef<Map | null>(null);
-  const selectionLayerRef = useRef<VectorLayer<VectorSource<Point>> | null>(null);
+
+  const selectionLayerRef = useRef<ObjectiveSelectionLayer | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [selected, setSelected] = useState<{ x: number; y: number } | null>(value);
@@ -104,7 +151,7 @@ export function ObjectivePinMap({ worldMap, value, onSelect, className }: Object
     source.clear();
     if (!coords) return;
 
-    const feature = new Feature({
+    const feature = new Feature<Point>({
       geometry: new Point([coords.x, coords.y]),
       id: "objective-selection",
     });
@@ -127,7 +174,7 @@ export function ObjectivePinMap({ worldMap, value, onSelect, className }: Object
   useEffect(() => {
     let cancelled = false;
     let tileLayer: TileLayer<XYZ> | null = null;
-    let selectionLayer: VectorLayer<VectorSource<Point>> | null = null;
+    let selectionLayer: ObjectiveSelectionLayer | null = null;
 
     const initializeMap = async () => {
       if (!containerRef.current) {
@@ -143,16 +190,8 @@ export function ObjectivePinMap({ worldMap, value, onSelect, className }: Object
 
         const tileSets: TileSetConfig[] = Array.isArray(rawTileSets)
           ? rawTileSets
-              .filter((ts): ts is TileSetConfig & { id: unknown; base_url: unknown } => ts !== null && ts !== undefined)
-              .map((ts) => ({
-                id: String(ts.id ?? "default"),
-                name: typeof ts.name === "string" && ts.name.trim() ? ts.name : String(ts.id ?? "Tile Set"),
-                base_url: String(ts.base_url),
-                attribution: typeof ts.attribution === "string" ? ts.attribution : undefined,
-                min_zoom: ts.min_zoom ?? null,
-                max_zoom: ts.max_zoom ?? null,
-                tile_size: ts.tile_size ?? null,
-              }))
+              .map(parseTileSetRecord)
+              .filter((tileSet): tileSet is TileSetConfig => tileSet !== null)
           : [];
 
         if (tileSets.length === 0) {
@@ -168,8 +207,8 @@ export function ObjectivePinMap({ worldMap, value, onSelect, className }: Object
           source: buildTileSource(activeTileSet, worldMap.bounds),
         });
 
-        selectionLayer = new VectorLayer({
-          source: new VectorSource<Point>({ wrapX: false }),
+        selectionLayer = new VectorLayer<ObjectiveSelectionSource>({
+          source: new VectorSource<ObjectiveSelectionFeature>({ wrapX: false }),
         });
         selectionLayerRef.current = selectionLayer;
 

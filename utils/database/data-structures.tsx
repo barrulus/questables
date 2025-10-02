@@ -1,7 +1,14 @@
 // Data structures for D&D app using PostgreSQL database
-// 
+//
 // This file contains TypeScript interfaces for all D&D entities
 // stored in our PostgreSQL database with PostGIS extensions.
+
+type GeoJsonGeometry = {
+  type: string;
+  coordinates: unknown;
+  bbox?: [number, number, number, number];
+  properties?: Record<string, unknown>;
+};
 
 // =============================================================================
 // USER DATA STRUCTURES
@@ -23,6 +30,7 @@ export interface User {
   last_login?: string; // ISO date string
   // Legacy support for camelCase (for UI components)
   createdAt?: string;
+  updatedAt?: string;
   lastLogin?: string;
 }
 
@@ -463,7 +471,7 @@ export interface Burg {
   capital: number;
   feature: number;
   port: number;
-  geometry: any; // PostGIS Point geometry
+  geometry: GeoJsonGeometry | null; // PostGIS Point geometry
 }
 
 export interface Cell {
@@ -491,7 +499,7 @@ export interface Cell {
   province: number;
   crossroad: number;
   road: number;
-  geometry: any; // PostGIS Polygon geometry
+  geometry: GeoJsonGeometry | null; // PostGIS Polygon geometry
 }
 
 export interface River {
@@ -510,7 +518,7 @@ export interface River {
   basin: number;
   name: string;
   type: string;
-  geometry: any; // PostGIS LineString geometry
+  geometry: GeoJsonGeometry | null; // PostGIS LineString geometry
 }
 
 export interface Route {
@@ -522,7 +530,7 @@ export interface Route {
   feature: number;
   points: number[];
   cells: number[];
-  geometry: any; // PostGIS LineString geometry
+  geometry: GeoJsonGeometry | null; // PostGIS LineString geometry
 }
 
 export interface Marker {
@@ -539,7 +547,7 @@ export interface Marker {
   cell: number;
   i: number;
   note: string;
-  geometry: any; // PostGIS Point geometry
+  geometry: GeoJsonGeometry | null; // PostGIS Point geometry
 }
 
 // =============================================================================
@@ -670,8 +678,9 @@ export function mapDatabaseFields<T>(dbObject: unknown): T {
   collectedRoles.add('player');
 
   const normalizedRoles = USER_ROLE_PRIORITY.filter((role) => collectedRoles.has(role));
-  mapped.roles = normalizedRoles.length > 0 ? normalizedRoles : ['player'];
-  const primaryRole = mapped.roles.find((role) => role !== 'player') ?? 'player';
+  const resolvedRoles: UserRole[] = normalizedRoles.length > 0 ? normalizedRoles : ['player'];
+  mapped.roles = resolvedRoles;
+  const primaryRole = resolvedRoles.find((role) => role !== 'player') ?? 'player';
   mapped.role = primaryRole;
 
   // Character field mappings

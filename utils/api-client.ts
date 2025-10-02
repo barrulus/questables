@@ -23,8 +23,24 @@ function broadcastAuthLogout(detail: { message: string }) {
   window.dispatchEvent(new CustomEvent(AUTH_LOGOUT_EVENT, { detail }));
 }
 
+const resolveBaseUrlEnv = (): string | undefined => {
+  const metaEnv = typeof import.meta !== "undefined"
+    ? ((import.meta as { env?: Record<string, unknown> }).env?.VITE_DATABASE_SERVER_URL as string | undefined)
+    : undefined;
+
+  if (typeof metaEnv === "string" && metaEnv.trim()) {
+    return metaEnv;
+  }
+
+  const processEnv = typeof process !== "undefined"
+    ? process.env?.VITE_DATABASE_SERVER_URL
+    : undefined;
+
+  return typeof processEnv === "string" && processEnv.trim() ? processEnv : undefined;
+};
+
 export function getApiBaseUrl(): string {
-  const envValue = (import.meta.env.VITE_DATABASE_SERVER_URL ?? undefined) as string | undefined;
+  const envValue = resolveBaseUrlEnv();
 
   if (!envValue || !envValue.trim()) {
     throw new Error(

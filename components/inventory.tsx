@@ -8,7 +8,7 @@ import { Textarea } from "./ui/textarea";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from "./ui/dialog";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "./ui/select";
 import { toast } from "sonner";
-import { Coins, Package, Sword, Shield, Shirt, Plus, Minus, Trash2, Loader2 } from "lucide-react";
+import { Package, Sword, Shield, Shirt, Plus, Minus, Trash2, Loader2, Star as StarIcon } from "lucide-react";
 import type { InventoryItem, Equipment } from '../utils/database/data-structures';
 import { getCharacter, updateCharacter, type CharacterUpdateRequest } from '../utils/api/characters';
 
@@ -17,30 +17,24 @@ interface InventoryProps {
   onInventoryChange?: () => void;
 }
 
-interface Currency {
-  copper: number;
-  silver: number;
-  gold: number;
-  platinum: number;
-}
+const INITIAL_NEW_ITEM: Partial<InventoryItem> & { value?: InventoryItem['value'] } = {
+  name: "",
+  description: "",
+  quantity: 1,
+  type: "other",
+  weight: 0,
+  value: { amount: 0, currency: "gp" },
+};
 
 export function Inventory({ characterId, onInventoryChange }: InventoryProps) {
   const [inventory, setInventory] = useState<InventoryItem[]>([]);
   const [equipment, setEquipment] = useState<Equipment | null>(null);
-  const [currency, setCurrency] = useState<Currency>({ copper: 0, silver: 0, gold: 0, platinum: 0 });
   const [loading, setLoading] = useState(true);
   const [updating, setUpdating] = useState(false);
   
   // Add item dialog state
   const [showAddDialog, setShowAddDialog] = useState(false);
-  const [newItem, setNewItem] = useState<Partial<InventoryItem>>({
-    name: '',
-    description: '',
-    quantity: 1,
-    type: 'gear',
-    weight: 0,
-    value: { gold: 0 }
-  });
+  const [newItem, setNewItem] = useState<typeof INITIAL_NEW_ITEM>(INITIAL_NEW_ITEM);
 
   // Load character inventory data
   const loadCharacterInventory = async () => {
@@ -48,19 +42,9 @@ export function Inventory({ characterId, onInventoryChange }: InventoryProps) {
       setLoading(true);
       const char = await getCharacter(characterId);
       if (char) {
-        setInventory(char.inventory || []);
-        setEquipment(char.equipment || {});
-        
-        // Extract currency from inventory or set defaults
-        const currencyItem = char.inventory?.find(item => item.type === 'currency');
-        if (currencyItem && typeof currencyItem.value === 'object' && currencyItem.value !== null) {
-          setCurrency({
-            copper: currencyItem.value.copper || 0,
-            silver: currencyItem.value.silver || 0,
-            gold: currencyItem.value.gold || 0,
-            platinum: currencyItem.value.platinum || 0
-          });
-        }
+        setInventory(char.inventory ?? []);
+        const equipmentData: Equipment = char.equipment ?? { weapons: {}, accessories: {} };
+        setEquipment(equipmentData);
       }
     } catch (error) {
       console.error('Failed to load character inventory:', error);
@@ -98,14 +82,21 @@ export function Inventory({ characterId, onInventoryChange }: InventoryProps) {
     }
 
     try {
+      const valuePayload = newItem.value && typeof newItem.value.amount === "number"
+        ? {
+            amount: Math.max(0, newItem.value.amount),
+            currency: newItem.value.currency?.trim() || "gp",
+          }
+        : undefined;
+
       const item: InventoryItem = {
-        id: `item_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
+        id: `item_${Date.now()}_${Math.random().toString(36).slice(2, 11)}`,
         name: newItem.name.trim(),
-        description: newItem.description || '',
-        quantity: newItem.quantity || 1,
-        type: newItem.type || 'gear',
-        weight: newItem.weight || 0,
-        value: newItem.value || { gold: 0 }
+        description: newItem.description ?? '',
+        quantity: newItem.quantity ?? 1,
+        type: newItem.type ?? 'other',
+        weight: newItem.weight ?? 0,
+        ...(valuePayload ? { value: valuePayload } : {}),
       };
       
       const updatedInventory = [...inventory, item];
@@ -114,14 +105,7 @@ export function Inventory({ characterId, onInventoryChange }: InventoryProps) {
       await updateCharacterData({ inventory: updatedInventory });
       
       // Reset form and close dialog
-      setNewItem({
-        name: '',
-        description: '',
-        quantity: 1,
-        type: 'gear',
-        weight: 0,
-        value: { gold: 0 }
-      });
+      setNewItem(INITIAL_NEW_ITEM);
       setShowAddDialog(false);
       toast.success('Item added successfully');
     } catch (error) {
@@ -166,6 +150,21 @@ export function Inventory({ characterId, onInventoryChange }: InventoryProps) {
     }
   };
 
+  const formatItemValue = (value?: InventoryItem['value']): string => {
+    if (!value) {
+      return '—';
+    }
+    const amount = Number.isFinite(value.amount) ? value.amount : 0;
+    const currency = value.currency?.toUpperCase() ?? 'GP';
+    return `${amount} ${currency}`;
+  };
+
+  const isShieldItem = (item: InventoryItem): boolean => {
+    const name = item.name.toLowerCase();
+    const props = item.properties?.map((prop) => prop.toLowerCase()) ?? [];
+    return props.includes('shield') || name.includes('shield');
+  };
+
   // Equip/unequip item
   const toggleEquipItem = async (item: InventoryItem) => {
     if (!equipment) return;
@@ -201,16 +200,16 @@ export function Inventory({ characterId, onInventoryChange }: InventoryProps) {
           }
         }
       } else if (item.type === 'armor') {
-        if (updatedEquipment.armor?.id === item.id) {
+        if (isShieldItem(item)) {
+          if (updatedEquipment.shield?.id === item.id) {
+            delete updatedEquipment.shield;
+          } else {
+            updatedEquipment.shield = item;
+          }
+        } else if (updatedEquipment.armor?.id === item.id) {
           delete updatedEquipment.armor;
         } else {
           updatedEquipment.armor = item;
-        }
-      } else if (item.type === 'shield') {
-        if (updatedEquipment.shield?.id === item.id) {
-          delete updatedEquipment.shield;
-        } else {
-          updatedEquipment.shield = item;
         }
       }
       
@@ -233,53 +232,32 @@ export function Inventory({ characterId, onInventoryChange }: InventoryProps) {
             equipment.shield?.id === item.id);
   };
 
-  // Update currency
-  const updateCurrency = async (newCurrency: Currency) => {
-    try {
-      // Find or create currency item in inventory
-      const currencyItemIndex = inventory.findIndex(item => item.type === 'currency');
-      const updatedInventory = [...inventory];
-      
-      if (currencyItemIndex >= 0) {
-        updatedInventory[currencyItemIndex] = {
-          ...updatedInventory[currencyItemIndex],
-          value: newCurrency
-        };
-      } else {
-        updatedInventory.push({
-          id: 'currency',
-          name: 'Currency',
-          description: 'Character currency',
-          quantity: 1,
-          type: 'currency',
-          weight: 0,
-          value: newCurrency
-        });
-      }
-      
-      setInventory(updatedInventory);
-      setCurrency(newCurrency);
-      await updateCharacterData({ inventory: updatedInventory });
-    } catch (error) {
-      console.error('Failed to update currency:', error);
-      toast.error('Failed to update currency');
-    }
-  };
-
   // Get equipment icon
-  const getEquipmentIcon = (type: string) => {
-    switch (type) {
-      case "weapon": return <Sword className="w-4 h-4" />;
-      case "armor": return <Shirt className="w-4 h-4" />;
-      case "shield": return <Shield className="w-4 h-4" />;
-      default: return <Package className="w-4 h-4" />;
+  const getEquipmentIcon = (item: InventoryItem) => {
+    if (item.type === "weapon") {
+      return <Sword className="w-4 h-4" />;
     }
+    if (item.type === "armor" && isShieldItem(item)) {
+      return <Shield className="w-4 h-4" />;
+    }
+    if (item.type === "armor") {
+      return <Shirt className="w-4 h-4" />;
+    }
+    if (item.type === "tool") {
+      return <Package className="w-4 h-4" />;
+    }
+    if (item.type === "treasure") {
+      return <StarIcon className="w-4 h-4" />;
+    }
+    return <Package className="w-4 h-4" />;
   };
 
   // Filter items by type
-  const equipmentItems = inventory.filter(item => ['weapon', 'armor', 'shield'].includes(item.type));
-  const consumableItems = inventory.filter(item => ['consumable', 'potion'].includes(item.type));
-  const gearItems = inventory.filter(item => !['weapon', 'armor', 'shield', 'consumable', 'potion', 'currency'].includes(item.type));
+  const equipableItems = inventory.filter((item) => item.type === 'weapon' || item.type === 'armor');
+  const consumableItems = inventory.filter((item) => item.type === 'consumable');
+  const treasureItems = inventory.filter((item) => item.type === 'treasure');
+  const toolItems = inventory.filter((item) => item.type === 'tool');
+  const otherItems = inventory.filter((item) => item.type === 'other');
 
   if (loading) {
     return (
@@ -292,64 +270,6 @@ export function Inventory({ characterId, onInventoryChange }: InventoryProps) {
 
   return (
     <div className="space-y-6">
-      {/* Currency */}
-      <Card>
-        <CardHeader>
-          <CardTitle className="flex items-center gap-2">
-            <Coins className="w-5 h-5" />
-            Currency
-          </CardTitle>
-        </CardHeader>
-        <CardContent>
-          <div className="grid grid-cols-4 gap-4">
-            <div className="text-center p-3 border rounded">
-              <Input
-                type="number"
-                value={currency.platinum}
-                onChange={(e) => setCurrency(prev => ({ ...prev, platinum: parseInt(e.target.value) || 0 }))}
-                onBlur={() => updateCurrency(currency)}
-                className="text-center text-lg font-bold border-0 p-0 h-8"
-                min="0"
-              />
-              <div className="text-sm text-muted-foreground">Platinum</div>
-            </div>
-            <div className="text-center p-3 border rounded">
-              <Input
-                type="number"
-                value={currency.gold}
-                onChange={(e) => setCurrency(prev => ({ ...prev, gold: parseInt(e.target.value) || 0 }))}
-                onBlur={() => updateCurrency(currency)}
-                className="text-center text-lg font-bold border-0 p-0 h-8"
-                min="0"
-              />
-              <div className="text-sm text-muted-foreground">Gold</div>
-            </div>
-            <div className="text-center p-3 border rounded">
-              <Input
-                type="number"
-                value={currency.silver}
-                onChange={(e) => setCurrency(prev => ({ ...prev, silver: parseInt(e.target.value) || 0 }))}
-                onBlur={() => updateCurrency(currency)}
-                className="text-center text-lg font-bold border-0 p-0 h-8"
-                min="0"
-              />
-              <div className="text-sm text-muted-foreground">Silver</div>
-            </div>
-            <div className="text-center p-3 border rounded">
-              <Input
-                type="number"
-                value={currency.copper}
-                onChange={(e) => setCurrency(prev => ({ ...prev, copper: parseInt(e.target.value) || 0 }))}
-                onBlur={() => updateCurrency(currency)}
-                className="text-center text-lg font-bold border-0 p-0 h-8"
-                min="0"
-              />
-              <div className="text-sm text-muted-foreground">Copper</div>
-            </div>
-          </div>
-        </CardContent>
-      </Card>
-
       <div className="flex justify-between items-center">
         <h3 className="text-lg font-semibold">Items</h3>
         <Dialog open={showAddDialog} onOpenChange={setShowAddDialog}>
@@ -387,20 +307,19 @@ export function Inventory({ characterId, onInventoryChange }: InventoryProps) {
                 <div>
                   <Label htmlFor="itemType">Type</Label>
                   <Select 
-                    value={newItem.type || 'gear'} 
+                    value={newItem.type ?? 'other'} 
                     onValueChange={(value) => setNewItem(prev => ({ ...prev, type: value as InventoryItem['type'] }))}
                   >
                     <SelectTrigger>
-                      <SelectValue />
+                      <SelectValue placeholder="Select type" />
                     </SelectTrigger>
                     <SelectContent>
                       <SelectItem value="weapon">Weapon</SelectItem>
                       <SelectItem value="armor">Armor</SelectItem>
-                      <SelectItem value="shield">Shield</SelectItem>
                       <SelectItem value="consumable">Consumable</SelectItem>
-                      <SelectItem value="potion">Potion</SelectItem>
-                      <SelectItem value="gear">Gear</SelectItem>
+                      <SelectItem value="tool">Tool</SelectItem>
                       <SelectItem value="treasure">Treasure</SelectItem>
+                      <SelectItem value="other">Other</SelectItem>
                     </SelectContent>
                   </Select>
                 </div>
@@ -427,17 +346,43 @@ export function Inventory({ characterId, onInventoryChange }: InventoryProps) {
                 </div>
               </div>
               <div>
-                <Label htmlFor="itemValue">Value (Gold)</Label>
-                <Input
-                  id="itemValue"
-                  type="number"
-                  min="0"
-                  value={typeof newItem.value === 'object' && newItem.value !== null ? newItem.value.gold || 0 : 0}
-                  onChange={(e) => setNewItem(prev => ({ 
-                    ...prev, 
-                    value: { gold: parseInt(e.target.value) || 0 }
-                  }))}
-                />
+                <Label htmlFor="itemValueAmount">Value</Label>
+                <div className="grid grid-cols-[minmax(0,1fr)_minmax(0,120px)] gap-2">
+                  <Input
+                    id="itemValueAmount"
+                    type="number"
+                    min="0"
+                    value={newItem.value?.amount ?? 0}
+                    onChange={(e) => setNewItem((prev) => ({
+                      ...prev,
+                      value: {
+                        amount: Number.parseFloat(e.target.value) || 0,
+                        currency: prev.value?.currency ?? 'gp',
+                      },
+                    }))}
+                  />
+                  <Select
+                    value={newItem.value?.currency ?? 'gp'}
+                    onValueChange={(value) => setNewItem((prev) => ({
+                      ...prev,
+                      value: {
+                        amount: prev.value?.amount ?? 0,
+                        currency: value,
+                      },
+                    }))}
+                  >
+                    <SelectTrigger>
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="cp">Copper</SelectItem>
+                      <SelectItem value="sp">Silver</SelectItem>
+                      <SelectItem value="ep">Electrum</SelectItem>
+                      <SelectItem value="gp">Gold</SelectItem>
+                      <SelectItem value="pp">Platinum</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
               </div>
             </div>
             <div className="flex justify-end gap-2 pt-4">
@@ -459,17 +404,20 @@ export function Inventory({ characterId, onInventoryChange }: InventoryProps) {
             <CardTitle>Equipment</CardTitle>
           </CardHeader>
           <CardContent className="space-y-3">
-            {equipmentItems.map((item) => (
+            {equipableItems.map((item) => (
               <div key={item.id} className="flex items-start justify-between p-3 border rounded">
                 <div className="flex items-start gap-3">
-                  {getEquipmentIcon(item.type)}
+                  {getEquipmentIcon(item)}
                   <div>
                     <div className="flex items-center gap-2">
                       <span className="font-medium">{item.name}</span>
                       <Badge variant="outline" className="text-xs">×{item.quantity}</Badge>
                       {isItemEquipped(item) && <Badge variant="secondary" className="text-xs">Equipped</Badge>}
                     </div>
-                    <p className="text-sm text-muted-foreground mt-1">{item.description}</p>
+                    {item.description && (
+                      <p className="text-sm text-muted-foreground mt-1">{item.description}</p>
+                    )}
+                    <p className="text-xs text-muted-foreground mt-1">Value: {formatItemValue(item.value)}</p>
                   </div>
                 </div>
                 <div className="flex gap-1">
@@ -490,7 +438,7 @@ export function Inventory({ characterId, onInventoryChange }: InventoryProps) {
                 </div>
               </div>
             ))}
-            {equipmentItems.length === 0 && (
+            {equipableItems.length === 0 && (
               <p className="text-center text-muted-foreground py-4">No equipment items</p>
             )}
           </CardContent>
@@ -511,7 +459,10 @@ export function Inventory({ characterId, onInventoryChange }: InventoryProps) {
                       <span className="font-medium">{item.name}</span>
                       <Badge variant="outline">×{item.quantity}</Badge>
                     </div>
-                    <p className="text-sm text-muted-foreground mt-1">{item.description}</p>
+                    {item.description && (
+                      <p className="text-sm text-muted-foreground mt-1">{item.description}</p>
+                    )}
+                    <p className="text-xs text-muted-foreground mt-1">Value: {formatItemValue(item.value)}</p>
                   </div>
                 </div>
                 <div className="flex gap-1">
@@ -548,21 +499,82 @@ export function Inventory({ characterId, onInventoryChange }: InventoryProps) {
         </Card>
       </div>
 
-      {/* Gear Items */}
-      {gearItems.length > 0 && (
+      {/* Tools */}
+      {toolItems.length > 0 && (
         <Card>
           <CardHeader>
-            <CardTitle>Gear & Miscellaneous</CardTitle>
+            <CardTitle>Tools</CardTitle>
           </CardHeader>
           <CardContent>
             <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-              {gearItems.map((item) => (
+              {toolItems.map((item) => (
                 <div key={item.id} className="flex items-center justify-between p-3 border rounded">
                   <div className="flex items-center gap-2">
                     <Package className="w-4 h-4" />
                     <span className="font-medium">{item.name}</span>
                     <Badge variant="outline" className="text-xs">×{item.quantity}</Badge>
                   </div>
+                  <span className="text-xs text-muted-foreground">{formatItemValue(item.value)}</span>
+                  <Button 
+                    variant="ghost" 
+                    size="sm"
+                    onClick={() => removeItem(item.id)}
+                  >
+                    <Trash2 className="w-4 h-4" />
+                  </Button>
+                </div>
+              ))}
+            </div>
+          </CardContent>
+        </Card>
+      )}
+
+      {/* Treasure */}
+      {treasureItems.length > 0 && (
+        <Card>
+          <CardHeader>
+            <CardTitle>Treasure</CardTitle>
+          </CardHeader>
+          <CardContent>
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+              {treasureItems.map((item) => (
+                <div key={item.id} className="flex items-center justify-between p-3 border rounded">
+                  <div className="flex items-center gap-2">
+                    <StarIcon className="w-4 h-4" />
+                    <span className="font-medium">{item.name}</span>
+                    <Badge variant="outline" className="text-xs">×{item.quantity}</Badge>
+                  </div>
+                  <span className="text-xs text-muted-foreground">{formatItemValue(item.value)}</span>
+                  <Button 
+                    variant="ghost" 
+                    size="sm"
+                    onClick={() => removeItem(item.id)}
+                  >
+                    <Trash2 className="w-4 h-4" />
+                  </Button>
+                </div>
+              ))}
+            </div>
+          </CardContent>
+        </Card>
+      )}
+
+      {/* Other */}
+      {otherItems.length > 0 && (
+        <Card>
+          <CardHeader>
+            <CardTitle>Miscellaneous</CardTitle>
+          </CardHeader>
+          <CardContent>
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+              {otherItems.map((item) => (
+                <div key={item.id} className="flex items-center justify-between p-3 border rounded">
+                  <div className="flex items-center gap-2">
+                    <Package className="w-4 h-4" />
+                    <span className="font-medium">{item.name}</span>
+                    <Badge variant="outline" className="text-xs">×{item.quantity}</Badge>
+                  </div>
+                  <span className="text-xs text-muted-foreground">{formatItemValue(item.value)}</span>
                   <Button 
                     variant="ghost" 
                     size="sm"

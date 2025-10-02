@@ -5,6 +5,7 @@ node_modules/
 *.crt
 *.key
 venv/
+dist/
 tiles/
 map_data/
 public/tiles-states/5/

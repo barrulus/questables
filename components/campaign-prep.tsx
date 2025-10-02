@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState, type ReactElement } from "react";
 import { toast } from "sonner";
 import { Alert, AlertDescription, AlertTitle } from "./ui/alert";
 import { Button } from "./ui/button";
@@ -30,7 +30,7 @@ interface CampaignPrepProps {
     _campaignId: string,
     _payload: { position: { x: number; y: number }; note: string | null }
   ) => Promise<SpawnPoint>;
-  spawnMapComponent?: (_props: CampaignSpawnMapProps) => JSX.Element;
+  spawnMapComponent?: (_props: CampaignSpawnMapProps) => ReactElement;
 }
 
 interface WorldMapRecord {
@@ -263,7 +263,7 @@ export function CampaignPrep({
 
     if (!campaign.world_map_id) {
       return (
-        <Alert variant="warning">
+        <Alert variant="destructive">
           <AlertTitle>World map required</AlertTitle>
           <AlertDescription>
             Link a world map to this campaign from the settings dialog before configuring the default spawn.

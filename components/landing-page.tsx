@@ -1,10 +1,9 @@
 import { useState } from "react";
 import { Button } from "./ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "./ui/card";
-import { Badge } from "./ui/badge";
 import { LoginModal } from "./login-modal";
 import { RegisterModal } from "./register-modal";
-import { Dice6, Shield, Users, Sword, BookOpen, MapIcon, Sparkles } from "lucide-react";
+import { Dice6, Shield, Users, Sword, Sparkles } from "lucide-react";
 
 interface LandingPageProps {
   onLogin: () => void;

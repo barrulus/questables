@@ -1,13 +1,34 @@
 // Input sanitization utilities for XSS prevention
 import DOMPurify from 'dompurify';
 
+const purifier = DOMPurify();
+type PurifyAddHook = (
+  _hookName: DOMPurify.HookName,
+  _handler: (_node: Element, _event: DOMPurify.HookEvent) => void
+) => void;
+const addHook = purifier.addHook.bind(purifier) as PurifyAddHook;
+
+const isElementHookEvent = (
+  event: DOMPurify.HookEvent
+): event is DOMPurify.SanitizeElementHookEvent => {
+  return Boolean(event && 'tagName' in event);
+};
+
 // Configure DOMPurify for safe HTML content
 const configureDOMPurify = () => {
   // Allow basic formatting tags but remove script and other dangerous elements
-  DOMPurify.addHook('beforeSanitizeElements', (node, data) => {
+  addHook('beforeSanitizeElements', (node: Element, data: DOMPurify.HookEvent) => {
+    if (!isElementHookEvent(data)) {
+      return;
+    }
+
+    const tagName = data.tagName.toUpperCase();
     // Log potentially dangerous content for monitoring
-    if (data.tagName === 'SCRIPT' || data.tagName === 'OBJECT' || data.tagName === 'EMBED') {
-      console.warn('[Security] Blocked dangerous HTML element:', data.tagName);
+    if (tagName === 'SCRIPT' || tagName === 'OBJECT' || tagName === 'EMBED') {
+      console.warn('[Security] Blocked dangerous HTML element:', {
+        tagName,
+        nodeName: node.nodeName,
+      });
     }
   });
 };
@@ -32,15 +53,14 @@ export const sanitizeHTML = (
   const config = {
     ALLOWED_TAGS: allowedTags,
     ALLOWED_ATTR: ['class'], // Only allow class attributes for styling
-    FORBID_SCRIPTS: true,
     FORBID_TAGS: ['script', 'object', 'embed', 'link', 'style'],
     FORBID_ATTR: ['onclick', 'onload', 'onerror', 'onmouseover', 'onfocus'],
     SANITIZE_DOM: true,
     SANITIZE_NAMED_PROPS: true,
     KEEP_CONTENT: false, // Remove content of forbidden tags
-  };
+  } satisfies DOMPurify.Config;
 
-  return DOMPurify.sanitize(dirty, config);
+  return purifier.sanitize(dirty, config);
 };
 
 /**
@@ -186,10 +206,41 @@ export const sanitizeURL = (url: string): string | null => {
     }
     
     return parsedURL.href;
-  } catch (error) {
+  } catch {
     console.warn('[Security] Invalid URL format:', url);
     return null;
   }
+};
+
+type JSONPrimitive = string | number | boolean | null;
+export type JSONValue = JSONPrimitive | JSONValue[] | { [key: string]: JSONValue };
+
+const sanitizeJSONValue = (value: unknown): JSONValue => {
+  if (typeof value === 'string') {
+    return sanitizePlainText(value);
+  }
+
+  if (typeof value === 'number' || typeof value === 'boolean' || value === null) {
+    return value;
+  }
+
+  if (Array.isArray(value)) {
+    return value.map((item) => sanitizeJSONValue(item)) as JSONValue[];
+  }
+
+  if (typeof value === 'object' && value !== null) {
+    const result: Record<string, JSONValue> = {};
+    const record = value as Record<string, unknown>;
+
+    for (const key of Object.keys(record)) {
+      const sanitizedKey = sanitizePlainText(key);
+      result[sanitizedKey] = sanitizeJSONValue(record[key]);
+    }
+
+    return result;
+  }
+
+  return sanitizePlainText(String(value));
 };
 
 /**
@@ -197,35 +248,15 @@ export const sanitizeURL = (url: string): string | null => {
  * @param jsonString - The JSON string to sanitize
  * @returns Parsed and sanitized object or null if invalid
  */
-export const sanitizeJSON = (jsonString: string): any | null => {
+export const sanitizeJSON = (jsonString: string): JSONValue | null => {
   if (!jsonString || typeof jsonString !== 'string') {
     return null;
   }
 
   try {
-    const parsed = JSON.parse(jsonString);
-    
-    // Recursively sanitize string values in the object
-    const sanitizeObject = (obj: any): any => {
-      if (typeof obj === 'string') {
-        return sanitizePlainText(obj);
-      } else if (Array.isArray(obj)) {
-        return obj.map(sanitizeObject);
-      } else if (obj && typeof obj === 'object') {
-        const sanitized: any = {};
-        for (const key in obj) {
-          if (obj.hasOwnProperty(key)) {
-            const sanitizedKey = sanitizePlainText(key);
-            sanitized[sanitizedKey] = sanitizeObject(obj[key]);
-          }
-        }
-        return sanitized;
-      }
-      return obj;
-    };
-    
-    return sanitizeObject(parsed);
-  } catch (error) {
+    const parsed = JSON.parse(jsonString) as JSONValue;
+    return sanitizeJSONValue(parsed);
+  } catch {
     console.warn('[Security] Invalid JSON input');
     return null;
   }

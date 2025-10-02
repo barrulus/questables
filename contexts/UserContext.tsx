@@ -1,4 +1,4 @@
-import React, { createContext, useContext, useState, useEffect, ReactNode, useCallback } from 'react';
+import { createContext, useContext, useState, useEffect, ReactNode, useCallback } from 'react';
 import { User } from '../utils/database/data-structures';
 import { fetchCurrentUser, updateCurrentUser } from '../utils/api/users';
 import { login as authenticate } from '../utils/api/auth';
