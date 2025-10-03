@@ -16,7 +16,7 @@
 
 - Audit files you touch for residual fixtures, mock assets, or demo wiring and purge them before merging.
 - Validate that components fail honestly: surface backend errors, clear invalid sessions, and block UI claims of success without evidence.
-- Keep documentation and `.env` guidance synchronized with the truth in code—no speculative promises or celebratory filler.
+- Keep documentation and `.env.local` guidance synchronized with the truth in code—no speculative promises or celebratory filler.
 - When using Radix/Shardcn `<Select>` components, never use an empty string item. Provide explicit sentinel values (e.g., `__none__`) and translate them in handlers so the control stays in a valid state.
 
 ## Progress Accountability

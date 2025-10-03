@@ -5,13 +5,14 @@
 ## Working Agreement
 - Treat this checklist as the source of truth while we rip out the legacy PostGIS JSON flows and migrate to Tegola-only delivery.
 - Each assignee must append a short update (result, blockers, command references) under the relevant task when work lands.
-- Keep `lint_report.md`, `API_DOCUMENTATION.md`, and `.env` guidance synchronized as you touch them.
+- Keep `schema.sql`, `API_DOCUMENTATION.md`, and `.env.local` guidance synchronized as you touch them.
 
 ---
 
 ### 1. Provision Tegola Prerequisites
-- Install the Tegola binary in the runtime environment that hosts the database/API.
-- Ensure `.env.local` contains the complete Tegola connection block (`TEGOLA_DB_*`, `TEGOLA_PUBLIC_URL`, cache/paths).
+- The Tegola binary is installed in the runtime environment that hosts the database/API.
+- Ensure `.env.local` provides the Tegola settings (`TEGOLA_PUBLIC_URL`, cache paths).
+- All Tegola database interactions should be written as modules of `database-server.js`
 - Acceptance: `node server/tegola/generate-config.js --check` (add a `--check` mode if needed) validates inputs without writing files. Log command and results in `lint_report.md`.
 
 ### 2. Generate Production Tegola Config

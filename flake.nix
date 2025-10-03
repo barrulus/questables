@@ -17,7 +17,7 @@
             packages = with pkgs; [
               # Useful Node tooling; project uses npm but these can help
               corepack
-
+              nodejs_24
               # Database tooling
               postgresql_17
               postgis
@@ -27,7 +27,7 @@
               python3
               jq
               bc
-              inkscape
+              tegola
             ];
 
             # Tips and light DX setup when entering the shell
@@ -63,6 +63,7 @@
             packages = with pkgs; [
               postgresql_17
               postgis
+              tegola
             ];
             shellHook = ''
               echo "[questables] DB shell (psql $(psql --version | awk '{print $3}'))"
