@@ -13,14 +13,14 @@ name = "questables"
 type = "mvt_postgis"
 
   [providers.postgis]
-  host = "{{TEGOLA_DATABASE_HOST}}"
-  port = {{TEGOLA_DATABASE_PORT}}
-  database = "{{TEGOLA_DATABASE_NAME}}"
-  user = "{{TEGOLA_DATABASE_USER}}"
-  password = "{{TEGOLA_DATABASE_PASSWORD}}"
+  host = "{{DATABASE_HOST}}"
+  port = {{DATABASE_PORT}}
+  database = "{{DATABASE_NAME}}"
+  user = "{{DATABASE_USER}}"
+  password = "{{DATABASE_PASSWORD}}"
   srid = 0
-  sslmode = "{{TEGOLA_DATABASE_SSLMODE}}"
-  max_connections = {{TEGOLA_DATABASE_MAX_CONNECTIONS}}
+  sslmode = "{{DATABASE_SSLMODE}}"
+  max_connections = {{DATABASE_MAX_CONNECTIONS}}
 
   [[providers.layers]]
   name = "world_cells"

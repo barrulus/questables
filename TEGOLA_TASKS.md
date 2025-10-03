@@ -15,6 +15,8 @@
 - All Tegola database interactions should be written as modules of `database-server.js`
 - Acceptance: `node server/tegola/generate-config.js --check` (add a `--check` mode if needed) validates inputs without writing files. Log command and results in `lint_report.md`.
 
+- [AI 2025-10-03] Verified Tegola binary at `/nix/store/l9arb540bvrisbdraj2sgk3dpj540ai9-tegola-0.21.2/bin/tegola`, added a `--check` dry-run mode to `server/tegola/generate-config.js`, and routed all database parameter resolution through `server/db/config.js` so Tegola shares the live database-server settings (no duplicated env keys or fallbacks). Commands: `which tegola`; `npx eslint server/tegola/generate-config.js server/db/config.js server/db/pool.js --ext js`; `node server/tegola/generate-config.js --check`. Residual risks: none.
+
 ### 2. Generate Production Tegola Config
 - Run `node server/tegola/generate-config.js` against live `.env.local` and inspect the emitted `server/tegola/tegola.toml` for SRID 0 compliance.
 - Document any schema assumptions in `API_DOCUMENTATION.md` and update this task with the exact command run.

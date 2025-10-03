@@ -8,17 +8,12 @@ Questables custom projection.
 
 ## Environment Variables
 
-All configuration is driven from `.env.local`; no defaults are assumed. The generator
-expects the following keys (see `.env.local` for the current values):
+All configuration is driven from `.env.local`; no defaults are assumed. Database
+connection details are resolved through the shared `server/db/config.js` module so
+Tegola cannot silently diverge from the database server settings. The generator
+expects the following Tegola-specific keys:
 
 ```
-TEGOLA_DATABASE_HOST
-TEGOLA_DATABASE_PORT
-TEGOLA_DATABASE_NAME
-TEGOLA_DATABASE_USER
-TEGOLA_DATABASE_PASSWORD
-TEGOLA_DATABASE_SSLMODE
-TEGOLA_DATABASE_MAX_CONNECTIONS
 TEGOLA_WEB_LISTEN
 TEGOLA_PUBLIC_URL
 TEGOLA_CACHE_DIR
@@ -27,8 +22,9 @@ TEGOLA_MAX_ZOOM
 TEGOLA_CONFIG_PATH
 ```
 
-The database credentials intentionally mirror the live PostGIS instance; Tegola reads
-directly from production data and does not use fixtures.
+The PostGIS credentials injected into the rendered config are sourced directly from
+the active database server configuration, keeping Tegola aligned with production data
+without duplicating environment variables.
 
 ## Generating the Config
 
