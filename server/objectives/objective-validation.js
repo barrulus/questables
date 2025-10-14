@@ -99,11 +99,13 @@ const validateLocationPayload = (payload) => {
   const locationPin = payload.locationPin ?? payload.location_pin ?? payload.pin ?? null;
   const locationBurgId = payload.locationBurgId ?? payload.location_burg_id ?? payload.burgId ?? payload.burg_id ?? null;
   const locationMarkerId = payload.locationMarkerId ?? payload.location_marker_id ?? payload.markerId ?? payload.marker_id ?? null;
+  const locationRegionId = payload.locationRegionId ?? payload.location_region_id ?? payload.regionId ?? payload.region_id ?? null;
 
   const provided = [
     locationPin ? 'pin' : null,
     locationBurgId ? 'burg' : null,
     locationMarkerId ? 'marker' : null,
+    locationRegionId ? 'region' : null,
   ].filter(Boolean);
 
   const locationFieldProvided =
@@ -114,7 +116,11 @@ const validateLocationPayload = (payload) => {
     Object.prototype.hasOwnProperty.call(payload, 'locationBurgId') ||
     Object.prototype.hasOwnProperty.call(payload, 'location_burg_id') ||
     Object.prototype.hasOwnProperty.call(payload, 'locationMarkerId') ||
-    Object.prototype.hasOwnProperty.call(payload, 'location_marker_id');
+    Object.prototype.hasOwnProperty.call(payload, 'location_marker_id') ||
+    Object.prototype.hasOwnProperty.call(payload, 'locationRegionId') ||
+    Object.prototype.hasOwnProperty.call(payload, 'location_region_id') ||
+    Object.prototype.hasOwnProperty.call(payload, 'regionId') ||
+    Object.prototype.hasOwnProperty.call(payload, 'region_id');
 
   if (!locationType && provided.length === 0) {
     return locationFieldProvided ? { type: null, pin: null, burgId: null, markerId: null } : null;
@@ -125,7 +131,7 @@ const validateLocationPayload = (payload) => {
     throw createValidationError('invalid_location', 'locationType must be provided when location data is sent.');
   }
 
-  if (!['pin', 'burg', 'marker'].includes(normalizedType)) {
+  if (!['pin', 'burg', 'marker', 'region'].includes(normalizedType)) {
     throw createValidationError('invalid_location', `Unsupported location type: ${normalizedType}.`);
   }
 
@@ -138,21 +144,28 @@ const validateLocationPayload = (payload) => {
     if (!pin) {
       throw createValidationError('invalid_location', 'Pin objectives require numeric x/y coordinates.');
     }
-    return { type: 'pin', pin, burgId: null, markerId: null };
+    return { type: 'pin', pin, burgId: null, markerId: null, regionId: null };
   }
 
   if (normalizedType === 'burg') {
     if (!isUuid(locationBurgId)) {
       throw createValidationError('invalid_location', 'Burg objectives require a valid burg UUID.');
     }
-    return { type: 'burg', pin: null, burgId: locationBurgId, markerId: null };
+    return { type: 'burg', pin: null, burgId: locationBurgId, markerId: null, regionId: null };
   }
 
   if (normalizedType === 'marker') {
     if (!isUuid(locationMarkerId)) {
       throw createValidationError('invalid_location', 'Marker objectives require a valid marker UUID.');
     }
-    return { type: 'marker', pin: null, burgId: null, markerId: locationMarkerId };
+    return { type: 'marker', pin: null, burgId: null, markerId: locationMarkerId, regionId: null };
+  }
+
+  if (normalizedType === 'region') {
+    if (!isUuid(locationRegionId)) {
+      throw createValidationError('invalid_location', 'Region objectives require a valid region UUID.');
+    }
+    return { type: 'region', pin: null, burgId: null, markerId: null, regionId: locationRegionId };
   }
 
   throw createValidationError('invalid_location', `Unsupported location type: ${normalizedType}.`);

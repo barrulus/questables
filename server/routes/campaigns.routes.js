@@ -40,6 +40,7 @@ import {
 } from '../services/campaigns/service.js';
 import {
   sanitizeObjectivePayload,
+  validateLocationPayload,
   ObjectiveValidationError,
   MARKDOWN_FIELDS,
 } from '../objectives/objective-validation.js';
@@ -1435,6 +1436,11 @@ router.post(
           placeholders.push(`$${paramIndex}`);
           values.push(sanitized.location.markerId);
           paramIndex += 1;
+        } else if (sanitized.location.type === 'region') {
+          columns.push('location_region_id');
+          placeholders.push(`$${paramIndex}`);
+          values.push(sanitized.location.regionId);
+          paramIndex += 1;
         }
       }
 
@@ -1595,22 +1601,33 @@ router.put('/api/objectives/:objectiveId', requireAuth, async (req, res) => {
         paramIndex += 2;
         updates.push('location_burg_id = NULL');
         updates.push('location_marker_id = NULL');
+        updates.push('location_region_id = NULL');
       } else if (sanitized.location.type === 'burg') {
         updates.push(`location_burg_id = $${paramIndex}`);
         values.push(sanitized.location.burgId);
         paramIndex += 1;
         updates.push('location_marker_id = NULL');
         updates.push('location_pin = NULL');
+        updates.push('location_region_id = NULL');
       } else if (sanitized.location.type === 'marker') {
         updates.push(`location_marker_id = $${paramIndex}`);
         values.push(sanitized.location.markerId);
         paramIndex += 1;
         updates.push('location_burg_id = NULL');
         updates.push('location_pin = NULL');
+        updates.push('location_region_id = NULL');
+      } else if (sanitized.location.type === 'region') {
+        updates.push(`location_region_id = $${paramIndex}`);
+        values.push(sanitized.location.regionId);
+        paramIndex += 1;
+        updates.push('location_burg_id = NULL');
+        updates.push('location_marker_id = NULL');
+        updates.push('location_pin = NULL');
       } else {
         updates.push('location_burg_id = NULL');
         updates.push('location_marker_id = NULL');
         updates.push('location_pin = NULL');
+        updates.push('location_region_id = NULL');
       }
     }
 
@@ -1674,6 +1691,162 @@ router.put('/api/objectives/:objectiveId', requireAuth, async (req, res) => {
     res.status(error.status || 500).json({
       error: error.code || 'objective_update_failed',
       message: error.message || 'Failed to update objective',
+    });
+  } finally {
+    client.release();
+  }
+});
+
+router.put('/api/objectives/:objectiveId/location', requireAuth, async (req, res) => {
+  const { objectiveId } = req.params;
+  const client = await getClient({ label: 'objectives.location.update' });
+  const wsServer = req.app?.locals?.wsServer ?? null;
+  let transactionStarted = false;
+
+  try {
+    await client.query('BEGIN');
+    transactionStarted = true;
+
+    const existing = await fetchObjectiveWithCampaign(client, objectiveId);
+    if (!existing) {
+      await client.query('ROLLBACK');
+      return res.status(404).json({ error: 'Objective not found' });
+    }
+
+    const viewer = await getViewerContextOrThrow(client, existing.campaign_id, req.user);
+    ensureDmControl(viewer, 'Only DMs can update objective locations.');
+
+    const payload = req.body ?? {};
+    let location;
+    try {
+      location = validateLocationPayload(payload);
+    } catch (validationError) {
+      if (validationError instanceof ObjectiveValidationError) {
+        await client.query('ROLLBACK');
+        return res.status(400).json({
+          error: validationError.code,
+          message: validationError.message,
+        });
+      }
+      throw validationError;
+    }
+
+    const shouldClear = location === null && (payload.clear === true || payload.clear === 'true');
+    if (location === null && !shouldClear) {
+      await client.query('ROLLBACK');
+      return res.status(400).json({
+        error: 'invalid_location_payload',
+        message: 'Provide location data or set { "clear": true } to remove the location.',
+      });
+    }
+
+    const updates = [];
+    const values = [];
+    let paramIndex = 1;
+
+    if (location === null && shouldClear) {
+      updates.push('location_type = NULL');
+      updates.push('location_pin = NULL');
+      updates.push('location_burg_id = NULL');
+      updates.push('location_marker_id = NULL');
+      updates.push('location_region_id = NULL');
+    } else if (location?.type === 'pin') {
+      updates.push(`location_type = $${paramIndex}`);
+      values.push(location.type);
+      paramIndex += 1;
+      updates.push(`location_pin = ST_SetSRID(ST_MakePoint($${paramIndex}, $${paramIndex + 1}), 0)`);
+      values.push(location.pin.x, location.pin.y);
+      paramIndex += 2;
+      updates.push('location_burg_id = NULL');
+      updates.push('location_marker_id = NULL');
+      updates.push('location_region_id = NULL');
+    } else if (location?.type === 'burg') {
+      updates.push(`location_type = $${paramIndex}`);
+      values.push(location.type);
+      paramIndex += 1;
+      updates.push(`location_burg_id = $${paramIndex}`);
+      values.push(location.burgId);
+      paramIndex += 1;
+      updates.push('location_marker_id = NULL');
+      updates.push('location_pin = NULL');
+      updates.push('location_region_id = NULL');
+    } else if (location?.type === 'marker') {
+      updates.push(`location_type = $${paramIndex}`);
+      values.push(location.type);
+      paramIndex += 1;
+      updates.push(`location_marker_id = $${paramIndex}`);
+      values.push(location.markerId);
+      paramIndex += 1;
+      updates.push('location_burg_id = NULL');
+      updates.push('location_pin = NULL');
+      updates.push('location_region_id = NULL');
+    } else if (location?.type === 'region') {
+      updates.push(`location_type = $${paramIndex}`);
+      values.push(location.type);
+      paramIndex += 1;
+      updates.push(`location_region_id = $${paramIndex}`);
+      values.push(location.regionId);
+      paramIndex += 1;
+      updates.push('location_burg_id = NULL');
+      updates.push('location_marker_id = NULL');
+      updates.push('location_pin = NULL');
+    }
+
+    updates.push('updated_at = NOW()');
+    updates.push(`updated_by = $${paramIndex}`);
+    values.push(req.user.id);
+    paramIndex += 1;
+
+    values.push(objectiveId);
+
+    const updateResult = await client.query(
+      `UPDATE public.campaign_objectives SET ${updates.join(', ')} WHERE id = $${paramIndex} RETURNING ${OBJECTIVE_RETURNING_FIELDS}`,
+      values,
+    );
+
+    await client.query('COMMIT');
+    transactionStarted = false;
+
+    const objective = formatObjectiveRow(updateResult.rows[0]);
+    incrementCounter('objectives.updated');
+    recordEvent('objective.updated', {
+      campaignId: existing.campaign_id,
+      objectiveId,
+      userId: req.user.id,
+      parentId: objective.parentId ?? null,
+      isMajor: Boolean(objective.isMajor),
+    });
+    logInfo('Objective location updated', {
+      telemetryEvent: 'objective.location.updated',
+      campaignId: existing.campaign_id,
+      objectiveId,
+      userId: req.user.id,
+      locationType: objective.locationType ?? null,
+    });
+
+    if (wsServer) {
+      wsServer.emitObjectiveUpdated(existing.campaign_id, objective, {
+        actorId: req.user.id,
+      });
+    }
+
+    return res.json({ objective });
+  } catch (error) {
+    if (transactionStarted) {
+      await client.query('ROLLBACK').catch(() => {});
+    }
+
+    if (error instanceof ObjectiveValidationError) {
+      return res.status(400).json({
+        error: error.code,
+        message: error.message,
+      });
+    }
+
+    logError('Objective location update failed', error, { objectiveId, userId: req.user?.id });
+    return res.status(error.status || 500).json({
+      error: error.code || 'objective_location_update_failed',
+      message: error.message || 'Failed to update objective location.',
     });
   } finally {
     client.release();

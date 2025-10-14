@@ -173,6 +173,8 @@ CREATE TABLE IF NOT EXISTS public.maps_rivers (
     discharge DOUBLE PRECISION,
     length DOUBLE PRECISION,
     width DOUBLE PRECISION,
+    mouth INTEGER,
+    source INTEGER,
     geom geometry(MultiLineString, 0) NOT NULL,
     UNIQUE(world_id, river_id)
 );
@@ -406,6 +408,33 @@ CREATE TRIGGER _touch_campaign_spawns
 BEFORE UPDATE ON public.campaign_spawns
 FOR EACH ROW EXECUTE FUNCTION public.tg_touch_updated_at();
 
+-- campaign map regions (SRID 0 polygons for prep annotations)
+CREATE TABLE IF NOT EXISTS public.campaign_map_regions (
+    id UUID DEFAULT uuid_generate_v4() PRIMARY KEY,
+    campaign_id UUID REFERENCES public.campaigns(id) ON DELETE CASCADE NOT NULL,
+    world_map_id UUID REFERENCES public.maps_world(id) ON DELETE SET NULL,
+    name TEXT NOT NULL,
+    description TEXT,
+    category TEXT NOT NULL DEFAULT 'custom' CHECK (category IN ('encounter', 'rumour', 'narrative', 'travel', 'custom')),
+    color TEXT,
+    CONSTRAINT campaign_map_regions_color_format CHECK (color IS NULL OR color ~ '^#[0-9A-Fa-f]{6}$'),
+    metadata JSONB DEFAULT '{}'::jsonb,
+    region geometry(MultiPolygon, 0) NOT NULL,
+    created_by UUID REFERENCES public.user_profiles(id) ON DELETE SET NULL,
+    updated_by UUID REFERENCES public.user_profiles(id) ON DELETE SET NULL,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW() NOT NULL,
+    updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW() NOT NULL,
+    CONSTRAINT campaign_map_regions_region_srid CHECK (ST_SRID(region) = 0)
+);
+CREATE INDEX IF NOT EXISTS idx_campaign_map_regions_campaign_id ON public.campaign_map_regions(campaign_id);
+CREATE INDEX IF NOT EXISTS idx_campaign_map_regions_category ON public.campaign_map_regions(category);
+CREATE INDEX IF NOT EXISTS idx_campaign_map_regions_world_map_id ON public.campaign_map_regions(world_map_id);
+CREATE INDEX IF NOT EXISTS idx_campaign_map_regions_region_gix ON public.campaign_map_regions USING GIST (region);
+DROP TRIGGER IF EXISTS _touch_campaign_map_regions ON public.campaign_map_regions;
+CREATE TRIGGER _touch_campaign_map_regions
+BEFORE UPDATE ON public.campaign_map_regions
+FOR EACH ROW EXECUTE FUNCTION public.tg_touch_updated_at();
+
 -- campaign objectives tree (DM Toolkit)
 CREATE TABLE IF NOT EXISTS public.campaign_objectives (
     id UUID DEFAULT uuid_generate_v4() PRIMARY KEY,
@@ -413,10 +442,11 @@ CREATE TABLE IF NOT EXISTS public.campaign_objectives (
     parent_id UUID REFERENCES public.campaign_objectives(id) ON DELETE SET NULL,
     title TEXT NOT NULL,
     description_md TEXT,
-    location_type TEXT CHECK (location_type IN ('pin', 'burg', 'marker')),
+    location_type TEXT CHECK (location_type IN ('pin', 'burg', 'marker', 'region')),
     location_burg_id UUID REFERENCES public.maps_burgs(id) ON DELETE SET NULL,
     location_marker_id UUID REFERENCES public.maps_markers(id) ON DELETE SET NULL,
     location_pin geometry(Point, 0),
+    location_region_id UUID REFERENCES public.campaign_map_regions(id) ON DELETE SET NULL,
     treasure_md TEXT,
     combat_md TEXT,
     npcs_md TEXT,
@@ -433,11 +463,35 @@ CREATE TABLE IF NOT EXISTS public.campaign_objectives (
         OR (location_type = 'pin' AND location_pin IS NOT NULL AND location_burg_id IS NULL AND location_marker_id IS NULL)
         OR (location_type = 'burg' AND location_burg_id IS NOT NULL AND location_marker_id IS NULL AND location_pin IS NULL)
         OR (location_type = 'marker' AND location_marker_id IS NOT NULL AND location_burg_id IS NULL AND location_pin IS NULL)
+        OR (location_type = 'region' AND location_region_id IS NOT NULL AND location_burg_id IS NULL AND location_marker_id IS NULL AND location_pin IS NULL)
     ),
     CONSTRAINT campaign_objectives_location_pin_srid CHECK (location_pin IS NULL OR ST_SRID(location_pin) = 0)
 );
 CREATE INDEX IF NOT EXISTS idx_campaign_objectives_campaign_id ON public.campaign_objectives(campaign_id);
 CREATE INDEX IF NOT EXISTS idx_campaign_objectives_parent_id ON public.campaign_objectives(parent_id);
+
+ALTER TABLE public.campaign_objectives
+  ADD COLUMN IF NOT EXISTS location_region_id UUID REFERENCES public.campaign_map_regions(id) ON DELETE SET NULL;
+
+ALTER TABLE public.campaign_objectives
+  DROP CONSTRAINT IF EXISTS campaign_objectives_location_type_check;
+
+ALTER TABLE public.campaign_objectives
+  ADD CONSTRAINT campaign_objectives_location_type_check CHECK (location_type IN ('pin', 'burg', 'marker', 'region'));
+
+ALTER TABLE public.campaign_objectives
+  DROP CONSTRAINT IF EXISTS campaign_objectives_location_choice;
+
+ALTER TABLE public.campaign_objectives
+  ADD CONSTRAINT campaign_objectives_location_choice CHECK (
+    (location_type IS NULL AND location_burg_id IS NULL AND location_marker_id IS NULL AND location_pin IS NULL AND location_region_id IS NULL)
+    OR (location_type = 'pin' AND location_pin IS NOT NULL AND location_burg_id IS NULL AND location_marker_id IS NULL AND location_region_id IS NULL)
+    OR (location_type = 'burg' AND location_burg_id IS NOT NULL AND location_marker_id IS NULL AND location_pin IS NULL AND location_region_id IS NULL)
+    OR (location_type = 'marker' AND location_marker_id IS NOT NULL AND location_burg_id IS NULL AND location_pin IS NULL AND location_region_id IS NULL)
+    OR (location_type = 'region' AND location_region_id IS NOT NULL AND location_burg_id IS NULL AND location_marker_id IS NULL AND location_pin IS NULL)
+  );
+
+CREATE INDEX IF NOT EXISTS idx_campaign_objectives_location_region_id ON public.campaign_objectives(location_region_id);
 CREATE INDEX IF NOT EXISTS idx_campaign_objectives_order ON public.campaign_objectives(campaign_id, order_index);
 CREATE INDEX IF NOT EXISTS idx_campaign_objectives_location_burg ON public.campaign_objectives(location_burg_id);
 CREATE INDEX IF NOT EXISTS idx_campaign_objectives_location_marker ON public.campaign_objectives(location_marker_id);

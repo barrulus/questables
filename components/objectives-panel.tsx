@@ -16,11 +16,11 @@ import {
   type ObjectiveUpdatePayload,
   type ObjectiveAssistField,
   type SpawnPoint,
+  type CampaignRegion,
 } from "../utils/api-client";
 import { Campaign } from "./campaign-shared";
 import { useWebSocket } from "../hooks/useWebSocket";
 import { useGameSession } from "../contexts/GameSessionContext";
-import { ObjectivePinMap } from "./objective-pin-map";
 import { Button } from "./ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "./ui/card";
 import { Badge } from "./ui/badge";
@@ -60,7 +60,6 @@ import {
   RefreshCcw,
   MapPin,
   Landmark,
-  Map as MapIcon,
   GitBranchPlus,
   Sparkles,
   Loader2,
@@ -71,7 +70,7 @@ const toNullable = (value: string): string | null => {
   return trimmed.length > 0 ? trimmed : null;
 };
 
-type ObjectiveLocationKind = "none" | "pin" | "burg" | "marker";
+type ObjectiveLocationKind = "none" | "pin" | "burg" | "marker" | "region";
 
 interface ObjectiveFormValues {
   title: string;
@@ -87,6 +86,7 @@ interface ObjectiveFormValues {
   pin: { x: number; y: number } | null;
   locationBurgId: string | null;
   locationMarkerId: string | null;
+  locationRegionId: string | null;
 }
 
 interface ObjectiveTreeNode {
@@ -196,6 +196,8 @@ interface ObjectivesPanelProps {
   } | null;
   worldMapLoading?: boolean;
   worldMapError?: string | null;
+  regions?: CampaignRegion[];
+  refreshKey?: number;
 }
 
 const buildObjectiveTree = (records: ObjectiveRecord[]): ObjectiveTreeNode[] => {
@@ -244,6 +246,7 @@ const objectiveToFormValues = (objective: ObjectiveRecord): ObjectiveFormValues 
   let pin: { x: number; y: number } | null = null;
   let locationBurgId: string | null = null;
   let locationMarkerId: string | null = null;
+  let locationRegionId: string | null = null;
 
   if (objective.location?.type === "pin" && Array.isArray(objective.location.pin?.coordinates)) {
     const [x, y] = objective.location.pin.coordinates;
@@ -257,6 +260,9 @@ const objectiveToFormValues = (objective: ObjectiveRecord): ObjectiveFormValues 
   } else if (objective.location?.type === "marker" && objective.location.markerId) {
     locationType = "marker";
     locationMarkerId = objective.location.markerId;
+  } else if (objective.location?.type === "region" && objective.location.regionId) {
+    locationType = "region";
+    locationRegionId = objective.location.regionId;
   }
 
   return {
@@ -273,6 +279,7 @@ const objectiveToFormValues = (objective: ObjectiveRecord): ObjectiveFormValues 
     pin,
     locationBurgId,
     locationMarkerId,
+    locationRegionId,
   };
 };
 
@@ -290,6 +297,8 @@ const formValuesToPayload = (
     location = { type: "burg", burgId: values.locationBurgId };
   } else if (values.locationType === "marker" && values.locationMarkerId) {
     location = { type: "marker", markerId: values.locationMarkerId };
+  } else if (values.locationType === "region" && values.locationRegionId) {
+    location = { type: "region", regionId: values.locationRegionId };
   }
 
   const base: Omit<ObjectiveCreatePayload, "title" | "location"> & Partial<Omit<ObjectiveUpdatePayload, "title" | "location">> = {
@@ -310,6 +319,7 @@ const buildLocationSummary = (
   objective: ObjectiveRecord,
   burgs: Map<string, BurgOption>,
   markers: Map<string, MarkerOption>,
+  regions: Map<string, CampaignRegion>,
 ): string => {
   if (!objective.location) {
     return "No location set";
@@ -330,6 +340,11 @@ const buildLocationSummary = (
     return reference ? `Marker · ${reference.label}` : "Linked marker";
   }
 
+  if (objective.location.type === "region") {
+    const reference = objective.location.regionId ? regions.get(objective.location.regionId) : null;
+    return reference ? `Region · ${reference.name}` : "Linked region";
+  }
+
   return "Location configured";
 };
 
@@ -347,6 +362,7 @@ interface ObjectiveDialogProps {
   markerUnavailable: boolean;
   burgOptions: BurgOption[];
   markerOptions: MarkerOption[];
+  regionIndex: Map<string, CampaignRegion>;
   assistEnabled: boolean;
   assistStates: Record<ObjectiveAssistField, AssistUiState>;
   onRequestAssist: (_field: ObjectiveAssistField) => void;
@@ -367,20 +383,14 @@ const ObjectiveDialog = ({
   markerUnavailable,
   burgOptions,
   markerOptions,
+  regionIndex,
   assistEnabled,
   assistStates,
   onRequestAssist,
   assistDisabledReason,
 }: ObjectiveDialogProps) => {
-  const [pinPickerOpen, setPinPickerOpen] = useState(false);
   const [burgBrowserOpen, setBurgBrowserOpen] = useState(false);
   const [markerBrowserOpen, setMarkerBrowserOpen] = useState(false);
-
-  useEffect(() => {
-    if (!open) {
-      setPinPickerOpen(false);
-    }
-  }, [open]);
 
   const renderAssistButton = (field: ObjectiveAssistField) => {
     const label = assistFieldLabels[field];
@@ -587,16 +597,17 @@ const ObjectiveDialog = ({
                 <Select
                   value={values.locationType}
                   disabled={disabled || (!worldMap && values.locationType === "pin")}
-                  onValueChange={(value) => {
-                    const next = value as ObjectiveLocationKind;
-                    onChange({
-                      ...values,
-                      locationType: next,
-                      pin: next === "pin" ? values.pin : null,
-                      locationBurgId: next === "burg" ? values.locationBurgId : null,
-                      locationMarkerId: next === "marker" ? values.locationMarkerId : null,
-                    });
-                  }}
+                    onValueChange={(value) => {
+                      const next = value as ObjectiveLocationKind;
+                      onChange({
+                        ...values,
+                        locationType: next,
+                        pin: next === "pin" ? values.pin : null,
+                        locationBurgId: next === "burg" ? values.locationBurgId : null,
+                        locationMarkerId: next === "marker" ? values.locationMarkerId : null,
+                        locationRegionId: next === "region" ? values.locationRegionId : null,
+                      });
+                    }}
                 >
                   <SelectTrigger aria-label="Objective location type">
                     <SelectValue placeholder="Select location type" />
@@ -608,6 +619,7 @@ const ObjectiveDialog = ({
                     </SelectItem>
                     <SelectItem value="burg">Existing burg</SelectItem>
                     <SelectItem value="marker">Map marker</SelectItem>
+                    <SelectItem value="region">Campaign region</SelectItem>
                   </SelectContent>
                 </Select>
                 {markerUnavailable && (
@@ -619,59 +631,18 @@ const ObjectiveDialog = ({
                   </Alert>
                 )}
                 {values.locationType === "pin" && (
-                  <div className="space-y-2">
-                    {!worldMap && (
-                      <Alert variant="default" className={WARNING_ALERT_CLASS}>
-                        <AlertTitle>World map required</AlertTitle>
-                        <AlertDescription>
-                          Link a world map to the campaign before setting pin-based objective locations.
-                        </AlertDescription>
-                      </Alert>
-                    )}
-                    {worldMap && (
-                      <>
-                        <div className="flex items-center justify-between gap-2 text-sm">
-                          <div>
-                            <span className="font-medium">Selected coordinates</span>
-                            <div className="text-xs text-muted-foreground">
-                              {values.pin
-                                ? `x: ${values.pin.x.toFixed(2)} · y: ${values.pin.y.toFixed(2)}`
-                                : "No point selected"}
-                            </div>
-                          </div>
-                          <Button
-                            type="button"
-                            size="sm"
-                            variant="outline"
-                            onClick={() => setPinPickerOpen(true)}
-                            disabled={disabled}
-                          >
-                          <MapIcon className="mr-2 h-4 w-4" />
-                            Select on map
-                          </Button>
-                        </div>
-                        <Dialog open={pinPickerOpen} onOpenChange={setPinPickerOpen}>
-                          <DialogContent className="max-w-4xl">
-                            <DialogHeader>
-                              <DialogTitle>Select objective coordinates</DialogTitle>
-                              <DialogDescription>
-                                Click the world map to position the objective. Coordinates are stored in SRID 0 immediately when you save the objective.
-                              </DialogDescription>
-                            </DialogHeader>
-                            <ObjectivePinMap
-                              worldMap={worldMap}
-                              value={values.pin}
-                              onSelect={(coords) => onChange({ ...values, pin: coords })}
-                            />
-                            <DialogFooter>
-                              <Button variant="outline" onClick={() => setPinPickerOpen(false)}>
-                                Done
-                              </Button>
-                            </DialogFooter>
-                          </DialogContent>
-                        </Dialog>
-                      </>
-                    )}
+                  <div className="rounded-md border bg-muted/30 px-3 py-2 text-xs text-muted-foreground">
+                    <div className="flex items-center justify-between">
+                      <span className="font-medium text-foreground">Map pin</span>
+                      <span>
+                        {values.pin
+                          ? `x: ${values.pin.x.toFixed(2)} · y: ${values.pin.y.toFixed(2)}`
+                          : "No pin assigned"}
+                      </span>
+                    </div>
+                    <p className="mt-2">
+                      Pin locations are managed from the Campaign Prep Map. Use the map context menu to reposition this objective.
+                    </p>
                   </div>
                 )}
                 {values.locationType === "burg" && (
@@ -756,6 +727,21 @@ const ObjectiveDialog = ({
                           Browse markers
                         </Button>
                       )}
+                  </div>
+                )}
+                {values.locationType === "region" && (
+                  <div className="rounded-md border bg-muted/30 px-3 py-2 text-xs text-muted-foreground">
+                    <div className="flex items-center justify-between">
+                      <span className="font-medium text-foreground">Region</span>
+                      <span>
+                        {values.locationRegionId
+                          ? regionIndex.get(values.locationRegionId)?.name ?? values.locationRegionId
+                          : "No region linked"}
+                      </span>
+                    </div>
+                    <p className="mt-2">
+                      Regions are managed from the Campaign Prep Map. Use the map context menu to assign or adjust region links.
+                    </p>
                   </div>
                 )}
               </div>
@@ -940,6 +926,7 @@ interface ObjectiveTreeProps {
   canEdit: boolean;
   burgIndex: Map<string, BurgOption>;
   markerIndex: Map<string, MarkerOption>;
+  regionIndex: Map<string, CampaignRegion>;
   reordering: boolean;
   onDragStart: (_id: string, _parentId: string | null) => void;
   onDragEnd: () => void;
@@ -958,6 +945,7 @@ const ObjectiveTree = ({
   canEdit,
   burgIndex,
   markerIndex,
+  regionIndex,
   reordering,
   onDragStart,
   onDragEnd,
@@ -971,7 +959,7 @@ const ObjectiveTree = ({
         const { record } = node;
         const hasChildren = node.children.length > 0;
         const isExpanded = expanded.has(record.id);
-        const locationSummary = buildLocationSummary(record, burgIndex, markerIndex);
+        const locationSummary = buildLocationSummary(record, burgIndex, markerIndex, regionIndex);
         const isDropBefore = dropTarget?.id === record.id && dropTarget.position === "before";
         const isDropAfter = dropTarget?.id === record.id && dropTarget.position === "after";
 
@@ -1142,7 +1130,7 @@ const ObjectiveTree = ({
   return <div className="space-y-2">{renderNodes(nodes)}</div>;
 };
 
-export function ObjectivesPanel({ campaign, canEdit, worldMap, worldMapLoading, worldMapError }: ObjectivesPanelProps) {
+export function ObjectivesPanel({ campaign, canEdit, worldMap, worldMapLoading, worldMapError, regions, refreshKey }: ObjectivesPanelProps) {
   const [objectives, setObjectives] = useState<ObjectiveRecord[]>([]);
   const [loading, setLoading] = useState(false);
   const [loadError, setLoadError] = useState<string | null>(null);
@@ -1192,6 +1180,14 @@ export function ObjectivesPanel({ campaign, canEdit, worldMap, worldMapLoading, 
     return map;
   }, [markerOptions]);
 
+  const regionIndex = useMemo(() => {
+    const map = new Map<string, CampaignRegion>();
+    (regions ?? []).forEach((region) => {
+      map.set(region.id, region);
+    });
+    return map;
+  }, [regions]);
+
   const tree = useMemo(() => buildObjectiveTree(objectives), [objectives]);
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
 
@@ -1228,7 +1224,7 @@ export function ObjectivesPanel({ campaign, canEdit, worldMap, worldMapLoading, 
   useEffect(() => {
     processedMessageIndexRef.current = 0;
     void loadObjectives();
-  }, [loadObjectives]);
+  }, [loadObjectives, refreshKey]);
 
   useEffect(() => {
     if (!campaign?.id) {
@@ -1897,6 +1893,7 @@ export function ObjectivesPanel({ campaign, canEdit, worldMap, worldMapLoading, 
                 canEdit={canEdit}
                 burgIndex={burgIndex}
                 markerIndex={markerIndex}
+                regionIndex={regionIndex}
                 reordering={reordering}
                 onDragStart={(id, parentId) => {
                   setDragState({ id, parentId });
@@ -1946,6 +1943,7 @@ export function ObjectivesPanel({ campaign, canEdit, worldMap, worldMapLoading, 
                 pin: null,
                 locationBurgId: null,
                 locationMarkerId: null,
+                locationRegionId: null,
               }
             : {
                 title: "",
@@ -1961,6 +1959,7 @@ export function ObjectivesPanel({ campaign, canEdit, worldMap, worldMapLoading, 
                 pin: null,
                 locationBurgId: null,
                 locationMarkerId: null,
+                locationRegionId: null,
               }
         }
         onChange={(next) => setFormValues(next)}
@@ -1972,6 +1971,7 @@ export function ObjectivesPanel({ campaign, canEdit, worldMap, worldMapLoading, 
         markerUnavailable={markerUnavailable}
         burgOptions={burgOptions}
         markerOptions={markerOptions}
+        regionIndex={regionIndex}
         assistEnabled={false}
         assistStates={disabledAssistState}
         onRequestAssist={() => {}}
@@ -1999,6 +1999,7 @@ export function ObjectivesPanel({ campaign, canEdit, worldMap, worldMapLoading, 
           markerUnavailable={markerUnavailable}
           burgOptions={burgOptions}
           markerOptions={markerOptions}
+          regionIndex={regionIndex}
           assistEnabled={Boolean(activeObjective.id) && canEdit}
           assistStates={assistStates}
           onRequestAssist={handleRequestAssist}

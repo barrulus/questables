@@ -1,10 +1,13 @@
 import { Router } from 'express';
 import { logError, logInfo } from '../utils/logger.js';
+import { requireAuth, requireCampaignParticipation } from '../auth-middleware.js';
+import { getClient } from '../db/pool.js';
 import {
   createWorldMap,
   listWorldMaps,
   getWorldMapById,
   listWorldBurgs,
+  searchWorldBurgs,
   listWorldMarkers,
   listWorldRivers,
   listWorldRoutes,
@@ -12,7 +15,12 @@ import {
   createCampaignLocation,
   listCampaignLocations,
   listTileSets,
+  listCampaignRegions,
+  createCampaignRegion,
+  updateCampaignRegion,
+  deleteCampaignRegion,
 } from '../services/maps/service.js';
+import { getViewerContextOrThrow, ensureDmControl } from '../services/campaigns/service.js';
 
 const router = Router();
 
@@ -77,6 +85,20 @@ router.get('/tilesets', async (_req, res) => {
   } catch (error) {
     logError('Tile set listing failed', error);
     return res.status(500).json({ error: error.message });
+  }
+});
+
+router.get('/:worldId/burgs/search', async (req, res) => {
+  const { worldId } = req.params;
+  const { q, limit } = req.query;
+
+  try {
+    const results = await searchWorldBurgs({ worldId, term: q, limit });
+    return res.json({ results });
+  } catch (error) {
+    logError('World map burg search failed', error, { worldId, q });
+    const status = error.status || 500;
+    return res.status(status).json({ error: error.code || 'maps_burgs_search_failed', message: error.message });
   }
 });
 
@@ -206,4 +228,187 @@ export const registerMapRoutes = (app) => {
       return res.status(status).json({ error: error.code || 'location_list_failed', message: error.message });
     }
   });
+
+  const ensureMapRegionAccess = async (campaignId, user, appLabel) => {
+    const client = await getClient({ label: appLabel });
+    try {
+      const viewer = await getViewerContextOrThrow(client, campaignId, user);
+      ensureDmControl(viewer, 'Only DMs or co-DMs can manage campaign map regions.');
+      return null;
+    } catch (error) {
+      return error;
+    } finally {
+      client.release();
+    }
+  };
+
+  app.get(
+    '/api/campaigns/:campaignId/map-regions',
+    requireAuth,
+    requireCampaignParticipation,
+    async (req, res) => {
+      const { campaignId } = req.params;
+
+      const authError = await ensureMapRegionAccess(
+        campaignId,
+        req.user,
+        'campaign.map_regions.list.auth',
+      );
+      if (authError) {
+        const status = authError.status || 403;
+        return res.status(status).json({
+          error: authError.code || 'map_regions_forbidden',
+          message: authError.message || 'Unable to access campaign map regions.',
+        });
+      }
+
+      try {
+        const regions = await listCampaignRegions(campaignId);
+        return res.json({ regions });
+      } catch (error) {
+        logError('Campaign map regions list failed', error, { campaignId });
+        const status = error.status || 500;
+        return res.status(status).json({
+          error: error.code || 'map_regions_list_failed',
+          message: error.message || 'Failed to load campaign map regions.',
+        });
+      }
+    },
+  );
+
+  app.post(
+    '/api/campaigns/:campaignId/map-regions',
+    requireAuth,
+    requireCampaignParticipation,
+    async (req, res) => {
+      const { campaignId } = req.params;
+
+      const authError = await ensureMapRegionAccess(
+        campaignId,
+        req.user,
+        'campaign.map_regions.create.auth',
+      );
+      if (authError) {
+        const status = authError.status || 403;
+        return res.status(status).json({
+          error: authError.code || 'map_regions_forbidden',
+          message: authError.message || 'Unable to manage campaign map regions.',
+        });
+      }
+
+      try {
+        const region = await createCampaignRegion(campaignId, req.body ?? {}, { actorId: req.user.id });
+        logInfo('Campaign map region created', {
+          telemetryEvent: 'campaign.map_region.created',
+          campaignId,
+          regionId: region?.id ?? null,
+          userId: req.user.id,
+        });
+        return res.status(201).json({ region });
+      } catch (error) {
+        logError('Campaign map region creation failed', error, { campaignId, userId: req.user.id });
+        const status = error.status || 500;
+        return res.status(status).json({
+          error: error.code || 'map_region_create_failed',
+          message: error.message || 'Failed to create campaign map region.',
+        });
+      }
+    },
+  );
+
+  app.put(
+    '/api/campaigns/:campaignId/map-regions/:regionId',
+    requireAuth,
+    requireCampaignParticipation,
+    async (req, res) => {
+      const { campaignId, regionId } = req.params;
+
+      const authError = await ensureMapRegionAccess(
+        campaignId,
+        req.user,
+        'campaign.map_regions.update.auth',
+      );
+      if (authError) {
+        const status = authError.status || 403;
+        return res.status(status).json({
+          error: authError.code || 'map_regions_forbidden',
+          message: authError.message || 'Unable to manage campaign map regions.',
+        });
+      }
+
+      try {
+        const region = await updateCampaignRegion(campaignId, regionId, req.body ?? {}, { actorId: req.user.id });
+        if (!region) {
+          return res.status(404).json({
+            error: 'map_region_not_found',
+            message: 'Map region not found for this campaign.',
+          });
+        }
+
+        logInfo('Campaign map region updated', {
+          telemetryEvent: 'campaign.map_region.updated',
+          campaignId,
+          regionId,
+          userId: req.user.id,
+        });
+
+        return res.json({ region });
+      } catch (error) {
+        logError('Campaign map region update failed', error, { campaignId, regionId, userId: req.user.id });
+        const status = error.status || 500;
+        return res.status(status).json({
+          error: error.code || 'map_region_update_failed',
+          message: error.message || 'Failed to update campaign map region.',
+        });
+      }
+    },
+  );
+
+  app.delete(
+    '/api/campaigns/:campaignId/map-regions/:regionId',
+    requireAuth,
+    requireCampaignParticipation,
+    async (req, res) => {
+      const { campaignId, regionId } = req.params;
+
+      const authError = await ensureMapRegionAccess(
+        campaignId,
+        req.user,
+        'campaign.map_regions.delete.auth',
+      );
+      if (authError) {
+        const status = authError.status || 403;
+        return res.status(status).json({
+          error: authError.code || 'map_regions_forbidden',
+          message: authError.message || 'Unable to manage campaign map regions.',
+        });
+      }
+
+      try {
+        const removed = await deleteCampaignRegion(campaignId, regionId);
+        if (!removed) {
+          return res.status(404).json({
+            error: 'map_region_not_found',
+            message: 'Map region not found for this campaign.',
+          });
+        }
+
+        logInfo('Campaign map region deleted', {
+          telemetryEvent: 'campaign.map_region.deleted',
+          campaignId,
+          regionId,
+          userId: req.user.id,
+        });
+
+        return res.status(204).send();
+      } catch (error) {
+        logError('Campaign map region delete failed', error, { campaignId, regionId, userId: req.user.id });
+        const status = error.status || 500;
+        return res.status(status).json({
+          error: error.code || 'map_region_delete_failed',
+          message: error.message || 'Failed to delete campaign map region.',
+        });
+      }
+    },
+  );
 };

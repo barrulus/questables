@@ -1,6 +1,12 @@
 import { query } from '../../db/pool.js';
 import { parseBounds } from '../campaigns/service.js';
 
+const UUID_REGEX = /^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-5][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$/;
+const REGION_CATEGORY_SET = new Set(['encounter', 'rumour', 'narrative', 'travel', 'custom']);
+const DEFAULT_REGION_CATEGORY = 'custom';
+const BURG_SEARCH_LIMIT = { min: 1, max: 50, default: 10 };
+const ESCAPE_LIKE_REGEX = /[%_\\]/g;
+
 const ensureBounds = (bounds) => {
   const normalized = parseBounds(bounds);
   if (!normalized) {
@@ -11,6 +17,197 @@ const ensureBounds = (bounds) => {
   }
   return normalized;
 };
+
+const isUuid = (value) => typeof value === 'string' && UUID_REGEX.test(value);
+
+const createValidationError = (code, message) => {
+  const error = new Error(message);
+  error.code = code;
+  error.status = 400;
+  return error;
+};
+
+const sanitizeText = (value, { field, required = false, maxLength = 255 } = {}) => {
+  if (value === undefined || value === null) {
+    if (required) {
+      throw createValidationError('missing_field', `${field} is required.`);
+    }
+    return null;
+  }
+
+  if (typeof value !== 'string') {
+    throw createValidationError('invalid_field_type', `${field} must be a string.`);
+  }
+
+  const trimmed = value.trim();
+  if (!trimmed) {
+    if (required) {
+      throw createValidationError('invalid_field', `${field} cannot be blank.`);
+    }
+    return null;
+  }
+
+  if (trimmed.length > maxLength) {
+    throw createValidationError('field_too_long', `${field} cannot exceed ${maxLength} characters.`);
+  }
+
+  return trimmed;
+};
+
+const sanitizeRegionCategory = (category) => {
+  if (category === undefined || category === null) {
+    return DEFAULT_REGION_CATEGORY;
+  }
+
+  if (typeof category !== 'string') {
+    throw createValidationError('invalid_region_category', 'category must be a string.');
+  }
+
+  const normalized = category.trim().toLowerCase();
+  if (!REGION_CATEGORY_SET.has(normalized)) {
+    throw createValidationError(
+      'unsupported_region_category',
+      `category must be one of ${Array.from(REGION_CATEGORY_SET).join(', ')}.`,
+    );
+  }
+
+  return normalized;
+};
+
+const sanitizeRegionColor = (color) => {
+  if (color === undefined || color === null) {
+    return null;
+  }
+
+  if (typeof color !== 'string') {
+    throw createValidationError('invalid_region_color', 'color must be a string.');
+  }
+
+  const trimmed = color.trim();
+  if (!/^#[0-9A-Fa-f]{6}$/.test(trimmed)) {
+    throw createValidationError('invalid_region_color', 'color must be a hex value formatted as #RRGGBB.');
+  }
+
+  return trimmed;
+};
+
+const normalizeMetadata = (metadata) => {
+  if (metadata === undefined || metadata === null) {
+    return '{}';
+  }
+
+  if (typeof metadata === 'string') {
+    try {
+      const parsed = JSON.parse(metadata);
+      if (parsed && typeof parsed === 'object') {
+        return JSON.stringify(parsed);
+      }
+      throw new Error('Metadata string must be a JSON object.');
+    } catch (error) {
+      throw createValidationError('invalid_region_metadata', error.message || 'Invalid metadata JSON string.');
+    }
+  }
+
+  if (typeof metadata === 'object') {
+    try {
+      return JSON.stringify(metadata);
+    } catch {
+      throw createValidationError('invalid_region_metadata', 'Metadata object could not be serialized.');
+    }
+  }
+
+  throw createValidationError('invalid_region_metadata', 'Metadata must be an object or JSON string.');
+};
+
+const normalizeGeometry = (geometry) => {
+  if (geometry === undefined || geometry === null) {
+    throw createValidationError('missing_region_geometry', 'geometry is required.');
+  }
+
+  let parsed = geometry;
+  if (typeof geometry === 'string') {
+    try {
+      parsed = JSON.parse(geometry);
+    } catch {
+      throw createValidationError('invalid_region_geometry', 'geometry must be valid GeoJSON.');
+    }
+  }
+
+  if (!parsed || typeof parsed !== 'object') {
+    throw createValidationError('invalid_region_geometry', 'geometry must be a GeoJSON object.');
+  }
+
+  const type = typeof parsed.type === 'string' ? parsed.type : null;
+  if (!type || !['Polygon', 'MultiPolygon'].includes(type)) {
+    throw createValidationError(
+      'unsupported_region_geometry',
+      'geometry must be a Polygon or MultiPolygon GeoJSON object.',
+    );
+  }
+
+  const coordinates = parsed.coordinates;
+  if (!Array.isArray(coordinates) || coordinates.length === 0) {
+    throw createValidationError('invalid_region_geometry', 'geometry coordinates must be a non-empty array.');
+  }
+
+  if (type === 'Polygon') {
+    return JSON.stringify({ type: 'MultiPolygon', coordinates: [coordinates] });
+  }
+
+  return JSON.stringify(parsed);
+};
+
+const sanitizeRegionPayload = (payload, { requireGeometry = true } = {}) => {
+  if (!payload || typeof payload !== 'object') {
+    throw createValidationError('invalid_payload', 'Region payload must be an object.');
+  }
+
+  const sanitized = {
+    name: sanitizeText(payload.name, { field: 'name', required: true, maxLength: 120 }),
+    description: sanitizeText(payload.description, { field: 'description', required: false, maxLength: 2000 }),
+    category: sanitizeRegionCategory(payload.category),
+    color: sanitizeRegionColor(payload.color),
+    metadata: normalizeMetadata(payload.metadata),
+  };
+
+  if (payload.world_map_id !== undefined || payload.worldMapId !== undefined) {
+    const worldMapCandidate = payload.world_map_id ?? payload.worldMapId;
+    if (worldMapCandidate === null) {
+      sanitized.worldMapId = null;
+    } else if (!isUuid(worldMapCandidate)) {
+      throw createValidationError('invalid_world_map_reference', 'worldMapId must be a valid UUID when provided.');
+    } else {
+      sanitized.worldMapId = worldMapCandidate;
+    }
+  } else {
+    sanitized.worldMapId = null;
+  }
+
+  if (requireGeometry || Object.prototype.hasOwnProperty.call(payload, 'geometry') || Object.prototype.hasOwnProperty.call(payload, 'region')) {
+    const rawGeometry = payload.geometry ?? payload.region;
+    sanitized.geometry = normalizeGeometry(rawGeometry);
+  }
+
+  return sanitized;
+};
+
+const formatRegionRow = (row) => ({
+  id: row.id,
+  campaignId: row.campaign_id,
+  worldMapId: row.world_map_id ?? null,
+  name: row.name,
+  description: row.description ?? null,
+  category: row.category,
+  color: row.color ?? null,
+  metadata: row.metadata ?? {},
+  geometry: row.geometry,
+  createdBy: row.created_by ?? null,
+  updatedBy: row.updated_by ?? null,
+  createdAt: row.created_at instanceof Date ? row.created_at.toISOString() : row.created_at,
+  updatedAt: row.updated_at instanceof Date ? row.updated_at.toISOString() : row.updated_at,
+});
+
+const escapeLikePattern = (term) => term.replace(ESCAPE_LIKE_REGEX, (match) => `\\${match}`);
 
 export const createWorldMap = async ({
   name,
@@ -110,6 +307,54 @@ export const listWorldBurgs = async ({ worldId, bounds }) => {
   }
 
   const { rows } = await query(text, params, { label: 'maps.burgs.list' });
+  return rows;
+};
+
+export const searchWorldBurgs = async ({ worldId, term, limit }) => {
+  const queryTerm = typeof term === 'string' ? term.trim() : '';
+  if (!queryTerm) {
+    throw createValidationError('search_term_required', 'Search term "q" must be provided.');
+  }
+
+  const numericLimit = Number.parseInt(limit, 10);
+  const boundedLimit = Number.isFinite(numericLimit)
+    ? Math.min(Math.max(numericLimit, BURG_SEARCH_LIMIT.min), BURG_SEARCH_LIMIT.max)
+    : BURG_SEARCH_LIMIT.default;
+
+  const pattern = `%${escapeLikePattern(queryTerm)}%`;
+
+  const { rows } = await query(
+    `
+      SELECT id,
+             world_id,
+             burg_id,
+             name,
+             state,
+             province,
+             culture,
+             religion,
+             population,
+             populationraw,
+             elevation,
+             capital,
+             port,
+             citadel,
+             walls,
+             plaza,
+             temple,
+             x_px,
+             y_px,
+             ST_AsGeoJSON(geom)::json AS geometry
+        FROM maps_burgs
+       WHERE world_id = $1
+         AND name ILIKE $2 ESCAPE '\\'
+       ORDER BY population DESC NULLS LAST, name ASC
+       LIMIT $3
+    `,
+    [worldId, pattern, boundedLimit],
+    { label: 'maps.burgs.search' },
+  );
+
   return rows;
 };
 
@@ -320,4 +565,232 @@ export const listTileSets = async () => {
   );
 
   return rows;
+};
+
+export const listCampaignRegions = async (campaignId) => {
+  const { rows } = await query(
+    `
+      SELECT
+        cmr.id,
+        cmr.campaign_id,
+        cmr.world_map_id,
+        cmr.name,
+        cmr.description,
+        cmr.category,
+        cmr.color,
+        cmr.metadata,
+        ST_AsGeoJSON(cmr.region)::json AS geometry,
+        cmr.created_by,
+        cmr.updated_by,
+        cmr.created_at,
+        cmr.updated_at
+      FROM campaign_map_regions cmr
+     WHERE cmr.campaign_id = $1
+     ORDER BY cmr.created_at ASC
+    `,
+    [campaignId],
+    { label: 'campaign.map_regions.list' },
+  );
+
+  return rows.map(formatRegionRow);
+};
+
+export const createCampaignRegion = async (campaignId, payload, { actorId } = {}) => {
+  const sanitized = sanitizeRegionPayload(payload, { requireGeometry: true });
+
+  const { rows } = await query(
+    `
+      INSERT INTO campaign_map_regions (
+        campaign_id,
+        world_map_id,
+        name,
+        description,
+        category,
+        color,
+        metadata,
+        region,
+        created_by,
+        updated_by
+      )
+      VALUES (
+        $1,
+        $2,
+        $3,
+        $4,
+        $5,
+        $6,
+        COALESCE($7::jsonb, '{}'::jsonb),
+        ST_Multi(ST_GeomFromGeoJSON($8)),
+        $9,
+        $9
+      )
+      RETURNING
+        id,
+        campaign_id,
+        world_map_id,
+        name,
+        description,
+        category,
+        color,
+        metadata,
+        ST_AsGeoJSON(region)::json AS geometry,
+        created_by,
+        updated_by,
+        created_at,
+        updated_at
+    `,
+    [
+      campaignId,
+      sanitized.worldMapId ?? null,
+      sanitized.name,
+      sanitized.description,
+      sanitized.category,
+      sanitized.color,
+      sanitized.metadata,
+      sanitized.geometry,
+      actorId ?? null,
+    ],
+    { label: 'campaign.map_regions.create' },
+  );
+
+  return rows[0] ? formatRegionRow(rows[0]) : null;
+};
+
+export const getCampaignRegionById = async (campaignId, regionId) => {
+  const { rows } = await query(
+    `
+      SELECT
+        cmr.id,
+        cmr.campaign_id,
+        cmr.world_map_id,
+        cmr.name,
+        cmr.description,
+        cmr.category,
+        cmr.color,
+        cmr.metadata,
+        ST_AsGeoJSON(cmr.region)::json AS geometry,
+        cmr.created_by,
+        cmr.updated_by,
+        cmr.created_at,
+        cmr.updated_at
+      FROM campaign_map_regions cmr
+     WHERE cmr.campaign_id = $1
+       AND cmr.id = $2
+     LIMIT 1
+    `,
+    [campaignId, regionId],
+    { label: 'campaign.map_regions.fetch' },
+  );
+
+  return rows[0] ? formatRegionRow(rows[0]) : null;
+};
+
+export const updateCampaignRegion = async (campaignId, regionId, payload, { actorId } = {}) => {
+  if (!payload || typeof payload !== 'object') {
+    throw createValidationError('invalid_payload', 'Region payload must be an object.');
+  }
+
+  const updates = [];
+  const values = [regionId, campaignId];
+  let paramIndex = 3;
+
+  if (Object.prototype.hasOwnProperty.call(payload, 'name')) {
+    updates.push(`name = $${paramIndex}`);
+    values.push(sanitizeText(payload.name, { field: 'name', required: true, maxLength: 120 }));
+    paramIndex += 1;
+  }
+
+  if (Object.prototype.hasOwnProperty.call(payload, 'description')) {
+    updates.push(`description = $${paramIndex}`);
+    values.push(sanitizeText(payload.description, { field: 'description', required: false, maxLength: 2000 }));
+    paramIndex += 1;
+  }
+
+  if (Object.prototype.hasOwnProperty.call(payload, 'category')) {
+    updates.push(`category = $${paramIndex}`);
+    values.push(sanitizeRegionCategory(payload.category));
+    paramIndex += 1;
+  }
+
+  if (Object.prototype.hasOwnProperty.call(payload, 'color')) {
+    updates.push(`color = $${paramIndex}`);
+    values.push(sanitizeRegionColor(payload.color));
+    paramIndex += 1;
+  }
+
+  if (Object.prototype.hasOwnProperty.call(payload, 'metadata')) {
+    updates.push(`metadata = COALESCE($${paramIndex}::jsonb, '{}'::jsonb)`);
+    values.push(normalizeMetadata(payload.metadata));
+    paramIndex += 1;
+  }
+
+  if (Object.prototype.hasOwnProperty.call(payload, 'geometry') || Object.prototype.hasOwnProperty.call(payload, 'region')) {
+    updates.push(`region = ST_Multi(ST_GeomFromGeoJSON($${paramIndex}))`);
+    values.push(normalizeGeometry(payload.geometry ?? payload.region));
+    paramIndex += 1;
+  }
+
+  if (Object.prototype.hasOwnProperty.call(payload, 'world_map_id') || Object.prototype.hasOwnProperty.call(payload, 'worldMapId')) {
+    const worldMapCandidate = payload.world_map_id ?? payload.worldMapId;
+    if (worldMapCandidate === null) {
+      updates.push('world_map_id = NULL');
+    } else {
+      if (!isUuid(worldMapCandidate)) {
+        throw createValidationError('invalid_world_map_reference', 'worldMapId must be a valid UUID when provided.');
+      }
+      updates.push(`world_map_id = $${paramIndex}`);
+      values.push(worldMapCandidate);
+      paramIndex += 1;
+    }
+  }
+
+  if (updates.length === 0) {
+    throw createValidationError('no_region_updates', 'No updatable fields were provided.');
+  }
+
+  updates.push('updated_at = NOW()');
+  updates.push(`updated_by = $${paramIndex}`);
+  values.push(actorId ?? null);
+  paramIndex += 1;
+
+  const { rows } = await query(
+    `
+      UPDATE campaign_map_regions
+         SET ${updates.join(', ')}
+       WHERE id = $1
+         AND campaign_id = $2
+       RETURNING
+         id,
+         campaign_id,
+         world_map_id,
+         name,
+         description,
+         category,
+         color,
+         metadata,
+         ST_AsGeoJSON(region)::json AS geometry,
+         created_by,
+         updated_by,
+         created_at,
+         updated_at
+    `,
+    values,
+    { label: 'campaign.map_regions.update' },
+  );
+
+  return rows[0] ? formatRegionRow(rows[0]) : null;
+};
+
+export const deleteCampaignRegion = async (campaignId, regionId) => {
+  const { rowCount } = await query(
+    `
+      DELETE FROM campaign_map_regions
+       WHERE campaign_id = $1
+         AND id = $2
+    `,
+    [campaignId, regionId],
+    { label: 'campaign.map_regions.delete' },
+  );
+
+  return rowCount > 0;
 };

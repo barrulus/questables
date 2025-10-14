@@ -33,7 +33,6 @@ import View from 'ol/View';
 import TileLayer from 'ol/layer/Tile';
 import VectorLayer from 'ol/layer/Vector';
 import VectorSource from 'ol/source/Vector';
-import XYZ from 'ol/source/XYZ';
 import Feature from 'ol/Feature';
 import type { FeatureLike } from 'ol/Feature';
 import Point from 'ol/geom/Point';
@@ -43,11 +42,19 @@ import GeoJSON from 'ol/format/GeoJSON';
 import type { GeoJSONFeature } from 'ol/format/GeoJSON';
 import { Style, Fill, Stroke, Circle as CircleStyle, Text } from 'ol/style';
 import 'ol/ol.css';
-import TileGrid from 'ol/tilegrid/TileGrid';
 import { defaults as defaultControls } from 'ol/control';
 import { Overlay } from 'ol';
 import { mapDataLoader, type WorldMapBounds } from './map-data-loader';
 import { DEFAULT_PIXEL_EXTENT, questablesProjection, updateProjectionExtent, PIXEL_PROJECTION_CODE } from './map-projection';
+import {
+  LABEL_VISIBILITY,
+  createBurgStyleFactory,
+  createMarkerStyleFactory,
+  createRouteStyleFactory,
+  getRiverStyle,
+  getCellStyle,
+} from './maps/questables-style-factory';
+import { createQuestablesTileSource, type TileSetConfig } from './maps/questables-tile-source';
 import { useGameSession } from "../contexts/GameSessionContext";
 import { useUser } from "../contexts/UserContext";
 import { useWebSocket } from "../hooks/useWebSocket";
@@ -110,17 +117,6 @@ interface WorldMapSummary {
   bounds: WorldMapBounds;
 }
 
-interface TileSetConfig {
-  id: string;
-  name: string;
-  base_url: string;
-  attribution?: string;
-  min_zoom?: number;
-  max_zoom?: number;
-  tile_size?: number;
-  wrapX?: boolean;
-}
-
 interface PopupDetails {
   data: unknown;
   feature: Feature;
@@ -140,48 +136,6 @@ interface LayerVisibility {
   playerTokens: boolean;
   playerTrails: boolean;
 }
-
-const LABEL_VISIBILITY = {
-  burgs: 3,
-  markers: 6,
-  campaignLocations: 7,
-  pins: 6
-} as const;
-
-const MARKER_TYPE_ICONS: Record<string, string> = {
-  circuses: '🎪',
-  mirage: '💦',
-  caves: '🦇',
-  jousts: '🤺',
-  waterfalls: '⟱',
-  inns: '🍻',
-  'hot-springs': '♨️',
-  dungeons: '🗝️',
-  'hill-monsters': '👹',
-  'water-sources': '💧',
-  bridges: '🌉',
-  'sea-monsters': '🦑',
-  canoes: '🛶',
-  'disturbed-burials': '💀',
-  volcanoes: '🌋',
-  libraries: '📚',
-  pirates: '🏴‍☠️',
-  rifts: '🎆',
-  'sacred-pineries': '🌲',
-  'lake-monsters': '🐉',
-  battlefields: '⚔️',
-  'sacred-forests': '🌳',
-  brigands: '💰',
-  lighthouses: '🚨',
-  encounters: '🧙',
-  statues: '🗿',
-  necropolises: '🪦',
-  migration: '🐗',
-  ruins: '🏺',
-  fairs: '🎠',
-  mines: '⛏️',
-  portals: '🌀'
-};
 
 const INTERACTIVE_FEATURE_TYPES = new Set(['burg', 'marker', 'player']);
 const MOVE_PROMPT_TOAST_ID = 'player-move-selection';
@@ -221,116 +175,6 @@ const formatTypeLabel = (type: unknown): string => {
   }
   const cleaned = type.replace(/_/g, ' ');
   return cleaned.charAt(0).toUpperCase() + cleaned.slice(1);
-};
-
-const DEFAULT_ROUTE_STYLE = new Style({
-  stroke: new Stroke({
-    color: '#b07a57',
-    width: 2,
-    lineCap: 'round',
-    lineJoin: 'round'
-  })
-});
-
-const DEFAULT_ROUTE_STYLES = [DEFAULT_ROUTE_STYLE];
-
-const ROUTE_STYLE_CONFIG: Record<string, { minZoom: number; styles: Style[] }> = {
-  royal: {
-    minZoom: 3,
-    styles: [
-      new Style({
-        stroke: new Stroke({
-          color: '#FFD700',
-          width: 3.5,
-          lineCap: 'round',
-          lineJoin: 'round'
-        })
-      }),
-      new Style({
-        stroke: new Stroke({
-          color: '#ee1a12ff',
-          width: 2.0,
-          lineCap: 'round',
-          lineJoin: 'round'
-        })
-      })
-    ]
-  },
-  majorSea: {
-    minZoom: 3,
-    styles: [
-      new Style({
-        stroke: new Stroke({
-          color: '#FFFFFF',
-          width: 3.5,
-          lineCap: 'round',
-          lineJoin: 'round'
-        })
-      }),
-      new Style({
-        stroke: new Stroke({
-          color: '#1D4ED8',
-          width: 3.0,
-          lineCap: 'round',
-          lineJoin: 'round'
-        })
-      })
-    ]
-  },
-  regional: {
-    minZoom: 5,
-    styles: [
-      new Style({
-        stroke: new Stroke({
-          color: '#87CEEB',
-          width: 3.0,
-          lineCap: 'round',
-          lineJoin: 'round'
-        })
-      })
-    ]
-  },
-  market: {
-    minZoom: 5,
-    styles: [
-      new Style({
-        stroke: new Stroke({
-          color: '#8B4513',
-          width: 3.0,
-          lineCap: 'round',
-          lineJoin: 'round'
-        })
-      })
-    ]
-  },
-  local: {
-    minZoom: 6,
-    styles: [
-      new Style({
-        stroke: new Stroke({
-          color: '#5C4033',
-          width: 2.5,
-          lineCap: 'round',
-          lineJoin: 'round',
-          lineDash: [8, 6]
-        })
-      })
-    ]
-  },
-  footpath: {
-    minZoom: 7,
-    styles: [
-      new Style({
-        stroke: new Stroke({
-          color: '#D2B48C',
-          width: 2.0,
-          lineCap: 'round',
-          lineJoin: 'round',
-          lineDash: [1, 8]
-        })
-      })
-    ]
-  }
 };
 
 const parseJsonValue = (value: unknown, fallback: unknown) => {
@@ -382,39 +226,6 @@ const normalizeConditions = (value: unknown): string[] => {
   return [];
 };
 
-const BURG_ZOOM_RULES = [
-  { minZoom: 6, minPopulation: 0 },
-  { minZoom: 5, minPopulation: 250 },
-  { minZoom: 4, minPopulation: 1000 },
-  { minZoom: 3, minPopulation: 10000 }
-] as const;
-
-const BURG_CATEGORY_THRESHOLDS = [
-  { minPopulation: 10000, category: 'city' },
-  { minPopulation: 1000, category: 'town' },
-  { minPopulation: 250, category: 'village' },
-  { minPopulation: 0, category: 'hamlet' }
-] as const;
-
-type BurgCategory = typeof BURG_CATEGORY_THRESHOLDS[number]['category'];
-
-const BURG_STYLE_CONFIG: Record<BurgCategory, { radius: number; fill: string; stroke: string; font: string }> = {
-  city:    { radius: 9, fill: '#1f78ff', stroke: '#ffffff', font: 'bold 13px "Inter", sans-serif' },
-  town:    { radius: 7, fill: '#4c9c2d', stroke: '#ffffff', font: 'bold 12px "Inter", sans-serif' },
-  village: { radius: 6, fill: '#c17d25', stroke: '#ffffff', font: '12px "Inter", sans-serif' },
-  hamlet:  { radius: 5, fill: '#7b7f8c', stroke: '#ffffff', font: '12px "Inter", sans-serif' }
-};
-
-function getMinPopulationForZoom(zoom: number): number {
-  const rule = BURG_ZOOM_RULES.find(({ minZoom }) => zoom >= minZoom);
-  return rule ? rule.minPopulation : Number.POSITIVE_INFINITY;
-}
-
-function getBurgCategory(population: number): BurgCategory {
-  const match = BURG_CATEGORY_THRESHOLDS.find(({ minPopulation }) => population >= minPopulation);
-  return match ? match.category : 'hamlet';
-}
-
 const TOGGLEABLE_LAYER_OPTIONS: Array<{
   key: keyof LayerVisibility;
   label: string;
@@ -426,44 +237,6 @@ const TOGGLEABLE_LAYER_OPTIONS: Array<{
   { key: 'playerTokens', label: 'Players', icon: <Users className="w-3 h-3" /> },
   { key: 'playerTrails', label: 'Trails', icon: <Flag className="w-3 h-3" /> },
 ];
-
-const DEFAULT_TILE_SIZE = 256;
-
-const createGeographicTileSource = (tileSet: TileSetConfig, worldBounds?: WorldMapBounds | null) => {
-  const minZoom = Number.isFinite(tileSet?.min_zoom)
-    ? Math.max(0, Math.floor(Number(tileSet.min_zoom)))
-    : 0;
-  const maxZoomCandidate = Number.isFinite(tileSet?.max_zoom)
-    ? Math.floor(Number(tileSet.max_zoom))
-    : 20;
-  const maxZoom = Math.max(minZoom, maxZoomCandidate);
-  const tileSize = Number.isFinite(tileSet?.tile_size)
-    ? Math.max(1, Number(tileSet.tile_size))
-    : DEFAULT_TILE_SIZE;
-
-  const extent = updateProjectionExtent(worldBounds ?? null);
-  const width = extent[2] - extent[0];
-
-  const resolutions = Array.from({ length: maxZoom + 1 }, (_, z) => width / tileSize / Math.pow(2, z));
-
-  const tileGrid = new TileGrid({
-    extent,
-    origin: [extent[0], extent[3]],
-    resolutions,
-    tileSize
-  });
-
-  return new XYZ({
-    projection: questablesProjection,
-    url: tileSet.base_url,
-    attributions: tileSet.attribution,
-    tileGrid,
-    wrapX: Boolean(tileSet.wrapX),
-    minZoom,
-    maxZoom,
-    transition: 0
-  });
-};
 
 export function OpenLayersMap() {
   const mapRef = useRef<HTMLDivElement>(null);
@@ -807,8 +580,6 @@ export function OpenLayersMap() {
   const rosterByCharacterRef = useRef<Map<string, CampaignRosterEntry>>(new Map());
   const rosterByPlayerRef = useRef<Map<string, CampaignRosterEntry>>(new Map());
   const rosterLoadedForCampaignRef = useRef<string | null>(null);
-  const burgStyleCacheRef = useRef<Record<string, Style>>({});
-  const markerIconCacheRef = useRef<Record<string, Style>>({});
 
   const getFeatureType = useCallback((feature: Feature, data?: any) => {
     const rawType = data?.type ?? feature.get('type');
@@ -891,129 +662,20 @@ export function OpenLayersMap() {
     };
   }, [getFeatureType]);
 
-  const getBurgStyle = useCallback((featureLike: FeatureLike, resolution: number) => {
-    const feature = asGeometryFeature(featureLike);
-    const data = feature.get('data');
-    const zoom = getZoomForResolution(resolution);
-    if (!Number.isFinite(zoom)) return undefined;
+  const getBurgStyle = useMemo(
+    () => createBurgStyleFactory(getZoomForResolution),
+    [getZoomForResolution]
+  );
 
-    const effectiveZoom = Math.floor(zoom);
-    const population = Number(
-      data?.population ?? data?.populationraw ?? data?.populationRaw ?? 0
-    );
-    const minPopulation = getMinPopulationForZoom(effectiveZoom);
+  const getRouteStyle = useMemo(
+    () => createRouteStyleFactory(getZoomForResolution),
+    [getZoomForResolution]
+  );
 
-    if (population < minPopulation || effectiveZoom < 3) {
-      return undefined;
-    }
-
-    const category = getBurgCategory(population);
-    const cacheKey = `${category}-${data?.capital ? 'capital' : 'standard'}`;
-    const showLabel = effectiveZoom >= LABEL_VISIBILITY.burgs;
-    let style = burgStyleCacheRef.current[cacheKey];
-
-    if (!style) {
-      const config = BURG_STYLE_CONFIG[category];
-
-      const radius = config.radius + (data?.capital ? 2 : 0);
-
-      style = new Style({
-        image: new CircleStyle({
-          radius,
-          fill: new Fill({ color: data?.capital ? '#FFD700' : config.fill }),
-          stroke: new Stroke({ color: config.stroke, width: 2 })
-        }),
-        text: new Text({
-          offsetY: -radius - 10,
-          font: config.font,
-          fill: new Fill({ color: '#1f2933' }),
-          stroke: new Stroke({ color: '#ffffff', width: 3 }),
-          placement: 'point'
-        })
-      });
-
-      burgStyleCacheRef.current[cacheKey] = style;
-    }
-
-    const text = style.getText();
-    if (text) {
-      text.setText(showLabel ? data?.name || feature.get('name') || '' : '');
-    }
-
-    return style;
-  }, [getZoomForResolution]);
-
-  const getRouteStyle = useCallback((featureLike: FeatureLike, resolution: number) => {
-    const feature = asGeometryFeature(featureLike);
-    const data = feature.get('data') ?? feature.getProperties();
-    const zoom = getZoomForResolution(resolution);
-
-    if (!Number.isFinite(zoom)) {
-      return undefined;
-    }
-
-    const routeType = String(data?.type ?? feature.get('type') ?? '');
-    const config = ROUTE_STYLE_CONFIG[routeType];
-
-    if (config) {
-      if ((zoom as number) < config.minZoom) {
-        return undefined;
-      }
-      return config.styles;
-    }
-
-    return (zoom as number) >= 3 ? DEFAULT_ROUTE_STYLES : undefined;
-  }, [getZoomForResolution]);
-
-  const getMarkerStyle = useCallback((featureLike: FeatureLike, resolution: number) => {
-    const feature = asGeometryFeature(featureLike);
-    const data = feature.get('data') ?? feature.getProperties();
-    const zoom = getZoomForResolution(resolution);
-
-    if (!Number.isFinite(zoom) || (zoom as number) < LABEL_VISIBILITY.markers) {
-      return undefined;
-    }
-
-    const type = String(data?.type ?? feature.get('type') ?? '');
-    const icon = MARKER_TYPE_ICONS[type] ?? '?';
-
-    let iconStyle = markerIconCacheRef.current[type];
-    if (!iconStyle) {
-      iconStyle = new Style({
-        text: new Text({
-          text: icon,
-          font: '20px sans-serif',
-          textBaseline: 'middle',
-          textAlign: 'center',
-          fill: new Fill({ color: '#000' }),
-          stroke: new Stroke({ color: '#FFF', width: 3 }),
-          placement: 'point'
-        })
-      });
-      markerIconCacheRef.current[type] = iconStyle;
-    }
-
-    const showLabel = (zoom as number) >= LABEL_VISIBILITY.markers;
-    const labelText = showLabel ? data?.name || '' : '';
-    if (!labelText) {
-      return iconStyle;
-    }
-
-    const labelStyle = new Style({
-      text: new Text({
-        text: labelText,
-        offsetY: -24,
-        font: '10px sans-serif',
-        fill: new Fill({ color: '#111827' }),
-        stroke: new Stroke({ color: '#FFF', width: 3 }),
-        textAlign: 'center',
-        textBaseline: 'bottom',
-        placement: 'point'
-      })
-    });
-
-    return [iconStyle, labelStyle];
-  }, [getZoomForResolution]);
+  const getMarkerStyle = useMemo(
+    () => createMarkerStyleFactory(getZoomForResolution),
+    [getZoomForResolution]
+  );
 
   const getCampaignLocationStyle = useCallback((featureLike: FeatureLike, resolution: number) => {
     const feature = asGeometryFeature(featureLike);
@@ -1261,7 +923,7 @@ export function OpenLayersMap() {
       return;
     }
 
-    const newSource = createGeographicTileSource(tileSet, worldBounds);
+    const newSource = createQuestablesTileSource(tileSet, worldBounds);
     baseLayerRef.current.setSource(newSource);
     updateViewExtent(worldBounds);
     applyTileSetConstraints(tileSet);
@@ -2578,46 +2240,11 @@ export function OpenLayersMap() {
   );
 }
 
-function getRiverStyle(featureLike: FeatureLike) {
-  const feature = asGeometryFeature(featureLike);
-  const data = feature.get('data');
-  return new Style({
-    stroke: new Stroke({
-      color: '#4FC3F7',
-      width: Math.max(2, (data?.width || 1) * 2)
-    })
-  });
-}
-
-function getCellStyle(featureLike: FeatureLike) {
-  const feature = asGeometryFeature(featureLike);
-  const data = feature.get('data');
-  return new Style({
-    fill: new Fill({
-      color: getBiomeColor(data?.biome)
-    }),
-    stroke: new Stroke({
-      color: 'rgba(0,0,0,0.1)',
-      width: 0.5
-    })
-  });
-}
-
 function getEncounterStyle(): Style {
   return new Style({
     fill: new Fill({ color: 'rgba(128,128,128,0.7)' }),
     stroke: new Stroke({ color: '#666', width: 2 })
   });
-}
-
-function getBiomeColor(biome: number): string {
-  switch (biome) {
-    case 1: return 'rgba(34,139,34,0.3)';
-    case 2: return 'rgba(218,165,32,0.3)';
-    case 3: return 'rgba(70,130,180,0.3)';
-    case 4: return 'rgba(128,128,128,0.3)';
-    default: return 'rgba(144,238,144,0.3)';
-  }
 }
 
 function getPlayerTrailStyle(): Style {

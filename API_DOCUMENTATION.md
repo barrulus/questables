@@ -81,6 +81,36 @@ to constrain the result set.
 - `bounds` (optional): JSON string with numeric `north`, `south`, `east`, `west` values. Invalid
   payloads raise `400 invalid_bounds`.
 
+### GET /api/maps/:worldId/burgs/search
+
+Perform a filtered burg lookup that executes a parameterised PostGIS query instead of returning the
+entire burg catalog. Results are ordered by population (desc) then name (asc).
+
+**Query Parameters:**
+- `q` (required): case-insensitive substring matched against burg names. Empty values return
+  `400 search_term_required`.
+- `limit` (optional): maximum number of matches (default `10`, range `1-50`). Values outside this
+  range are clamped.
+
+**Response:**
+```jsonc
+{
+  "results": [
+    {
+      "id": "c9af…",
+      "world_id": "world-uuid",
+      "burg_id": 42,
+      "name": "Holdfast",
+      "population": 1834,
+      "geometry": {
+        "type": "Point",
+        "coordinates": [1024.5, 768.25]
+      }
+    }
+  ]
+}
+```
+
 ### GET /api/maps/:worldId/markers
 
 Return persisted map markers. Accepts the same `bounds` filter as burgs and returns each marker’s
@@ -106,6 +136,84 @@ Return terrain cells from `maps_cells` constrained by a required SRID-0 bounding
 ### GET /api/maps/tilesets
 
 Return all active tile set configurations from `tile_sets`, ordered by `name ASC`.
+
+### Campaign Map Regions (DM Toolkit)
+
+Persistent polygon overlays used in the Campaign Prep map. All endpoints require the caller to be a
+campaign DM/co-DM (or admin) and return `403 map_regions_forbidden` otherwise.
+
+#### GET /api/campaigns/:campaignId/map-regions
+
+List every region attached to the campaign.
+
+**Response:**
+```jsonc
+{
+  "regions": [
+    {
+      "id": "region-uuid",
+      "campaignId": "campaign-uuid",
+      "worldMapId": "world-uuid",
+      "name": "Bandit Ambush Territory",
+      "category": "encounter",
+      "color": "#F97316",
+      "metadata": { "threat": "bandits" },
+      "geometry": {
+        "type": "MultiPolygon",
+        "coordinates": [[[ [100, 200], [140, 220], [120, 260], [100, 200] ]]]
+      },
+      "createdAt": "2025-01-17T12:33:12.424Z",
+      "updatedAt": "2025-01-17T12:33:12.424Z"
+    }
+  ]
+}
+```
+
+#### POST /api/campaigns/:campaignId/map-regions
+
+Create a new polygon overlay. Payload must include a valid GeoJSON `Polygon` or `MultiPolygon`
+(`SRID 0`). Unsupported categories raise `400 unsupported_region_category`.
+
+**Request Body:**
+```jsonc
+{
+  "name": "Feywild Bleed",
+  "description": "Blurred boundary where rumours originate",
+  "category": "rumour",
+  "color": "#8B5CF6",
+  "worldMapId": "world-uuid",
+  "metadata": {"rumourLevel": "high"},
+  "geometry": {
+    "type": "Polygon",
+    "coordinates": [[[120, 80], [200, 90], [220, 160], [160, 190], [120, 80]]]
+  }
+}
+```
+
+**Response (201 Created):**
+```jsonc
+{
+  "region": {
+    "id": "region-uuid",
+    "name": "Feywild Bleed",
+    "category": "rumour",
+    "geometry": { "type": "MultiPolygon", "coordinates": [[[...]]] }
+  }
+}
+```
+
+#### PUT /api/campaigns/:campaignId/map-regions/:regionId
+
+Update mutable fields (name, description, category, color, metadata, world map reference, geometry).
+
+**Notes:**
+- Geometry updates must pass valid GeoJSON; polygons are coerced to `MultiPolygon`.
+- Omitting fields leaves them unchanged; set `worldMapId` to `null` to detach the association.
+
+#### DELETE /api/campaigns/:campaignId/map-regions/:regionId
+
+Remove a region. Returns `204` on success or `404 map_region_not_found` if the region does not belong
+to the campaign.
 
 ## Tiles
 
@@ -2445,3 +2553,17 @@ Questables exposes a Socket.IO server on the same origin as the REST API (`ws://
 ```
 
 All realtime events deliberately omit narrative text from server-side logs; consumers should persist any required history on the client if extended auditing is needed.
+### PUT /api/objectives/:objectiveId/location
+
+DM-only endpoint that applies Campaign Prep map selections to an objective. Supply the location
+payload exactly as emitted by the map interactions, or `{ "clear": true }` to detach the location.
+
+**Payload Variants:**
+- Pin: `{ "locationType": "pin", "pin": { "x": 123.4, "y": 567.8 } }`
+- Burg: `{ "locationType": "burg", "locationBurgId": "burg-uuid" }`
+- Marker: `{ "locationType": "marker", "locationMarkerId": "marker-uuid" }`
+- Region: `{ "locationType": "region", "locationRegionId": "region-uuid" }`
+- Clear: `{ "clear": true }`
+
+Returns the updated objective record or the relevant validation error (e.g.
+`400 invalid_location`).

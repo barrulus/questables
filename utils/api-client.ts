@@ -195,6 +195,170 @@ export const ensurePayload = <T>(data: T | undefined, errorMessage: string): T =
   return data;
 };
 
+export interface BurgSearchResult {
+  id: string;
+  world_id: string;
+  burg_id: number;
+  name: string;
+  state?: string | null;
+  culture?: string | null;
+  religion?: string | null;
+  population?: number | null;
+  populationraw?: number | null;
+  geometry: { type: string; coordinates: [number, number] };
+}
+
+export const searchWorldBurgs = async (
+  worldMapId: string,
+  query: string,
+  options: ApiRequestOptions = {},
+  limit = 10,
+): Promise<BurgSearchResult[]> => {
+  const trimmed = query.trim();
+  if (!trimmed) {
+    return [];
+  }
+
+  const params = new URLSearchParams();
+  params.set("q", trimmed);
+  params.set("limit", String(limit));
+
+  const data = await fetchJson<{ results: BurgSearchResult[] }>(
+    `/api/maps/${worldMapId}/burgs/search?${params.toString()}`,
+    { method: "GET", signal: options.signal },
+    "Failed to search burgs",
+  );
+
+  return data?.results ?? [];
+};
+
+export type CampaignRegionCategory = "encounter" | "rumour" | "narrative" | "travel" | "custom";
+
+export interface CampaignRegion {
+  id: string;
+  campaignId: string;
+  worldMapId: string | null;
+  name: string;
+  description: string | null;
+  category: CampaignRegionCategory;
+  color: string | null;
+  metadata: Record<string, unknown>;
+  geometry: Record<string, unknown>;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface CampaignRegionCreatePayload {
+  name: string;
+  description?: string | null;
+  category?: CampaignRegionCategory;
+  color?: string | null;
+  worldMapId?: string | null;
+  metadata?: Record<string, unknown> | string | null;
+  geometry: Record<string, unknown> | string;
+}
+
+export interface CampaignRegionUpdatePayload extends Omit<CampaignRegionCreatePayload, "geometry"> {
+  geometry?: Record<string, unknown> | string | null;
+}
+
+export const listCampaignRegions = async (
+  campaignId: string,
+  options: ApiRequestOptions = {},
+): Promise<CampaignRegion[]> => {
+  const data = await fetchJson<{ regions: CampaignRegion[] }>(
+    `/api/campaigns/${campaignId}/map-regions`,
+    { method: "GET", signal: options.signal },
+    "Failed to load campaign map regions",
+  );
+  return data?.regions ?? [];
+};
+
+export const createCampaignRegion = async (
+  campaignId: string,
+  payload: CampaignRegionCreatePayload,
+): Promise<CampaignRegion> => {
+  const response = await apiFetch(
+    `/api/campaigns/${campaignId}/map-regions`,
+    buildJsonRequestInit("POST", payload),
+  );
+
+  if (!response.ok) {
+    throw new HttpError(await readErrorMessage(response, "Failed to create map region"), response.status);
+  }
+
+  const data = await readJsonBody<{ region: CampaignRegion }>(response);
+  return ensurePayload(data.region, "Server returned an empty region payload.");
+};
+
+export const updateCampaignRegion = async (
+  campaignId: string,
+  regionId: string,
+  payload: CampaignRegionUpdatePayload,
+): Promise<CampaignRegion> => {
+  const response = await apiFetch(
+    `/api/campaigns/${campaignId}/map-regions/${regionId}`,
+    buildJsonRequestInit("PUT", payload),
+  );
+
+  if (!response.ok) {
+    throw new HttpError(await readErrorMessage(response, "Failed to update map region"), response.status);
+  }
+
+  const data = await readJsonBody<{ region: CampaignRegion }>(response);
+  return ensurePayload(data.region, "Server returned an empty region payload.");
+};
+
+export const deleteCampaignRegion = async (
+  campaignId: string,
+  regionId: string,
+): Promise<void> => {
+  const response = await apiFetch(
+    `/api/campaigns/${campaignId}/map-regions/${regionId}`,
+    buildJsonRequestInit("DELETE", undefined),
+  );
+
+  if (!response.ok) {
+    throw new HttpError(await readErrorMessage(response, "Failed to delete map region"), response.status);
+  }
+};
+
+export type ObjectiveLocationPayload =
+  | { clear: true }
+  | {
+      locationType: "pin";
+      pin: { x: number; y: number };
+    }
+  | {
+      locationType: "burg";
+      locationBurgId: string;
+    }
+  | {
+      locationType: "marker";
+      locationMarkerId: string;
+    }
+  | {
+      locationType: "region";
+      locationRegionId: string;
+    };
+
+export const updateObjectiveLocation = async (
+  objectiveId: string,
+  payload: ObjectiveLocationPayload,
+): Promise<ObjectiveRecord> => {
+  const response = await apiFetch(
+    `/api/objectives/${objectiveId}/location`,
+    buildJsonRequestInit("PUT", payload),
+  );
+
+  if (!response.ok) {
+    throw new HttpError(await readErrorMessage(response, "Failed to update objective location"), response.status);
+  }
+
+  const data = await readJsonBody<{ objective: ObjectiveRecord }>(response);
+  return ensurePayload(data.objective, "Server returned an empty objective payload.");
+};
+
 export type CampaignStatus = 'recruiting' | 'active' | 'paused' | 'completed';
 
 export interface CampaignLevelRange {
@@ -465,16 +629,23 @@ export interface ObjectiveLocationMarkerInput {
   markerId: string;
 }
 
+export interface ObjectiveLocationRegionInput {
+  type: 'region';
+  regionId: string;
+}
+
 export type ObjectiveLocationInput =
   | ObjectiveLocationPinInput
   | ObjectiveLocationBurgInput
-  | ObjectiveLocationMarkerInput;
+  | ObjectiveLocationMarkerInput
+  | ObjectiveLocationRegionInput;
 
 export interface ObjectiveLocation {
-  type: 'pin' | 'burg' | 'marker';
+  type: 'pin' | 'burg' | 'marker' | 'region';
   pin: GeoJsonPoint | null;
   burgId: string | null;
   markerId: string | null;
+  regionId: string | null;
 }
 
 export interface ObjectiveRecord {
@@ -552,6 +723,11 @@ const mapObjectiveLocation = (
 
   if (location.type === 'marker') {
     body.locationMarkerId = location.markerId;
+    return;
+  }
+
+  if (location.type === 'region') {
+    body.locationRegionId = location.regionId;
   }
 };
 
