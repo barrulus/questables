@@ -975,6 +975,7 @@ Always append new entries; do not erase or rewrite previous log items except to 
 - **Tests & Verification:**
   - `npx eslint server/routes/tiles.routes.js server/utils/tegola-client.js server/tegola/generate-config.js --ext js` *(pass)*
 - **Remaining Gaps / Blockers:** Need to provision Tegola binary in deployment. MapLibre/deck.gl client work is blocked until a projection-compatible stack is identified, so we continue expanding OpenLayers layer toggles in the interim.
+- **2025-10-03 Update:** Tegola integration was rolled back; the application serves pre-rendered raster tiles via the existing tile set pipeline and the associated tooling (`server/tegola/*`, `/api/tiles/*`) has been removed.
 
 ## Task MAP-09 – Movement Grid & Path Persistence
 - **Date:** 2025-09-27

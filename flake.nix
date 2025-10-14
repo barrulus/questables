@@ -27,7 +27,6 @@
               python3
               jq
               bc
-              tegola
             ];
 
             # Tips and light DX setup when entering the shell
@@ -49,7 +48,6 @@
             packages = with pkgs; [
               nodejs_24
               corepack
-              tegola
               git
               jq
             ];
@@ -63,7 +61,6 @@
             packages = with pkgs; [
               postgresql_17
               postgis
-              tegola
             ];
             shellHook = ''
               echo "[questables] DB shell (psql $(psql --version | awk '{print $3}'))"
@@ -76,4 +73,3 @@
       }
     );
 }
-

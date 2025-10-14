@@ -107,56 +107,14 @@ Return terrain cells from `maps_cells` constrained by a required SRID-0 bounding
 
 Return all active tile set configurations from `tile_sets`, ordered by `name ASC`.
 
-## Tiles API
+## Tiles
 
-Vector tiles are proxied through the Questables API so authentication and telemetry stay aligned
-with the rest of the platform. Tegola failures always bubble up—OpenLayers clients never fall back to
-placeholders.
+Questables ships pre-rendered raster tile sets for the world map. Each active tile set record
+(`GET /api/maps/tilesets`) includes the public `base_url` and zoom metadata. Clients request tile
+images directly from that URL; the API no longer proxies tile bytes or exposes Tegola endpoints.
 
-All endpoints require:
-- `Authorization: Bearer <token>`
-
-### GET /api/tiles/health
-
-Return the upstream Tegola health payload.
-
-**Success (200):**
-```json
-{
-  "healthy": true,
-  "details": { "cache": "file", "gc_count": 0 }
-}
-```
-
-**Failure (5xx/4xx):**
-```json
-{
-  "healthy": false,
-  "error": "Tegola service unreachable",
-  "body": null
-}
-```
-
-### GET /api/tiles/capabilities
-
-Proxy `/capabilities` from Tegola. Useful for layer discovery and debugging.
-
-### GET /api/tiles/vector/:map/:layer/:z/:x/:y.mvt
-
-Fetch a single MVT tile. Query parameters (e.g. `campaign_id`, `world_id`) are forwarded directly to
-Tegola.
-
-**Path Parameters:**
-- `map` — Tegola map identifier (e.g. `questables_world`)
-- `layer` — Provider layer name (e.g. `world_cells`)
-- `z/x/y` — Tile coordinates
-
-**Success (200):** binary payload with `Content-Type: application/x-protobuf`.
-
-**Failure:**
-- `401` — missing/invalid credentials
-- `404` — Tegola returned not found for the requested tile
-- `5xx` — Tegola error; body includes `tegola_tile_failed`
+When adding a new tile set, persist the correct `base_url`, `tile_size`, and zoom bounds so
+OpenLayers can derive resolutions without any hardcoded fallbacks.
 
 ### POST /api/campaigns/:campaignId/locations
 
