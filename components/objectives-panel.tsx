@@ -29,26 +29,11 @@ import { Textarea } from "./ui/textarea";
 import { Switch } from "./ui/switch";
 import { Label } from "./ui/label";
 import { ScrollArea } from "./ui/scroll-area";
-import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle,
-} from "./ui/dialog";
+import { Accordion, AccordionContent, AccordionItem, AccordionTrigger } from "./ui/accordion";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "./ui/select";
 import { Separator } from "./ui/separator";
 import { LoadingSpinner } from "./ui/loading-spinner";
 import { Alert, AlertDescription, AlertTitle } from "./ui/alert";
-import {
-  Command,
-  CommandEmpty,
-  CommandGroup,
-  CommandInput,
-  CommandItem,
-  CommandList,
-} from "./ui/command";
 import { cn } from "./ui/utils";
 import {
   Plus,
@@ -70,7 +55,17 @@ const toNullable = (value: string): string | null => {
   return trimmed.length > 0 ? trimmed : null;
 };
 
-type ObjectiveLocationKind = "none" | "pin" | "burg" | "marker" | "region";
+const createEmptyObjectiveForm = (parentId: string | null = null): ObjectiveFormValues => ({
+  title: "",
+  parentId,
+  isMajor: false,
+  slug: null,
+  descriptionMd: "",
+  treasureMd: "",
+  combatMd: "",
+  npcsMd: "",
+  rumoursMd: "",
+});
 
 interface ObjectiveFormValues {
   title: string;
@@ -82,11 +77,6 @@ interface ObjectiveFormValues {
   combatMd: string;
   npcsMd: string;
   rumoursMd: string;
-  locationType: ObjectiveLocationKind;
-  pin: { x: number; y: number } | null;
-  locationBurgId: string | null;
-  locationMarkerId: string | null;
-  locationRegionId: string | null;
 }
 
 interface ObjectiveTreeNode {
@@ -107,7 +97,6 @@ interface MarkerOption {
 }
 
 const ROOT_PARENT_VALUE = "__root__";
-const CLEAR_LINK_VALUE = "__clear__";
 const DEFAULT_LOCATION_RADIUS = 150000;
 const MAP_RADIUS_FRACTION = 0.05;
 const WARNING_ALERT_CLASS = "border-amber-500/40 bg-amber-500/10 text-amber-900";
@@ -241,79 +230,30 @@ const buildObjectiveTree = (records: ObjectiveRecord[]): ObjectiveTreeNode[] => 
   return roots;
 };
 
-const objectiveToFormValues = (objective: ObjectiveRecord): ObjectiveFormValues => {
-  let locationType: ObjectiveLocationKind = "none";
-  let pin: { x: number; y: number } | null = null;
-  let locationBurgId: string | null = null;
-  let locationMarkerId: string | null = null;
-  let locationRegionId: string | null = null;
-
-  if (objective.location?.type === "pin" && Array.isArray(objective.location.pin?.coordinates)) {
-    const [x, y] = objective.location.pin.coordinates;
-    if (Number.isFinite(Number(x)) && Number.isFinite(Number(y))) {
-      locationType = "pin";
-      pin = { x: Number(x), y: Number(y) };
-    }
-  } else if (objective.location?.type === "burg" && objective.location.burgId) {
-    locationType = "burg";
-    locationBurgId = objective.location.burgId;
-  } else if (objective.location?.type === "marker" && objective.location.markerId) {
-    locationType = "marker";
-    locationMarkerId = objective.location.markerId;
-  } else if (objective.location?.type === "region" && objective.location.regionId) {
-    locationType = "region";
-    locationRegionId = objective.location.regionId;
-  }
-
-  return {
-    title: objective.title ?? "",
-    parentId: objective.parentId ?? null,
-    isMajor: Boolean(objective.isMajor),
-    slug: objective.slug ?? null,
-    descriptionMd: objective.descriptionMd ?? "",
-    treasureMd: objective.treasureMd ?? "",
-    combatMd: objective.combatMd ?? "",
-    npcsMd: objective.npcsMd ?? "",
-    rumoursMd: objective.rumoursMd ?? "",
-    locationType,
-    pin,
-    locationBurgId,
-    locationMarkerId,
-    locationRegionId,
-  };
-};
+const objectiveToFormValues = (objective: ObjectiveRecord): ObjectiveFormValues => ({
+  title: objective.title ?? "",
+  parentId: objective.parentId ?? null,
+  isMajor: Boolean(objective.isMajor),
+  slug: objective.slug ?? null,
+  descriptionMd: objective.descriptionMd ?? "",
+  treasureMd: objective.treasureMd ?? "",
+  combatMd: objective.combatMd ?? "",
+  npcsMd: objective.npcsMd ?? "",
+  rumoursMd: objective.rumoursMd ?? "",
+});
 
 const formValuesToPayload = (
   values: ObjectiveFormValues,
-): {
-  location: ObjectiveCreatePayload["location"];
-  base: Omit<ObjectiveCreatePayload, "title" | "location"> & Partial<Omit<ObjectiveUpdatePayload, "title" | "location">>;
-} => {
-  let location = undefined as ObjectiveCreatePayload["location"];
-
-  if (values.locationType === "pin" && values.pin) {
-    location = { type: "pin", x: values.pin.x, y: values.pin.y };
-  } else if (values.locationType === "burg" && values.locationBurgId) {
-    location = { type: "burg", burgId: values.locationBurgId };
-  } else if (values.locationType === "marker" && values.locationMarkerId) {
-    location = { type: "marker", markerId: values.locationMarkerId };
-  } else if (values.locationType === "region" && values.locationRegionId) {
-    location = { type: "region", regionId: values.locationRegionId };
-  }
-
-  const base: Omit<ObjectiveCreatePayload, "title" | "location"> & Partial<Omit<ObjectiveUpdatePayload, "title" | "location">> = {
-    parentId: values.parentId,
-    isMajor: values.isMajor,
-    slug: values.slug ?? null,
-    descriptionMd: toNullable(values.descriptionMd ?? ""),
-    treasureMd: toNullable(values.treasureMd ?? ""),
-    combatMd: toNullable(values.combatMd ?? ""),
-    npcsMd: toNullable(values.npcsMd ?? ""),
-    rumoursMd: toNullable(values.rumoursMd ?? ""),
-  };
-
-  return { location, base };
-};
+): Omit<ObjectiveCreatePayload, "title"> & Partial<Omit<ObjectiveUpdatePayload, "title">> => ({
+  parentId: values.parentId,
+  isMajor: values.isMajor,
+  slug: values.slug ?? null,
+  descriptionMd: toNullable(values.descriptionMd ?? ""),
+  treasureMd: toNullable(values.treasureMd ?? ""),
+  combatMd: toNullable(values.combatMd ?? ""),
+  npcsMd: toNullable(values.npcsMd ?? ""),
+  rumoursMd: toNullable(values.rumoursMd ?? ""),
+});
 
 const buildLocationSummary = (
   objective: ObjectiveRecord,
@@ -348,50 +288,37 @@ const buildLocationSummary = (
   return "Location configured";
 };
 
-interface ObjectiveDialogProps {
+interface ObjectiveEditorFormProps {
   mode: "create" | "edit";
-  open: boolean;
   values: ObjectiveFormValues;
   onChange: (_next: ObjectiveFormValues) => void;
   onSubmit: () => void;
-  onOpenChange: (_open: boolean) => void;
+  onCancel: () => void;
   saving: boolean;
   parentOptions: ObjectiveRecord[];
   disabled?: boolean;
-  worldMap?: ObjectivesPanelProps["worldMap"];
-  markerUnavailable: boolean;
-  burgOptions: BurgOption[];
-  markerOptions: MarkerOption[];
-  regionIndex: Map<string, CampaignRegion>;
   assistEnabled: boolean;
   assistStates: Record<ObjectiveAssistField, AssistUiState>;
   onRequestAssist: (_field: ObjectiveAssistField) => void;
   assistDisabledReason?: string | null;
+  locationSummary?: string;
 }
 
-const ObjectiveDialog = ({
+const ObjectiveEditorForm = ({
   mode,
-  open,
   values,
   onChange,
   onSubmit,
-  onOpenChange,
+  onCancel,
   saving,
   parentOptions,
   disabled,
-  worldMap,
-  markerUnavailable,
-  burgOptions,
-  markerOptions,
-  regionIndex,
   assistEnabled,
   assistStates,
   onRequestAssist,
   assistDisabledReason,
-}: ObjectiveDialogProps) => {
-  const [burgBrowserOpen, setBurgBrowserOpen] = useState(false);
-  const [markerBrowserOpen, setMarkerBrowserOpen] = useState(false);
-
+  locationSummary,
+}: ObjectiveEditorFormProps) => {
   const renderAssistButton = (field: ObjectiveAssistField) => {
     const label = assistFieldLabels[field];
     const state = assistStates[field];
@@ -441,416 +368,179 @@ const ObjectiveDialog = ({
   };
 
   return (
-    <>
-    <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-h-[90vh] overflow-y-auto sm:max-w-4xl">
-        <DialogHeader>
-          <DialogTitle>{mode === "create" ? "Create Objective" : "Edit Objective"}</DialogTitle>
-          <DialogDescription>
-            Titles, content fields, and location data are persisted immediately through the live Objective API.
-          </DialogDescription>
-        </DialogHeader>
-        <div className="grid gap-6 md:grid-cols-[1fr_280px]">
-          <div className="space-y-4">
-            <div className="space-y-2">
-              <Label htmlFor="objective-title">Title *</Label>
-              <Input
-                id="objective-title"
-                disabled={disabled}
-                value={values.title}
-                onChange={(event) => onChange({ ...values, title: event.target.value })}
-                placeholder="Describe the objective"
-              />
-            </div>
-            <div className="flex items-center justify-between rounded-md border p-3">
-              <div className="space-y-1">
-                <Label htmlFor="objective-major">Major objective</Label>
-                <p className="text-sm text-muted-foreground">
-                  Major objectives surface prominently in the prep view and DM sidebar.
-                </p>
-              </div>
-              <Switch
-                id="objective-major"
-                disabled={disabled}
-                checked={values.isMajor}
-                onCheckedChange={(checked) => onChange({ ...values, isMajor: checked })}
-              />
-            </div>
-            <div className="grid gap-4 md:grid-cols-2">
-              <div className="space-y-2">
-                <Label htmlFor="objective-slug">Slug</Label>
-                <Input
-                  id="objective-slug"
-                  disabled={disabled}
-                  value={values.slug ?? ""}
-                  onChange={(event) => onChange({ ...values, slug: event.target.value || null })}
-                  placeholder="Optional short identifier"
-                />
-              </div>
-              <div className="space-y-2">
-                <Label htmlFor="objective-parent">Parent objective</Label>
-                <Select
-                  value={values.parentId ?? ROOT_PARENT_VALUE}
-                  onValueChange={(value) => onChange({ ...values, parentId: value === ROOT_PARENT_VALUE ? null : value })}
-                  disabled={disabled}
-                >
-                  <SelectTrigger id="objective-parent">
-                    <SelectValue placeholder="Top-level objective" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value={ROOT_PARENT_VALUE}>Top-level objective</SelectItem>
-                    {parentOptions.map((objective) => (
-                      <SelectItem key={objective.id} value={objective.id}>
-                        {objective.title}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-              </div>
-            </div>
-            <Separator />
-            <div className="grid gap-4">
-              <div className="space-y-2">
-                <div className="flex items-center justify-between gap-2">
-                  <Label htmlFor="objective-description">Description</Label>
-                  {renderAssistButton("description")}
-                </div>
-                <Textarea
-                  id="objective-description"
-                  disabled={disabled}
-                  value={values.descriptionMd}
-                  rows={4}
-                  onChange={(event) => onChange({ ...values, descriptionMd: event.target.value })}
-                  placeholder="Main objective details in Markdown"
-                />
-                {renderAssistStatus("description", { showDisabledInfo: true })}
-              </div>
-              <div className="space-y-2">
-                <div className="flex items-center justify-between gap-2">
-                  <Label htmlFor="objective-treasure">Treasure</Label>
-                  {renderAssistButton("treasure")}
-                </div>
-                <Textarea
-                  id="objective-treasure"
-                  disabled={disabled}
-                  value={values.treasureMd}
-                  rows={3}
-                  onChange={(event) => onChange({ ...values, treasureMd: event.target.value })}
-                  placeholder="Loot drops, rewards, or boons"
-                />
-                {renderAssistStatus("treasure")}
-              </div>
-              <div className="space-y-2">
-                <div className="flex items-center justify-between gap-2">
-                  <Label htmlFor="objective-combat">Combat Notes</Label>
-                  {renderAssistButton("combat")}
-                </div>
-                <Textarea
-                  id="objective-combat"
-                  disabled={disabled}
-                  value={values.combatMd}
-                  rows={3}
-                  onChange={(event) => onChange({ ...values, combatMd: event.target.value })}
-                  placeholder="Encounters, stat block links, or strategy"
-                />
-                {renderAssistStatus("combat")}
-              </div>
-              <div className="space-y-2">
-                <div className="flex items-center justify-between gap-2">
-                  <Label htmlFor="objective-npcs">NPCs</Label>
-                  {renderAssistButton("npcs")}
-                </div>
-                <Textarea
-                  id="objective-npcs"
-                  disabled={disabled}
-                  value={values.npcsMd}
-                  rows={3}
-                  onChange={(event) => onChange({ ...values, npcsMd: event.target.value })}
-                  placeholder="Key NPCs, alliances, and hooks"
-                />
-                {renderAssistStatus("npcs")}
-              </div>
-              <div className="space-y-2">
-                <div className="flex items-center justify-between gap-2">
-                  <Label htmlFor="objective-rumours">Rumours</Label>
-                  {renderAssistButton("rumours")}
-                </div>
-                <Textarea
-                  id="objective-rumours"
-                  disabled={disabled}
-                  value={values.rumoursMd}
-                  rows={3}
-                  onChange={(event) => onChange({ ...values, rumoursMd: event.target.value })}
-                  placeholder="Foreshadowing, myths, or misinformation"
-                />
-                {renderAssistStatus("rumours")}
-              </div>
-            </div>
+    <form
+      className="space-y-6"
+      onSubmit={(event) => {
+        event.preventDefault();
+        onSubmit();
+      }}
+    >
+      <div className="space-y-4">
+        <div className="space-y-2">
+          <Label htmlFor={`objective-title-${mode}`}>Title *</Label>
+          <Input
+            id={`objective-title-${mode}`}
+            disabled={disabled}
+            value={values.title}
+            onChange={(event) => onChange({ ...values, title: event.target.value })}
+            placeholder="Describe the objective"
+          />
+        </div>
+        <div className="flex items-center justify-between rounded-md border p-3">
+          <div className="space-y-1">
+            <Label htmlFor={`objective-major-${mode}`}>Major objective</Label>
+            <p className="text-sm text-muted-foreground">
+              Major objectives surface prominently in the prep view and DM sidebar.
+            </p>
           </div>
-          <div className="space-y-4">
-            <div className="rounded-md border p-3">
-              <h4 className="text-sm font-semibold">Location</h4>
-              <p className="mt-1 text-xs text-muted-foreground">
-                Tie objectives to world coordinates, burgs, or markers pulled from the live map dataset.
-              </p>
-              <div className="mt-3 space-y-3">
-                <Select
-                  value={values.locationType}
-                  disabled={disabled || (!worldMap && values.locationType === "pin")}
-                    onValueChange={(value) => {
-                      const next = value as ObjectiveLocationKind;
-                      onChange({
-                        ...values,
-                        locationType: next,
-                        pin: next === "pin" ? values.pin : null,
-                        locationBurgId: next === "burg" ? values.locationBurgId : null,
-                        locationMarkerId: next === "marker" ? values.locationMarkerId : null,
-                        locationRegionId: next === "region" ? values.locationRegionId : null,
-                      });
-                    }}
-                >
-                  <SelectTrigger aria-label="Objective location type">
-                    <SelectValue placeholder="Select location type" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="none">No linked location</SelectItem>
-                    <SelectItem value="pin" disabled={!worldMap}>
-                      Map pin (world coordinates)
-                    </SelectItem>
-                    <SelectItem value="burg">Existing burg</SelectItem>
-                    <SelectItem value="marker">Map marker</SelectItem>
-                    <SelectItem value="region">Campaign region</SelectItem>
-                  </SelectContent>
-                </Select>
-                {markerUnavailable && (
-                  <Alert variant="default" className={WARNING_ALERT_CLASS}>
-                    <AlertTitle>Markers endpoint unavailable</AlertTitle>
-                    <AlertDescription>
-                      The backend does not yet expose `/api/maps/:worldId/markers`. Notify the backend team before enabling marker links.
-                    </AlertDescription>
-                  </Alert>
-                )}
-                {values.locationType === "pin" && (
-                  <div className="rounded-md border bg-muted/30 px-3 py-2 text-xs text-muted-foreground">
-                    <div className="flex items-center justify-between">
-                      <span className="font-medium text-foreground">Map pin</span>
-                      <span>
-                        {values.pin
-                          ? `x: ${values.pin.x.toFixed(2)} · y: ${values.pin.y.toFixed(2)}`
-                          : "No pin assigned"}
-                      </span>
-                    </div>
-                    <p className="mt-2">
-                      Pin locations are managed from the Campaign Prep Map. Use the map context menu to reposition this objective.
-                    </p>
-                  </div>
-                )}
-                {values.locationType === "burg" && (
-                  <div className="space-y-2">
-                    <Label htmlFor="objective-burg" className="text-xs text-muted-foreground">
-                      Burgs are fetched from the live `maps_burgs` dataset. Select one to anchor the objective.
-                    </Label>
-                    <Select
-                      value={values.locationBurgId ?? CLEAR_LINK_VALUE}
-                      onValueChange={(value) =>
-                        onChange({ ...values, locationBurgId: value === CLEAR_LINK_VALUE ? null : value })
-                      }
-                      disabled={disabled}
-                    >
-                      <SelectTrigger id="objective-burg">
-                        <SelectValue placeholder="Select burg" />
-                      </SelectTrigger>
-                      <SelectContent>
-                        <SelectItem value={CLEAR_LINK_VALUE}>Clear burg link</SelectItem>
-                        {burgOptions.map((burg) => (
-                          <SelectItem key={burg.id} value={burg.id}>
-                            {burg.name}
-                            {burg.population ? ` · pop ${burg.population}` : ""}
-                          </SelectItem>
-                        ))}
-                      </SelectContent>
-                      </Select>
-                    {burgOptions.length === 0 && (
-                      <p className="text-xs text-muted-foreground">
-                        No burgs found near the campaign spawn. Adjust the spawn or populate the map dataset.
-                      </p>
-                    )}
-                      {burgOptions.length > 0 && (
-                        <Button
-                          type="button"
-                          variant="outline"
-                          size="sm"
-                          onClick={() => setBurgBrowserOpen(true)}
-                        >
-                          Browse burgs
-                        </Button>
-                      )}
-                  </div>
-                )}
-                {values.locationType === "marker" && !markerUnavailable && (
-                  <div className="space-y-2">
-                    <Label htmlFor="objective-marker" className="text-xs text-muted-foreground">
-                      Markers are loaded live from PostGIS. Choose one to link this objective.
-                    </Label>
-                      <Select
-                        value={values.locationMarkerId ?? CLEAR_LINK_VALUE}
-                        onValueChange={(value) =>
-                          onChange({ ...values, locationMarkerId: value === CLEAR_LINK_VALUE ? null : value })
-                        }
-                        disabled={disabled}
-                      >
-                        <SelectTrigger id="objective-marker">
-                          <SelectValue placeholder="Select marker" />
-                        </SelectTrigger>
-                        <SelectContent>
-                          <SelectItem value={CLEAR_LINK_VALUE}>Clear marker link</SelectItem>
-                          {markerOptions.map((marker) => (
-                            <SelectItem key={marker.id} value={marker.id}>
-                              {marker.label}
-                              {marker.icon ? ` · ${marker.icon}` : ""}
-                            </SelectItem>
-                          ))}
-                        </SelectContent>
-                      </Select>
-                      {markerOptions.length === 0 && (
-                        <p className="text-xs text-muted-foreground">
-                          No markers found near the campaign spawn.
-                        </p>
-                      )}
-                      {markerOptions.length > 0 && (
-                        <Button
-                          type="button"
-                          variant="outline"
-                          size="sm"
-                          onClick={() => setMarkerBrowserOpen(true)}
-                        >
-                          Browse markers
-                        </Button>
-                      )}
-                  </div>
-                )}
-                {values.locationType === "region" && (
-                  <div className="rounded-md border bg-muted/30 px-3 py-2 text-xs text-muted-foreground">
-                    <div className="flex items-center justify-between">
-                      <span className="font-medium text-foreground">Region</span>
-                      <span>
-                        {values.locationRegionId
-                          ? regionIndex.get(values.locationRegionId)?.name ?? values.locationRegionId
-                          : "No region linked"}
-                      </span>
-                    </div>
-                    <p className="mt-2">
-                      Regions are managed from the Campaign Prep Map. Use the map context menu to assign or adjust region links.
-                    </p>
-                  </div>
-                )}
-              </div>
-            </div>
+          <Switch
+            id={`objective-major-${mode}`}
+            disabled={disabled}
+            checked={values.isMajor}
+            onCheckedChange={(checked) => onChange({ ...values, isMajor: checked })}
+          />
+        </div>
+        <div className="grid gap-4 md:grid-cols-2">
+          <div className="space-y-2">
+            <Label htmlFor={`objective-slug-${mode}`}>Slug</Label>
+            <Input
+              id={`objective-slug-${mode}`}
+              disabled={disabled}
+              value={values.slug ?? ""}
+              onChange={(event) => onChange({ ...values, slug: event.target.value || null })}
+              placeholder="Optional short identifier"
+            />
+          </div>
+          <div className="space-y-2">
+            <Label htmlFor={`objective-parent-${mode}`}>Parent objective</Label>
+            <Select
+              value={values.parentId ?? ROOT_PARENT_VALUE}
+              onValueChange={(value) => onChange({ ...values, parentId: value === ROOT_PARENT_VALUE ? null : value })}
+              disabled={disabled}
+            >
+              <SelectTrigger id={`objective-parent-${mode}`}>
+                <SelectValue placeholder="Top-level objective" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value={ROOT_PARENT_VALUE}>Top-level objective</SelectItem>
+                {parentOptions.map((objective) => (
+                  <SelectItem key={objective.id} value={objective.id}>
+                    {objective.title}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
           </div>
         </div>
-        <DialogFooter className="mt-4">
-          <Button type="button" variant="outline" onClick={() => onOpenChange(false)} disabled={saving}>
-            Cancel
-          </Button>
-          <Button type="button" onClick={onSubmit} disabled={saving || values.title.trim().length === 0}>
-            {saving ? "Saving…" : mode === "create" ? "Create objective" : "Save changes"}
-          </Button>
-        </DialogFooter>
-      </DialogContent>
-    </Dialog>
-    <Dialog open={burgBrowserOpen} onOpenChange={setBurgBrowserOpen}>
-      <DialogContent className="max-w-lg">
-        <DialogHeader>
-          <DialogTitle>Select burg</DialogTitle>
-          <DialogDescription>
-            Search the burgs near the campaign spawn and link one to this objective.
-          </DialogDescription>
-        </DialogHeader>
-        <Command>
-          <CommandInput placeholder="Search burgs…" />
-          <CommandEmpty>No burgs found.</CommandEmpty>
-          <CommandList>
-            <CommandGroup heading="Burgs">
-              {burgOptions.map((burg) => (
-                <CommandItem
-                  key={burg.id}
-                  value={`${burg.name} ${burg.id}`}
-                  onSelect={() => {
-                    onChange({ ...values, locationBurgId: burg.id });
-                    setBurgBrowserOpen(false);
-                  }}
-                >
-                  <div className="flex flex-col">
-                    <span className="font-medium">{burg.name}</span>
-                    {burg.population ? (
-                      <span className="text-xs text-muted-foreground">
-                        Population {burg.population.toLocaleString()}
-                      </span>
-                    ) : null}
-                  </div>
-                </CommandItem>
-              ))}
-            </CommandGroup>
-          </CommandList>
-        </Command>
-      </DialogContent>
-    </Dialog>
-    <Dialog open={markerBrowserOpen} onOpenChange={setMarkerBrowserOpen}>
-      <DialogContent className="max-w-lg">
-        <DialogHeader>
-          <DialogTitle>Select marker</DialogTitle>
-          <DialogDescription>
-            Search the available markers near the campaign spawn and link one.
-          </DialogDescription>
-        </DialogHeader>
-        <Command>
-          <CommandInput placeholder="Search markers…" />
-          <CommandEmpty>No markers found.</CommandEmpty>
-          <CommandList>
-            <CommandGroup heading="Markers">
-              {markerOptions.map((marker) => (
-                <CommandItem
-                  key={marker.id}
-                  value={`${marker.label} ${marker.id}`}
-                  onSelect={() => {
-                    onChange({ ...values, locationMarkerId: marker.id });
-                    setMarkerBrowserOpen(false);
-                  }}
-                >
-                  <div className="flex flex-col">
-                    <span className="font-medium">{marker.label}</span>
-                    {marker.icon ? (
-                      <span className="text-xs text-muted-foreground">Icon: {marker.icon}</span>
-                    ) : null}
-                  </div>
-                </CommandItem>
-              ))}
-            </CommandGroup>
-          </CommandList>
-        </Command>
-      </DialogContent>
-    </Dialog>
-    </>
+      </div>
+
+      <Separator />
+
+      <div className="grid gap-4">
+        <div className="space-y-2">
+          <div className="flex items-center justify-between gap-2">
+            <Label htmlFor={`objective-description-${mode}`}>Description</Label>
+            {renderAssistButton("description")}
+          </div>
+          <Textarea
+            id={`objective-description-${mode}`}
+            disabled={disabled}
+            value={values.descriptionMd}
+            rows={4}
+            onChange={(event) => onChange({ ...values, descriptionMd: event.target.value })}
+            placeholder="Main objective details in Markdown"
+          />
+          {renderAssistStatus("description", { showDisabledInfo: true })}
+        </div>
+
+        <div className="space-y-2">
+          <div className="flex items-center justify-between gap-2">
+            <Label htmlFor={`objective-treasure-${mode}`}>Treasure</Label>
+            {renderAssistButton("treasure")}
+          </div>
+          <Textarea
+            id={`objective-treasure-${mode}`}
+            disabled={disabled}
+            value={values.treasureMd}
+            rows={4}
+            onChange={(event) => onChange({ ...values, treasureMd: event.target.value })}
+            placeholder="Loot, items, or rewards in Markdown"
+          />
+          {renderAssistStatus("treasure")}
+        </div>
+
+        <div className="space-y-2">
+          <div className="flex items-center justify-between gap-2">
+            <Label htmlFor={`objective-combat-${mode}`}>Combat Notes</Label>
+            {renderAssistButton("combat")}
+          </div>
+          <Textarea
+            id={`objective-combat-${mode}`}
+            disabled={disabled}
+            value={values.combatMd}
+            rows={4}
+            onChange={(event) => onChange({ ...values, combatMd: event.target.value })}
+            placeholder="Encounter breakdowns or tactics"
+          />
+          {renderAssistStatus("combat")}
+        </div>
+
+        <div className="space-y-2">
+          <div className="flex items-center justify-between gap-2">
+            <Label htmlFor={`objective-npcs-${mode}`}>NPCs</Label>
+            {renderAssistButton("npcs")}
+          </div>
+          <Textarea
+            id={`objective-npcs-${mode}`}
+            disabled={disabled}
+            value={values.npcsMd}
+            rows={4}
+            onChange={(event) => onChange({ ...values, npcsMd: event.target.value })}
+            placeholder="Notable characters and motivations"
+          />
+          {renderAssistStatus("npcs")}
+        </div>
+
+        <div className="space-y-2">
+          <div className="flex items-center justify-between gap-2">
+            <Label htmlFor={`objective-rumours-${mode}`}>Rumours</Label>
+            {renderAssistButton("rumours")}
+          </div>
+          <Textarea
+            id={`objective-rumours-${mode}`}
+            disabled={disabled}
+            value={values.rumoursMd}
+            rows={4}
+            onChange={(event) => onChange({ ...values, rumoursMd: event.target.value })}
+            placeholder="Hooks, whispers, or rumours"
+          />
+          {renderAssistStatus("rumours")}
+        </div>
+      </div>
+
+      {locationSummary ? (
+        <div className="rounded-md border bg-muted/20 px-3 py-2 text-xs text-muted-foreground">
+          <div className="font-medium text-foreground">Map linkage</div>
+          <p className="mt-1 text-sm text-foreground">{locationSummary}</p>
+          <p className="mt-2">
+            Update links from the campaign prep map context menu. Manual selectors have been removed per the zero-dummy policy.
+          </p>
+        </div>
+      ) : null}
+
+      <div className="flex justify-end gap-2">
+        <Button type="button" variant="outline" onClick={onCancel} disabled={saving}>
+          Cancel
+        </Button>
+        <Button type="submit" disabled={saving || values.title.trim().length === 0}>
+          {saving ? "Saving…" : mode === "create" ? "Create objective" : "Save changes"}
+        </Button>
+      </div>
+    </form>
   );
 };
 
-const BulkCreateDialog = ({
-  open,
-  onOpenChange,
-  onSubmit,
-  saving,
-  parentOptions,
-  parentId,
-  setParentId,
-  isMajor,
-  setIsMajor,
-  draft,
-  setDraft,
-}: {
-  open: boolean;
-  onOpenChange: (_open: boolean) => void;
-  onSubmit: () => void;
-  saving: boolean;
+interface BulkCreateSectionProps {
   parentOptions: ObjectiveRecord[];
   parentId: string | null;
   setParentId: (_value: string | null) => void;
@@ -858,62 +548,74 @@ const BulkCreateDialog = ({
   setIsMajor: (_value: boolean) => void;
   draft: string;
   setDraft: (_value: string) => void;
-}) => (
-  <Dialog open={open} onOpenChange={onOpenChange}>
-    <DialogContent className="sm:max-w-2xl">
-      <DialogHeader>
-        <DialogTitle>Bulk create objectives</DialogTitle>
-        <DialogDescription>
-          Paste or type one objective title per line. Each entry becomes a distinct objective saved through the live API.
-        </DialogDescription>
-      </DialogHeader>
-      <div className="space-y-4">
-        <div className="space-y-2">
-          <Label htmlFor="bulk-parent">Parent objective</Label>
-          <Select value={parentId ?? ROOT_PARENT_VALUE} onValueChange={(value) => setParentId(value === ROOT_PARENT_VALUE ? null : value)}>
-            <SelectTrigger id="bulk-parent">
-              <SelectValue placeholder="Top-level objective" />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value={ROOT_PARENT_VALUE}>Top-level objective</SelectItem>
-              {parentOptions.map((objective) => (
-                <SelectItem key={objective.id} value={objective.id}>
-                  {objective.title}
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
-        </div>
-        <div className="flex items-center justify-between rounded-md border p-3">
-          <div>
-            <p className="text-sm font-medium">Mark as major objectives</p>
-            <p className="text-xs text-muted-foreground">
-              Applies the major flag to every objective created in this batch.
-            </p>
-          </div>
-          <Switch checked={isMajor} onCheckedChange={setIsMajor} />
-        </div>
-        <div className="space-y-2">
-          <Label htmlFor="bulk-objectives">Objective titles</Label>
-          <Textarea
-            id="bulk-objectives"
-            value={draft}
-            onChange={(event) => setDraft(event.target.value)}
-            rows={8}
-            placeholder={"Secure the outpost\nExtract the prisoners\nSabotage the airship"}
-          />
-        </div>
+  onSubmit: () => void;
+  onCancel: () => void;
+  saving: boolean;
+}
+
+const BulkCreateSection = ({
+  parentOptions,
+  parentId,
+  setParentId,
+  isMajor,
+  setIsMajor,
+  draft,
+  setDraft,
+  onSubmit,
+  onCancel,
+  saving,
+}: BulkCreateSectionProps) => (
+  <form
+    className="space-y-4"
+    onSubmit={(event) => {
+      event.preventDefault();
+      onSubmit();
+    }}
+  >
+    <div className="space-y-2">
+      <Label htmlFor="bulk-parent">Parent objective</Label>
+      <Select value={parentId ?? ROOT_PARENT_VALUE} onValueChange={(value) => setParentId(value === ROOT_PARENT_VALUE ? null : value)}>
+        <SelectTrigger id="bulk-parent">
+          <SelectValue placeholder="Top-level objective" />
+        </SelectTrigger>
+        <SelectContent>
+          <SelectItem value={ROOT_PARENT_VALUE}>Top-level objective</SelectItem>
+          {parentOptions.map((objective) => (
+            <SelectItem key={objective.id} value={objective.id}>
+              {objective.title}
+            </SelectItem>
+          ))}
+        </SelectContent>
+      </Select>
+    </div>
+    <div className="flex items-center justify-between rounded-md border p-3">
+      <div>
+        <p className="text-sm font-medium">Mark as major objectives</p>
+        <p className="text-xs text-muted-foreground">
+          Applies the major flag to every objective created in this batch.
+        </p>
       </div>
-      <DialogFooter>
-        <Button type="button" variant="outline" onClick={() => onOpenChange(false)} disabled={saving}>
-          Cancel
-        </Button>
-        <Button type="button" onClick={onSubmit} disabled={saving || draft.trim().length === 0}>
-          {saving ? "Creating…" : "Create objectives"}
-        </Button>
-      </DialogFooter>
-    </DialogContent>
-  </Dialog>
+      <Switch checked={isMajor} onCheckedChange={setIsMajor} />
+    </div>
+    <div className="space-y-2">
+      <Label htmlFor="bulk-objectives">Objective titles</Label>
+      <Textarea
+        id="bulk-objectives"
+        value={draft}
+        onChange={(event) => setDraft(event.target.value)}
+        rows={8}
+        placeholder={"Secure the outpost\nExtract the prisoners\nSabotage the airship"}
+      />
+    </div>
+    <div className="flex justify-end gap-2">
+      <Button type="button" variant="outline" onClick={onCancel} disabled={saving}>
+        Cancel
+      </Button>
+      <Button type="submit" disabled={saving || draft.trim().length === 0}>
+        {saving ? "Creating…" : "Create objectives"}
+      </Button>
+    </div>
+  </form>
 );
 
 interface ObjectiveTreeProps {
@@ -1134,12 +836,10 @@ export function ObjectivesPanel({ campaign, canEdit, worldMap, worldMapLoading, 
   const [objectives, setObjectives] = useState<ObjectiveRecord[]>([]);
   const [loading, setLoading] = useState(false);
   const [loadError, setLoadError] = useState<string | null>(null);
-  const [createDialogOpen, setCreateDialogOpen] = useState(false);
-  const [editDialogOpen, setEditDialogOpen] = useState(false);
-  const [bulkDialogOpen, setBulkDialogOpen] = useState(false);
-  const [formValues, setFormValues] = useState<ObjectiveFormValues | null>(null);
-  const [activeObjective, setActiveObjective] = useState<ObjectiveRecord | null>(null);
-  const [defaultParentId, setDefaultParentId] = useState<string | null>(null);
+  const [accordionSections, setAccordionSections] = useState<string[]>(["objective-list"]);
+  const [createFormValues, setCreateFormValues] = useState<ObjectiveFormValues>(createEmptyObjectiveForm());
+  const [editingObjective, setEditingObjective] = useState<ObjectiveRecord | null>(null);
+  const [editFormValues, setEditFormValues] = useState<ObjectiveFormValues | null>(null);
   const [saving, setSaving] = useState(false);
   const [bulkSaving, setBulkSaving] = useState(false);
   const [bulkDraft, setBulkDraft] = useState("");
@@ -1147,7 +847,6 @@ export function ObjectivesPanel({ campaign, canEdit, worldMap, worldMapLoading, 
   const [bulkIsMajor, setBulkIsMajor] = useState(false);
   const [burgOptions, setBurgOptions] = useState<BurgOption[]>([]);
   const [markerOptions, setMarkerOptions] = useState<MarkerOption[]>([]);
-  const [markerUnavailable, setMarkerUnavailable] = useState(false);
   const [reordering, setReordering] = useState(false);
   const [dragState, setDragState] = useState<{ id: string; parentId: string | null } | null>(null);
   const [dropTarget, setDropTarget] = useState<{ id: string; position: "before" | "after" } | null>(null);
@@ -1179,6 +878,14 @@ export function ObjectivesPanel({ campaign, canEdit, worldMap, worldMapLoading, 
     markerOptions.forEach((marker) => map.set(marker.id, marker));
     return map;
   }, [markerOptions]);
+
+  const ensureSectionOpen = useCallback((section: string) => {
+    setAccordionSections((prev) => (prev.includes(section) ? prev : [...prev, section]));
+  }, []);
+
+  const closeSection = useCallback((section: string) => {
+    setAccordionSections((prev) => prev.filter((value) => value !== section));
+  }, []);
 
   const regionIndex = useMemo(() => {
     const map = new Map<string, CampaignRegion>();
@@ -1353,7 +1060,6 @@ export function ObjectivesPanel({ campaign, canEdit, worldMap, worldMapLoading, 
         return;
       }
       setMarkerOptions([]);
-      setMarkerUnavailable(false);
       return;
     }
 
@@ -1365,7 +1071,6 @@ export function ObjectivesPanel({ campaign, canEdit, worldMap, worldMapLoading, 
 
       const response = await apiFetch(`/api/maps/${worldMap.id}/markers${boundsQuery}`);
       if (response.status === 404) {
-        setMarkerUnavailable(true);
         setMarkerOptions([]);
         return;
       }
@@ -1403,11 +1108,9 @@ export function ObjectivesPanel({ campaign, canEdit, worldMap, worldMapLoading, 
       }, []);
 
       setMarkerOptions(options);
-      setMarkerUnavailable(false);
     } catch (error) {
       console.error("[ObjectivesPanel] Failed to load marker options", error);
       setMarkerOptions([]);
-      setMarkerUnavailable(false);
     }
   }, [worldMap?.id, computeBoundsNearSpawn, spawnLoaded]);
 
@@ -1447,6 +1150,10 @@ export function ObjectivesPanel({ campaign, canEdit, worldMap, worldMapLoading, 
       } else if (type === "objective-updated" && data && isObjectiveRecord(data.objective)) {
         const record = data.objective;
         setObjectives((prev) => prev.map((item) => (item.id === record.id ? record : item)));
+        if (editingObjective && editingObjective.id === record.id) {
+          setEditingObjective(record);
+          setEditFormValues((prev) => (prev ? objectiveToFormValues(record) : prev));
+        }
       } else if (type === "objective-deleted" && data) {
         const ids = toStringArray(data.deletedObjectiveIds);
         if (!ids) {
@@ -1457,7 +1164,7 @@ export function ObjectivesPanel({ campaign, canEdit, worldMap, worldMapLoading, 
     });
 
     processedMessageIndexRef.current = messages.length;
-  }, [messages, campaign?.id]);
+  }, [messages, campaign?.id, editingObjective]);
 
   const toggleExpanded = useCallback((id: string) => {
     setExpanded((prev) => {
@@ -1471,58 +1178,35 @@ export function ObjectivesPanel({ campaign, canEdit, worldMap, worldMapLoading, 
     });
   }, []);
 
-  const openCreateDialog = useCallback(
+  const openCreateSection = useCallback(
     (parentId: string | null = null) => {
-      setDefaultParentId(parentId);
-      setFormValues({
-        title: "",
-        parentId,
-        isMajor: false,
-        slug: null,
-        descriptionMd: "",
-        treasureMd: "",
-        combatMd: "",
-        npcsMd: "",
-        rumoursMd: "",
-        locationType: worldMap ? "pin" : "none",
-        pin: null,
-        locationBurgId: null,
-        locationMarkerId: null,
-      });
-      setCreateDialogOpen(true);
+      setCreateFormValues(createEmptyObjectiveForm(parentId));
+      ensureSectionOpen("objective-create");
     },
-    [worldMap],
+    [ensureSectionOpen],
   );
 
   const handleCreate = useCallback(async () => {
-    if (!campaign?.id || !formValues) return;
+    if (!campaign?.id) return;
 
-    const title = formValues.title.trim();
+    const title = createFormValues.title.trim();
     if (!title) {
       toast.error("Objective title is required.");
       return;
     }
 
-    const parentId = formValues.parentId ?? null;
+    const parentId = createFormValues.parentId ?? null;
     const siblings = objectives
       .filter((objective) => (objective.parentId ?? null) === parentId)
       .sort((a, b) => a.orderIndex - b.orderIndex);
     const nextOrderIndex = siblings.length;
 
-    const { location, base } = formValuesToPayload(formValues);
+    const base = formValuesToPayload(createFormValues);
 
     const payload: ObjectiveCreatePayload = {
       title,
-      parentId,
       orderIndex: nextOrderIndex,
-      isMajor: base.isMajor,
-      slug: base.slug ?? null,
-      descriptionMd: base.descriptionMd ?? null,
-      treasureMd: base.treasureMd ?? null,
-      combatMd: base.combatMd ?? null,
-      npcsMd: base.npcsMd ?? null,
-      rumoursMd: base.rumoursMd ?? null,
-      location,
+      ...base,
     };
 
     setSaving(true);
@@ -1530,62 +1214,72 @@ export function ObjectivesPanel({ campaign, canEdit, worldMap, worldMapLoading, 
       const record = await createObjective(campaign.id, payload);
       setObjectives((prev) => [...prev, record]);
       toast.success("Objective created.");
-      setCreateDialogOpen(false);
-      setFormValues(null);
+      setCreateFormValues(createEmptyObjectiveForm(parentId));
     } catch (error) {
       console.error("[ObjectivesPanel] Failed to create objective", error);
       toast.error(error instanceof Error ? error.message : "Failed to create objective");
     } finally {
       setSaving(false);
     }
-  }, [campaign?.id, formValues, objectives]);
+  }, [campaign?.id, createFormValues, objectives]);
 
-  const openEditDialog = useCallback((objective: ObjectiveRecord) => {
-    setActiveObjective(objective);
-    setFormValues(objectiveToFormValues(objective));
-    setAssistStates(createAssistUiState());
-    setEditDialogOpen(true);
-  }, []);
+  const handleCancelCreate = useCallback(() => {
+    setCreateFormValues(createEmptyObjectiveForm());
+    closeSection("objective-create");
+  }, [closeSection]);
+
+  const openEditSection = useCallback(
+    (objective: ObjectiveRecord) => {
+      setEditingObjective(objective);
+      setEditFormValues(objectiveToFormValues(objective));
+      setAssistStates(createAssistUiState());
+      setAccordionSections((prev) => {
+        const cleared = prev.filter((value) => !value.startsWith("edit-"));
+        const key = `edit-${objective.id}`;
+        return cleared.includes(key) ? cleared : [...cleared, key];
+      });
+    },
+    [],
+  );
 
   const handleUpdate = useCallback(async () => {
-    if (!activeObjective || !formValues) return;
+    if (!editingObjective || !editFormValues) return;
 
-    const title = formValues.title.trim();
+    const title = editFormValues.title.trim();
     if (!title) {
       toast.error("Objective title is required.");
       return;
     }
 
-    const { location, base } = formValuesToPayload(formValues);
+    const base = formValuesToPayload(editFormValues);
 
     const payload: ObjectiveUpdatePayload = {
       title,
-      parentId: base.parentId,
-      isMajor: base.isMajor,
-      slug: base.slug ?? null,
-      descriptionMd: base.descriptionMd ?? null,
-      treasureMd: base.treasureMd ?? null,
-      combatMd: base.combatMd ?? null,
-      npcsMd: base.npcsMd ?? null,
-      rumoursMd: base.rumoursMd ?? null,
-      location,
+      ...base,
     };
 
     setSaving(true);
     try {
-      const updated = await updateObjective(activeObjective.id, payload);
+      const updated = await updateObjective(editingObjective.id, payload);
       setObjectives((prev) => prev.map((item) => (item.id === updated.id ? updated : item)));
       toast.success("Objective updated.");
-      setEditDialogOpen(false);
-      setFormValues(null);
-      setActiveObjective(null);
+      setEditingObjective(updated);
+      setEditFormValues(objectiveToFormValues(updated));
     } catch (error) {
       console.error("[ObjectivesPanel] Failed to update objective", error);
       toast.error(error instanceof Error ? error.message : "Failed to update objective");
     } finally {
       setSaving(false);
     }
-  }, [activeObjective, formValues]);
+  }, [editingObjective, editFormValues]);
+
+  const handleCancelEdit = useCallback(() => {
+    if (!editingObjective) return;
+    closeSection(`edit-${editingObjective.id}`);
+    setEditingObjective(null);
+    setEditFormValues(null);
+    setAssistStates(createAssistUiState());
+  }, [closeSection, editingObjective]);
 
   const handleRequestAssist = useCallback(
     async (field: ObjectiveAssistField) => {
@@ -1594,7 +1288,7 @@ export function ObjectivesPanel({ campaign, canEdit, worldMap, worldMapLoading, 
         return;
       }
 
-      if (!activeObjective?.id) {
+      if (!editingObjective?.id) {
         toast.error("Select an objective before requesting an assist.");
         return;
       }
@@ -1605,7 +1299,7 @@ export function ObjectivesPanel({ campaign, canEdit, worldMap, worldMapLoading, 
       }));
 
       try {
-        const response = await requestObjectiveAssist(activeObjective.id, field);
+        const response = await requestObjectiveAssist(editingObjective.id, field);
         const updated = response.objective;
 
         setObjectives((prev) => {
@@ -1616,13 +1310,13 @@ export function ObjectivesPanel({ campaign, canEdit, worldMap, worldMapLoading, 
           return prev.map((item) => (item.id === updated.id ? updated : item));
         });
 
-        setActiveObjective(updated);
+        setEditingObjective(updated);
 
         const recordKey = assistFieldRecordKeys[field];
         const formKey = assistFieldFormKeys[field];
         const updatedValue = updated[recordKey] as string | null | undefined;
 
-        setFormValues((prev) => {
+        setEditFormValues((prev) => {
           if (!prev) return prev;
           const nextValue = updatedValue ?? "";
           return { ...prev, [formKey]: nextValue };
@@ -1658,7 +1352,7 @@ export function ObjectivesPanel({ campaign, canEdit, worldMap, worldMapLoading, 
         toast.error(message);
       }
     },
-    [activeObjective?.id, canEdit],
+    [editingObjective?.id, canEdit],
   );
 
   const handleDelete = useCallback(
@@ -1721,15 +1415,15 @@ export function ObjectivesPanel({ campaign, canEdit, worldMap, worldMapLoading, 
       }
       setObjectives((prev) => [...prev, ...created]);
       toast.success(`Created ${created.length} objective${created.length === 1 ? "" : "s"}.`);
-      setBulkDialogOpen(false);
       setBulkDraft("");
+      closeSection("objective-bulk");
     } catch (error) {
       console.error("[ObjectivesPanel] Bulk create failed", error);
       toast.error(error instanceof Error ? error.message : "Failed to create objectives");
     } finally {
       setBulkSaving(false);
     }
-  }, [bulkDraft, bulkIsMajor, bulkParentId, campaign?.id, objectives]);
+  }, [bulkDraft, bulkIsMajor, bulkParentId, campaign?.id, objectives, closeSection]);
 
   const handleDropAt = useCallback(
     async (targetId: string, position: "before" | "after") => {
@@ -1809,12 +1503,11 @@ export function ObjectivesPanel({ campaign, canEdit, worldMap, worldMapLoading, 
     [dragState, objectiveIndex, objectives],
   );
 
-  const parentOptions = useMemo(() => objectives.filter((objective) => objective.id !== activeObjective?.id), [objectives, activeObjective?.id]);
-
-  const canRenderActions = Boolean(campaign);
+  const parentOptions = useMemo(() => objectives.filter((objective) => objective.id !== editingObjective?.id), [objectives, editingObjective?.id]);
+  const editSectionId = editingObjective ? `edit-${editingObjective.id}` : null;
 
   return (
-    <Card>
+    <Card className="flex h-full flex-col">
       <CardHeader className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
         <div>
           <CardTitle>Objectives</CardTitle>
@@ -1822,7 +1515,7 @@ export function ObjectivesPanel({ campaign, canEdit, worldMap, worldMapLoading, 
             Create, reorder, and manage the full objective tree against the live campaign backend.
           </CardDescription>
         </div>
-        {canRenderActions && (
+        {campaign ? (
           <div className="flex flex-wrap gap-2">
             <Button
               type="button"
@@ -1841,185 +1534,174 @@ export function ObjectivesPanel({ campaign, canEdit, worldMap, worldMapLoading, 
                 setBulkParentId(null);
                 setBulkDraft("");
                 setBulkIsMajor(false);
-                setBulkDialogOpen(true);
+                ensureSectionOpen("objective-bulk");
               }}
               disabled={!canEdit}
             >
               Bulk add
             </Button>
-            <Button type="button" size="sm" onClick={() => openCreateDialog(null)} disabled={!canEdit}>
+            <Button type="button" size="sm" onClick={() => openCreateSection(null)} disabled={!canEdit}>
               <Plus className="mr-2 h-4 w-4" /> New objective
             </Button>
           </div>
-        )}
+        ) : null}
       </CardHeader>
-      <CardContent>
-        {!campaign && (
+      <CardContent className="flex-1 overflow-hidden">
+        {!campaign ? (
           <Alert>
             <AlertTitle>Select a campaign</AlertTitle>
             <AlertDescription>
               Choose a campaign to load its objectives and manage the prep tree.
             </AlertDescription>
           </Alert>
-        )}
-        {campaign && loadError && (
+        ) : null}
+
+        {campaign && loadError ? (
           <Alert variant="destructive" className="mb-4">
             <AlertTitle>Failed to load objectives</AlertTitle>
             <AlertDescription>{loadError}</AlertDescription>
           </Alert>
-        )}
-        {campaign && !loadError && (
-          <div className="space-y-4">
-            {(loading || worldMapLoading) && (
+        ) : null}
+
+        {campaign && !loadError ? (
+          <div className="flex h-full flex-col gap-4">
+            {(loading || worldMapLoading) ? (
               <div className="flex items-center gap-2 text-sm text-muted-foreground">
                 <LoadingSpinner className="h-4 w-4" />
                 Loading {loading ? "objectives" : "world map"}…
               </div>
-            )}
-            {worldMapError && (
+            ) : null}
+            {worldMapError ? (
               <Alert variant="default" className={WARNING_ALERT_CLASS}>
                 <AlertTitle>World map unavailable</AlertTitle>
                 <AlertDescription>{worldMapError}</AlertDescription>
               </Alert>
-            )}
-            <ScrollArea className="max-h-[36rem] pr-4">
-              <ObjectiveTree
-                nodes={tree}
-                expanded={expanded}
-                toggleExpanded={toggleExpanded}
-                onAddChild={(objective) => openCreateDialog(objective.id)}
-                onEdit={openEditDialog}
-                onDelete={handleDelete}
-                canEdit={canEdit}
-                burgIndex={burgIndex}
-                markerIndex={markerIndex}
-                regionIndex={regionIndex}
-                reordering={reordering}
-                onDragStart={(id, parentId) => {
-                  setDragState({ id, parentId });
-                }}
-              onDragEnd={() => {
-                setDragState(null);
-                setDropTarget(null);
-              }}
-              onDropAt={(id, position) => {
-                setDropTarget({ id, position });
-                void handleDropAt(id, position);
-              }}
-              dropTarget={dropTarget}
-              onHover={(id, position) => {
-                if (position) {
-                  setDropTarget({ id, position });
-                } else {
-                  setDropTarget(null);
-                }
-              }}
-            />
-            </ScrollArea>
+            ) : null}
+
+            <Accordion
+              type="multiple"
+              value={accordionSections}
+              onValueChange={(values) => setAccordionSections(values)}
+              className="space-y-2"
+            >
+              <AccordionItem value="objective-list">
+                <AccordionTrigger>
+                  Objective tree
+                </AccordionTrigger>
+                <AccordionContent>
+                  <ScrollArea className="max-h-[36rem] pr-4">
+                    <ObjectiveTree
+                      nodes={tree}
+                      expanded={expanded}
+                      toggleExpanded={toggleExpanded}
+                      onAddChild={(objective) => openCreateSection(objective.id)}
+                      onEdit={openEditSection}
+                      onDelete={handleDelete}
+                      canEdit={canEdit}
+                      burgIndex={burgIndex}
+                      markerIndex={markerIndex}
+                      regionIndex={regionIndex}
+                      reordering={reordering}
+                      onDragStart={(id, parentId) => {
+                        setDragState({ id, parentId });
+                      }}
+                      onDragEnd={() => {
+                        setDragState(null);
+                        setDropTarget(null);
+                      }}
+                      onDropAt={(id, position) => {
+                        setDropTarget({ id, position });
+                        void handleDropAt(id, position);
+                      }}
+                      dropTarget={dropTarget}
+                      onHover={(id, position) => {
+                        if (position) {
+                          setDropTarget({ id, position });
+                        } else {
+                          setDropTarget(null);
+                        }
+                      }}
+                    />
+                  </ScrollArea>
+                </AccordionContent>
+              </AccordionItem>
+
+              <AccordionItem value="objective-create">
+                <AccordionTrigger>
+                  New objective
+                </AccordionTrigger>
+                <AccordionContent>
+                  <ObjectiveEditorForm
+                    mode="create"
+                    values={createFormValues}
+                    onChange={setCreateFormValues}
+                    onSubmit={handleCreate}
+                    onCancel={handleCancelCreate}
+                    saving={saving}
+                    parentOptions={objectives}
+                    disabled={!canEdit}
+                    assistEnabled={false}
+                    assistStates={disabledAssistState}
+                    onRequestAssist={() => {}}
+                    assistDisabledReason="Save the objective before requesting an LLM assist."
+                    locationSummary={null}
+                  />
+                </AccordionContent>
+              </AccordionItem>
+
+              {editSectionId && editFormValues && editingObjective ? (
+                <AccordionItem value={editSectionId}>
+                  <AccordionTrigger>
+                    Edit objective · {editingObjective.title}
+                  </AccordionTrigger>
+                  <AccordionContent>
+                    <ObjectiveEditorForm
+                      mode="edit"
+                      values={editFormValues}
+                      onChange={(next) => setEditFormValues(next)}
+                      onSubmit={handleUpdate}
+                      onCancel={handleCancelEdit}
+                      saving={saving}
+                      parentOptions={parentOptions}
+                      disabled={!canEdit}
+                      assistEnabled={canEdit}
+                      assistStates={assistStates}
+                      onRequestAssist={handleRequestAssist}
+                      assistDisabledReason={canEdit ? null : "Editing requires DM permissions."}
+                      locationSummary={buildLocationSummary(editingObjective, burgIndex, markerIndex, regionIndex)}
+                    />
+                  </AccordionContent>
+                </AccordionItem>
+              ) : null}
+
+              <AccordionItem value="objective-bulk">
+                <AccordionTrigger>
+                  Bulk create objectives
+                </AccordionTrigger>
+                <AccordionContent>
+                  <BulkCreateSection
+                    parentOptions={objectives}
+                    parentId={bulkParentId}
+                    setParentId={setBulkParentId}
+                    isMajor={bulkIsMajor}
+                    setIsMajor={setBulkIsMajor}
+                    draft={bulkDraft}
+                    setDraft={setBulkDraft}
+                    onSubmit={handleBulkCreate}
+                    onCancel={() => {
+                      setBulkDraft("");
+                      setBulkParentId(null);
+                      setBulkIsMajor(false);
+                      closeSection("objective-bulk");
+                    }}
+                    saving={bulkSaving}
+                  />
+                </AccordionContent>
+              </AccordionItem>
+            </Accordion>
           </div>
-        )}
+        ) : null}
       </CardContent>
-
-      <ObjectiveDialog
-        mode="create"
-        open={createDialogOpen}
-        onOpenChange={(open) => {
-          setCreateDialogOpen(open);
-          if (!open) setFormValues(null);
-        }}
-        values={
-          createDialogOpen
-            ? formValues ?? {
-                title: "",
-                parentId: defaultParentId,
-                isMajor: false,
-                slug: null,
-                descriptionMd: "",
-                treasureMd: "",
-                combatMd: "",
-                npcsMd: "",
-                rumoursMd: "",
-                locationType: worldMap ? "pin" : "none",
-                pin: null,
-                locationBurgId: null,
-                locationMarkerId: null,
-                locationRegionId: null,
-              }
-            : {
-                title: "",
-                parentId: defaultParentId,
-                isMajor: false,
-                slug: null,
-                descriptionMd: "",
-                treasureMd: "",
-                combatMd: "",
-                npcsMd: "",
-                rumoursMd: "",
-                locationType: worldMap ? "pin" : "none",
-                pin: null,
-                locationBurgId: null,
-                locationMarkerId: null,
-                locationRegionId: null,
-              }
-        }
-        onChange={(next) => setFormValues(next)}
-        onSubmit={handleCreate}
-        saving={saving}
-        parentOptions={objectives}
-        disabled={!canEdit}
-        worldMap={worldMap}
-        markerUnavailable={markerUnavailable}
-        burgOptions={burgOptions}
-        markerOptions={markerOptions}
-        regionIndex={regionIndex}
-        assistEnabled={false}
-        assistStates={disabledAssistState}
-        onRequestAssist={() => {}}
-        assistDisabledReason="Save the objective before requesting an LLM assist."
-      />
-
-      {editDialogOpen && formValues && activeObjective && (
-        <ObjectiveDialog
-          mode="edit"
-          open={editDialogOpen}
-          onOpenChange={(open) => {
-            setEditDialogOpen(open);
-            if (!open) {
-              setActiveObjective(null);
-              setFormValues(null);
-            }
-          }}
-          values={formValues}
-          onChange={(next) => setFormValues(next)}
-          onSubmit={handleUpdate}
-          saving={saving}
-          parentOptions={parentOptions}
-          disabled={!canEdit}
-          worldMap={worldMap}
-          markerUnavailable={markerUnavailable}
-          burgOptions={burgOptions}
-          markerOptions={markerOptions}
-          regionIndex={regionIndex}
-          assistEnabled={Boolean(activeObjective.id) && canEdit}
-          assistStates={assistStates}
-          onRequestAssist={handleRequestAssist}
-          assistDisabledReason={null}
-        />
-      )}
-
-      <BulkCreateDialog
-        open={bulkDialogOpen}
-        onOpenChange={(open) => setBulkDialogOpen(open)}
-        onSubmit={handleBulkCreate}
-        saving={bulkSaving}
-        parentOptions={objectives}
-        parentId={bulkParentId}
-        setParentId={setBulkParentId}
-        isMajor={bulkIsMajor}
-        setIsMajor={setBulkIsMajor}
-        draft={bulkDraft}
-        setDraft={setBulkDraft}
-      />
     </Card>
   );
 }

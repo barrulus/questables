@@ -77,6 +77,9 @@ const parseBounds = (value: unknown): WorldMapRecord["bounds"] | null => {
     const east = Number(candidate.east);
     const west = Number(candidate.west);
     if ([north, south, east, west].every((coordinate) => Number.isFinite(coordinate))) {
+      if (east <= west || north <= south) {
+        return null;
+      }
       return { north, south, east, west };
     }
     return null;
@@ -633,7 +636,7 @@ export function CampaignPrep({
   };
 
   return (
-    <div className="grid gap-4 xl:grid-cols-[minmax(0,3fr)_minmax(0,2fr)]">
+    <div className="grid gap-4 xl:grid-cols-[minmax(0,4fr)_minmax(0,2.3fr)] xl:items-start">
       <div className="space-y-4">
         <Card>
           <CardHeader>
@@ -993,15 +996,17 @@ export function CampaignPrep({
         ) : null}
       </div>
 
-      <ObjectivesPanel
-        campaign={campaign}
-        canEdit={isCampaignDm}
-        worldMap={worldMap}
-        worldMapLoading={worldMapLoading}
-        worldMapError={worldMapError}
-        regions={regions}
-        refreshKey={objectivesRefreshKey}
-      />
+      <div className="flex h-full flex-col overflow-hidden">
+        <ObjectivesPanel
+          campaign={campaign}
+          canEdit={isCampaignDm}
+          worldMap={worldMap}
+          worldMapLoading={worldMapLoading}
+          worldMapError={worldMapError}
+          regions={regions}
+          refreshKey={objectivesRefreshKey}
+        />
+      </div>
     </div>
   );
 }

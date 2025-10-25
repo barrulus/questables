@@ -34,7 +34,7 @@
 
 ## Important facts
 
-- The database is running and all the relevant configuration is stored at /home/barrulus/1_projects/questables/.env.local
+- The database is running and all the relevant configuration is stored at /data/dev/questables/.env.local
 - The database service is configured and running on port 3001 as per .env.local
 - Any geom related fields must be SRID 0
 - Keep API_DOCUMENTATION.md updated at all times

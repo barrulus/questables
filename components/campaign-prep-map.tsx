@@ -4,7 +4,8 @@ import View from "ol/View";
 import TileLayer from "ol/layer/Tile";
 import VectorLayer from "ol/layer/Vector";
 import VectorSource from "ol/source/Vector";
-import Feature from "ol/Feature";
+import 'ol/ol.css';
+import Feature, { FeatureLike } from 'ol/Feature';
 import Point from "ol/geom/Point";
 import Polygon from "ol/geom/Polygon";
 import MultiPolygon from "ol/geom/MultiPolygon";
@@ -15,13 +16,14 @@ import type { DrawEvent } from "ol/interaction/Draw";
 import { Circle as CircleStyle, Fill, Stroke, Style, Text } from "ol/style";
 import { defaults as defaultControls } from "ol/control";
 import { Overlay } from "ol";
+import { getCenter } from "ol/extent";
 import type { Coordinate } from "ol/coordinate";
-import type { FeatureLike } from "ol/Feature";
 import type MapBrowserEvent from "ol/MapBrowserEvent";
+//import type { MapBrowserEvent } from 'ol';
 import { toast } from "sonner";
 
 import { mapDataLoader, type WorldMapBounds } from "./map-data-loader";
-import { PIXEL_PROJECTION_CODE, questablesProjection, updateProjectionExtent } from "./map-projection";
+import { PIXEL_PROJECTION_CODE, questablesProjection, updateProjectionExtent, DEFAULT_PIXEL_EXTENT } from "./map-projection";
 import {
   createBurgStyleFactory,
   createMarkerStyleFactory,
@@ -109,6 +111,44 @@ const INITIAL_LAYER_VISIBILITY: LayerVisibilityState = {
   cells: false,
 };
 
+const isFiniteNumber = (v: unknown): v is number =>
+  typeof v === "number" && Number.isFinite(v);
+
+const EXTENT_PADDING_RATIO = 0.05;
+
+const padExtent = (
+  extent: [number, number, number, number],
+  ratio: number = EXTENT_PADDING_RATIO,
+): [number, number, number, number] => {
+  const width = extent[2] - extent[0];
+  const height = extent[3] - extent[1];
+  if (width <= 0 || height <= 0) {
+    return extent;
+  }
+  const padX = width * ratio;
+  const padY = height * ratio;
+  return [extent[0] - padX, extent[1] - padY, extent[2] + padX, extent[3] + padY];
+};
+
+type LooseTileSet = {
+  id?: unknown;
+  name?: unknown;
+  base_url?: unknown;
+  attribution?: unknown;
+  min_zoom?: unknown;
+  max_zoom?: unknown;
+  tile_size?: unknown;
+  wrapX?: unknown;
+};
+
+const isTileSetRecord = (v: unknown): v is Required<Pick<LooseTileSet, "id" | "base_url">> & LooseTileSet => {
+  if (typeof v !== "object" || v === null) {
+    return false;
+  }
+  const candidate = v as LooseTileSet;
+  return typeof candidate.id === "string" && typeof candidate.base_url === "string";
+};
+
 type SpawnVectorLayer = VectorLayer<VectorSource<Feature<Point>>>;
 type HighlightVectorLayer = VectorLayer<VectorSource<Feature<Point>>>;
 
@@ -182,11 +222,16 @@ const buildFeatureDetails = (feature: GeometryFeature | null, coordinate: Coordi
     ? { ...(data as Record<string, unknown>) }
     : {};
 
+  const normalizedCoordinate: [number, number] | null =
+    coordinate && coordinate.length >= 2 && coordinate.every((value) => Number.isFinite(value))
+      ? [coordinate[0], coordinate[1]]
+      : null;
+
   return {
     id: featureId,
     type,
     name: derivedName,
-    coordinate: coordinate ? [coordinate[0], coordinate[1]] : null,
+    coordinate: normalizedCoordinate,
     properties,
   };
 };
@@ -242,7 +287,7 @@ export function CampaignPrepMap({
   const [tileSets, setTileSets] = useState<QuestablesTileSetConfig[]>([]);
   const [selectedTileSetId, setSelectedTileSetId] = useState<string>("");
   const [loadingTiles, setLoadingTiles] = useState(true);
-  const [mapReady, setMapReady] = useState(false);
+  const [mapReady, setMapReadyState] = useState(false);
   const [mapError, setMapError] = useState<string | null>(null);
   const { visibility: layerVisibility, toggle: toggleLayer } =
     useLayerVisibility(INITIAL_LAYER_VISIBILITY);
@@ -264,6 +309,17 @@ export function CampaignPrepMap({
 
   const currentWorldMapIdRef = useRef<string | null>(null);
   const loadingDataRef = useRef(false);
+  const resizeObserverRef = useRef<ResizeObserver | null>(null);
+  const initialFitDoneRef = useRef(false);
+  const lastFittedExtentRef = useRef<[number, number, number, number] | null>(null);
+  const lastFittedSizeRef = useRef<[number, number] | null>(null);
+  const mapReadyRef = useRef(false);
+  const pendingFrameRef = useRef<number | null>(null);
+
+  const setMapReady = useCallback((value: boolean) => {
+    mapReadyRef.current = value;
+    setMapReadyState(value);
+  }, []);
   const geoJsonReader = useMemo(() => new GeoJSON({
     dataProjection: PIXEL_PROJECTION_CODE,
     featureProjection: PIXEL_PROJECTION_CODE,
@@ -296,6 +352,100 @@ export function CampaignPrepMap({
     return style;
   }, []);
 
+  const areExtentsEqual = useCallback((a: [number, number, number, number], b: [number, number, number, number]) => {
+    return (
+      a[0] === b[0]
+      && a[1] === b[1]
+      && a[2] === b[2]
+      && a[3] === b[3]
+    );
+  }, []);
+
+  const updateViewExtent = useCallback((bounds?: { west: number; south: number; east: number; north: number } | null) => {
+    const map = mapInstanceRef.current;
+    const view = map?.getView();
+    if (!map || !view) return;
+
+    const extent = updateProjectionExtent(bounds ?? null);
+    const paddedExtent = padExtent(extent);
+    view.setProperties({ extent: paddedExtent });
+
+    const targetCenter: [number, number] = [
+      (extent[0] + extent[2]) / 2,
+      (extent[1] + extent[3]) / 2,
+    ];
+    view.setCenter(targetCenter);
+
+    const size = map.getSize();
+    if (!size || size[0] === 0 || size[1] === 0) {
+      requestAnimationFrame(() => updateViewExtent(bounds ?? null));
+      return;
+    }
+
+    const previousExtent = lastFittedExtentRef.current;
+    const previousSize = lastFittedSizeRef.current;
+    const extentChanged = !previousExtent || !areExtentsEqual(previousExtent, extent);
+    const sizeChanged = !previousSize || previousSize[0] !== size[0] || previousSize[1] !== size[1];
+    const shouldFit = !initialFitDoneRef.current || extentChanged || sizeChanged;
+
+    if (shouldFit) {
+      view.fit(extent, {
+        size,
+        nearest: true,
+        padding: [0, 0, 0, 0],
+        duration: 0,
+      });
+      lastFittedExtentRef.current = extent;
+      lastFittedSizeRef.current = [size[0], size[1]];
+      initialFitDoneRef.current = true;
+    }
+  }, [areExtentsEqual]);
+
+  const handleMapError = useCallback(
+    (message: string) => {
+      if (onError) {
+        onError(message);
+      } else {
+        toast.error(message);
+      }
+    },
+    [onError],
+  );
+
+  const applyTileSetConstraints = useCallback((tileSet: QuestablesTileSetConfig | null) => {
+    const view = mapInstanceRef.current?.getView();
+    if (!view) return;
+
+    const rawMinZoom = tileSet?.min_zoom;
+    const rawMaxZoom = tileSet?.max_zoom;
+
+    const minZoom = typeof rawMinZoom === "number" && Number.isFinite(rawMinZoom) ? rawMinZoom : 0;
+    const maxZoom = typeof rawMaxZoom === "number" && Number.isFinite(rawMaxZoom) ? rawMaxZoom : 20;
+
+    if (maxZoom < minZoom) {
+      const identifier = tileSet?.name ?? tileSet?.id ?? "selected tile set";
+      const message = `${identifier} reports max_zoom (${maxZoom}) below min_zoom (${minZoom}). Update the tileset metadata to restore zoom controls.`;
+      handleMapError(message);
+      view.setMinZoom(0);
+      view.setMaxZoom(20);
+      return;
+    }
+
+    setMapError((prev) => (prev && prev.includes("reports max_zoom") ? null : prev));
+
+    view.setMinZoom(minZoom);
+    view.setMaxZoom(maxZoom);
+
+    const currentZoom = view.getZoom();
+    if (typeof currentZoom === 'number') {
+      if (currentZoom < minZoom) {
+        view.setZoom(minZoom);
+      } else if (currentZoom > maxZoom) {
+        view.setZoom(maxZoom);
+      }
+    }
+  }, [handleMapError]);
+
   const updateSpawnFeature = useCallback(
     (spawnPoint: SpawnPoint | null) => {
       const layer = spawnLayerRef.current;
@@ -308,7 +458,7 @@ export function CampaignPrepMap({
         source.addFeature(feature);
       }
     },
-    [],
+	    [],
   );
 
   const applyLayerVisibility = useCallback(() => {
@@ -318,17 +468,6 @@ export function CampaignPrepMap({
     markersLayerRef.current?.setVisible(layerVisibility.markers);
     cellsLayerRef.current?.setVisible(layerVisibility.cells);
   }, [layerVisibility]);
-
-  const handleMapError = useCallback(
-    (message: string) => {
-      if (onError) {
-        onError(message);
-      } else {
-        toast.error(message);
-      }
-    },
-    [onError],
-  );
 
   const startRegionDraw = useCallback((seedContext: MapContextDetails) => {
     if (!mapInstanceRef.current) return;
@@ -446,92 +585,95 @@ export function CampaignPrepMap({
     setContextMenu(null);
   }, []);
 
-  const initializeMap = useCallback(() => {
-    if (!mapContainerRef.current) {
+  const createMapInstance = useCallback(() => {
+    const container = mapContainerRef.current;
+    if (!container) {
       return;
     }
-
-    // Clean up existing map when switching worlds
+  
+    setMapReady(false);
+    initialFitDoneRef.current = false;
+    lastFittedExtentRef.current = null;
+    lastFittedSizeRef.current = null;
+  
     if (mapInstanceRef.current) {
       mapInstanceRef.current.setTarget(undefined);
       mapInstanceRef.current.dispose();
       mapInstanceRef.current = null;
     }
-
-    const [west, south, east, north] = [
-      worldMap.bounds.west,
-      worldMap.bounds.south,
-      worldMap.bounds.east,
-      worldMap.bounds.north,
-    ];
-
+  
     const view = new View({
       projection: questablesProjection,
-      center: [(west + east) / 2, (south + north) / 2],
-      zoom: 3,
+      center: [
+        (DEFAULT_PIXEL_EXTENT[0] + DEFAULT_PIXEL_EXTENT[2]) / 2,
+        (DEFAULT_PIXEL_EXTENT[1] + DEFAULT_PIXEL_EXTENT[3]) / 2,
+      ],
+      zoom: 2,
       minZoom: 0,
       maxZoom: 20,
-      extent: [west, south, east, north],
+      extent: padExtent(DEFAULT_PIXEL_EXTENT),
       constrainOnlyCenter: true,
       enableRotation: false,
     });
-
+  
     const getZoomForResolution: ZoomResolver = (resolution: number) => {
       const zoom = view.getZoomForResolution(resolution);
       return typeof zoom === "number" ? zoom : 0;
     };
-
+  
     const burgLayer = new VectorLayer({
       source: new VectorSource({ wrapX: false }),
-      style: createBurgStyleFactory(getZoomForResolution),
+      style: (feature, resolution) => createBurgStyleFactory(getZoomForResolution)(feature as Feature<Geometry>, resolution),
       visible: layerVisibility.burgs,
     });
-
+  
     const routesLayer = new VectorLayer({
       source: new VectorSource({ wrapX: false }),
-      style: createRouteStyleFactory(getZoomForResolution),
+      style: (feature, resolution) => createRouteStyleFactory(getZoomForResolution)(feature as Feature<Geometry>, resolution),
       visible: layerVisibility.routes,
     });
-
+  
     const riversLayer = new VectorLayer({
       source: new VectorSource({ wrapX: false }),
-      style: getRiverStyle,
+      style: (feature) => getRiverStyle(feature as Feature<Geometry>),
       visible: layerVisibility.rivers,
     });
-
+  
     const markersLayer = new VectorLayer({
       source: new VectorSource({ wrapX: false }),
-      style: createMarkerStyleFactory(getZoomForResolution),
+      style: (feature, resolution) => createMarkerStyleFactory(getZoomForResolution)(feature as Feature<Geometry>, resolution),
       visible: layerVisibility.markers,
     });
-
+  
     const cellsLayer = new VectorLayer({
       source: new VectorSource({ wrapX: false }),
-      style: getCellStyle,
+      style: (feature) => getCellStyle(feature as Feature<Geometry>),
       visible: layerVisibility.cells,
     });
-
+  
     const regionLayer = new VectorLayer({
       source: new VectorSource<GeometryFeature>({ wrapX: false }),
       style: (feature) => {
-        const data = feature.get("data") as CampaignRegion | undefined;
-        return getRegionStyle(data ?? {
-          id: "placeholder",
-          campaignId: "",
-          worldMapId: worldMap.id,
-          name: String(feature.get("name") ?? "Region"),
-          description: null,
-          category: "custom",
-          color: feature.get("color") ?? null,
-          metadata: {},
-          geometry: {},
-          createdAt: "",
-          updatedAt: "",
-        });
+        const data = (feature as Feature<Geometry>).get("data") as CampaignRegion | undefined;
+        return getRegionStyle(
+          data ?? {
+            id: "placeholder",
+            campaignId: "",
+            worldMapId: worldMap.id,
+            name: String((feature as Feature<Geometry>).get("name") ?? "Region"),
+            description: null,
+            category: "custom",
+            color: (feature as Feature<Geometry>).get("color") ?? null,
+            metadata: {},
+            geometry: {},
+            createdAt: "",
+            updatedAt: "",
+          },
+        );
       },
       visible: true,
     });
-
+  
     const drawSource = new VectorSource<GeometryFeature>({ wrapX: false });
     drawSourceRef.current = drawSource;
     const drawLayer = new VectorLayer({
@@ -542,21 +684,21 @@ export function CampaignPrepMap({
       }),
       visible: true,
     });
-
+  
     const spawnLayer = new VectorLayer({
       source: new VectorSource<Feature<Point>>({ wrapX: false }),
     });
-
+  
     const highlightLayer = new VectorLayer({
       source: new VectorSource<Feature<Point>>({ wrapX: false }),
       style: highlightStyle,
       visible: true,
     });
-
-    const baseLayer = new TileLayer({ preload: 2 });
-
+  
+    const baseLayer = new TileLayer({ preload: 2, zIndex: 0, opacity: 1 });
+  
     const map = new Map({
-      target: mapContainerRef.current,
+      target: container,
       layers: [
         baseLayer,
         cellsLayer,
@@ -572,7 +714,7 @@ export function CampaignPrepMap({
       view,
       controls: defaultControls({ zoom: false, attribution: true }),
     });
-
+  
     const hoverElement = document.createElement("div");
     hoverElement.className =
       "pointer-events-none rounded-md bg-slate-900/90 text-white shadow px-3 py-1 text-xs";
@@ -582,10 +724,10 @@ export function CampaignPrepMap({
       positioning: "bottom-left",
     });
     map.addOverlay(hoverOverlay);
-
+    
+    mapInstanceRef.current = map;
     hoverOverlayRef.current = hoverOverlay;
     hoverElementRef.current = hoverElement;
-    mapInstanceRef.current = map;
     baseLayerRef.current = baseLayer;
     burgLayerRef.current = burgLayer;
     routesLayerRef.current = routesLayer;
@@ -597,14 +739,71 @@ export function CampaignPrepMap({
     drawLayerRef.current = drawLayer;
     highlightLayerRef.current = highlightLayer;
     currentWorldMapIdRef.current = worldMap.id;
-    setMapReady(true);
+  
+    if (resizeObserverRef.current) {
+      resizeObserverRef.current.disconnect();
+      resizeObserverRef.current = null;
+    }
+  
+    const tryFinalizeSizing = () => {
+      if (!mapInstanceRef.current) return false;
+      const width = container.clientWidth;
+      const height = container.clientHeight;
+      if (width <= 0 || height <= 0) {
+        return false;
+      }
+      mapInstanceRef.current.updateSize();
+      updateViewExtent(worldMap.bounds);
+      if (!mapReadyRef.current) {
+        if (typeof process !== 'undefined' && process.env?.NODE_ENV === 'development') {
+          console.debug("[CampaignPrepMap] Map ready", { width, height });
+        }
+        setMapReady(true);
+      }
+      return true;
+    };
 
-    view.fit([west, south, east, north], {
-      size: map.getSize(),
-      duration: 0,
-      padding: [48, 48, 48, 48],
-    });
-  }, [layerVisibility, worldMap]);
+    if (!tryFinalizeSizing()) {
+      // Ensure we still flip readiness once observer reports a usable size.
+      setMapReady(false);
+    }
+
+    if (typeof ResizeObserver !== "undefined") {
+      const observer = new ResizeObserver(() => {
+        void tryFinalizeSizing();
+      });
+      observer.observe(container);
+      resizeObserverRef.current = observer;
+    } else if (!initialFitDoneRef.current) {
+      pendingFrameRef.current = requestAnimationFrame(() => {
+        if (!initialFitDoneRef.current) {
+          tryFinalizeSizing();
+        }
+        pendingFrameRef.current = null;
+      });
+    }
+  }, [highlightStyle, layerVisibility, setMapReady, worldMap, getRegionStyle, updateViewExtent]);
+
+const initializeMap = useCallback(() => {
+  if (pendingFrameRef.current !== null) {
+    cancelAnimationFrame(pendingFrameRef.current);
+    pendingFrameRef.current = null;
+  }
+
+  const ensureSized = () => {
+    const container = mapContainerRef.current;
+    if (!container) return;
+    const { clientWidth, clientHeight } = container;
+    if (clientWidth <= 0 || clientHeight <= 0) {
+      pendingFrameRef.current = requestAnimationFrame(ensureSized);
+      return;
+    }
+    pendingFrameRef.current = null;
+    createMapInstance();
+  };
+
+  ensureSized();
+}, [createMapInstance]);
 
   const refreshMapTileSource = useCallback(
     (tileSet: QuestablesTileSetConfig | null) => {
@@ -613,16 +812,23 @@ export function CampaignPrepMap({
         if (tileSet) {
           const source = createQuestablesTileSource(tileSet, worldMap.bounds);
           baseLayerRef.current.setSource(source);
-          updateProjectionExtent(worldMap.bounds);
+          baseLayerRef.current.setVisible(true);
+          baseLayerRef.current.setOpacity(1);
+          baseLayerRef.current.changed();
+          mapInstanceRef.current?.renderSync?.();
+          updateViewExtent(worldMap.bounds);
+          applyTileSetConstraints(tileSet);
+          setMapError(null);
         } else {
           baseLayerRef.current.setSource(null);
+          setMapError(null);
         }
       } catch (error) {
         console.error("[CampaignPrepMap] Failed to initialise tile source", error);
         handleMapError("Failed to initialise map tiles. Upload or configure tile sets before using the map.");
       }
     },
-    [handleMapError, worldMap.bounds],
+    [applyTileSetConstraints, handleMapError, worldMap.bounds, updateViewExtent],
   );
 
   const loadWorldLayers = useCallback(async () => {
@@ -632,9 +838,36 @@ export function CampaignPrepMap({
 
     const map = mapInstanceRef.current;
     const view = map.getView();
+    const size = map.getSize();
+    if (!size || size[0] <= 0 || size[1] <= 0) {
+      loadingDataRef.current = false;
+      return;
+    }
+
     const zoom = view.getZoom() ?? 0;
-    const extent = view.calculateExtent(map.getSize());
-    const bounds = mapDataLoader.getBoundsFromExtent(extent);
+    const extent = view.calculateExtent(size);
+    if (!extent || extent.some((value) => !Number.isFinite(value))) {
+      if (typeof process !== 'undefined' && process.env?.NODE_ENV === 'development') {
+        console.warn("[CampaignPrepMap] Skipping world layer load due to invalid extent", extent);
+      }
+      loadingDataRef.current = false;
+      return;
+    }
+
+    let bounds = mapDataLoader.getBoundsFromExtent(extent);
+    if (Object.values(bounds).some((value) => !Number.isFinite(value))) {
+      const fallback = worldMap.bounds;
+      if (Object.values(fallback).every((value) => Number.isFinite(value))) {
+        bounds = fallback;
+      } else {
+        if (typeof process !== 'undefined' && process.env?.NODE_ENV === 'development') {
+          console.warn("[CampaignPrepMap] Skipping world layer load due to invalid bounds", bounds, fallback);
+        }
+        loadingDataRef.current = false;
+        return;
+      }
+    }
+
     const dataTypes = mapDataLoader.getDataTypesForZoom(Math.floor(zoom));
 
     const requests: Array<Promise<GeometryFeature[]>> = [];
@@ -683,80 +916,35 @@ export function CampaignPrepMap({
     } finally {
       loadingDataRef.current = false;
     }
-  }, [handleMapError, worldMap.id]);
-
-  const handlePointerMove = useCallback(
-    (event: MapBrowserEvent<MouseEvent>) => {
-      if (!mapInstanceRef.current) return;
-      const map = mapInstanceRef.current;
-
-      if (isDrawingRegion) {
-        map.getTargetElement().style.cursor = "crosshair";
-        return;
-      }
-
-      const featureLike = map.forEachFeatureAtPixel(event.pixel, (feature) => feature);
-      const feature = castGeometryFeature(featureLike);
-
-      if (!feature) {
-        setHoverInfo(null);
-        map.getTargetElement().style.cursor = editingSpawn && canEditSpawn ? "crosshair" : "";
-        if (hoverOverlayRef.current) {
-          hoverOverlayRef.current.setPosition(undefined);
-        }
-        return;
-      }
-
-      const data = feature.get("data") ?? feature.getProperties();
-      const title = data?.name
-        ?? feature.get("name")
-        ?? featureTypeFromProperties(feature)
-        ?? "Feature";
-      const typeLabel = featureTypeFromProperties(feature);
-      const screenPosition = event.pixel;
-      map.getTargetElement().style.cursor = "pointer";
-
-      setHoverInfo({
-        title,
-        subtitle: typeLabel ? typeLabel.charAt(0).toUpperCase() + typeLabel.slice(1) : null,
-        screenX: screenPosition[0],
-        screenY: screenPosition[1],
-      });
-
-      if (hoverOverlayRef.current) {
-        const coordinate = map.getCoordinateFromPixel(event.pixel);
-        if (coordinate) {
-          hoverOverlayRef.current.setPosition(coordinate);
-          if (hoverElementRef.current) {
-            hoverElementRef.current.textContent = title;
-          }
-        }
-      }
-    },
-    [canEditSpawn, editingSpawn, isDrawingRegion],
-  );
+  }, [handleMapError, worldMap.id, worldMap.bounds]);
 
   const handleMapClick = useCallback(
-    (event: MapBrowserEvent<MouseEvent>) => {
+    (event: MapBrowserEvent<UIEvent>) => {
+
       closeContextMenu();
 
-      if (!mapInstanceRef.current) return;
       const map = mapInstanceRef.current;
-      const coordinate = event.coordinate as [number, number];
+      if (!map) return;
 
-       if (isDrawingRegion) {
+      const [x, y] = event.coordinate as [number, number];
+      if (!Number.isFinite(x) || !Number.isFinite(y)) {
+        if (typeof process !== 'undefined' && process.env?.NODE_ENV === 'development') {
+          console.warn("[CampaignPrepMap] Ignoring map click with invalid coordinate", event.coordinate);
+        }
         return;
       }
 
+      if (isDrawingRegion) return;
+
       if (editingSpawn && canEditSpawn && onSelectSpawn) {
-        onSelectSpawn({ x: coordinate[0], y: coordinate[1] });
+        onSelectSpawn({ x, y });
         return;
       }
 
       const feature = castGeometryFeature(
         map.forEachFeatureAtPixel(event.pixel, (candidate) => candidate),
       );
-      const details = buildFeatureDetails(feature, coordinate);
+      const details = buildFeatureDetails(feature, [x, y]);
       setSelectedFeature(details);
       if (!feature && hoverOverlayRef.current) {
         hoverOverlayRef.current.setPosition(undefined);
@@ -765,27 +953,96 @@ export function CampaignPrepMap({
     [canEditSpawn, closeContextMenu, editingSpawn, isDrawingRegion, onSelectSpawn],
   );
 
+  const handlePointerMove = useCallback(
+    (event: MapBrowserEvent<UIEvent>) => {
+      const map = mapInstanceRef.current;
+      if (!map) return;
+
+      if (isDrawingRegion) {
+        map.getTargetElement().style.cursor = "crosshair";
+        return;
+      }
+
+      const featureLike = map.forEachFeatureAtPixel(event.pixel, (f) => f);
+      const feature = castGeometryFeature(featureLike);
+
+      if (!feature) {
+        setHoverInfo(null);
+        map.getTargetElement().style.cursor = editingSpawn && canEditSpawn ? "crosshair" : "";
+        hoverOverlayRef.current?.setPosition(undefined);
+        return;
+      }
+
+      const data = feature.get("data") ?? feature.getProperties();
+      const title =
+        data?.name ??
+        feature.get("name") ??
+        featureTypeFromProperties(feature) ??
+        "Feature";
+      const typeLabel = featureTypeFromProperties(feature);
+      map.getTargetElement().style.cursor = "pointer";
+
+      setHoverInfo({
+        title,
+        subtitle: typeLabel ? typeLabel[0].toUpperCase() + typeLabel.slice(1) : null,
+        screenX: event.pixel[0],
+        screenY: event.pixel[1],
+      });
+
+      if (hoverOverlayRef.current) {
+        const coordinate = map.getCoordinateFromPixel(event.pixel);
+        if (coordinate && coordinate.every(Number.isFinite)) {
+          hoverOverlayRef.current.setPosition(coordinate);
+          if (hoverElementRef.current) hoverElementRef.current.textContent = title;
+        } else {
+          hoverOverlayRef.current.setPosition(undefined);
+        }
+      }
+    },
+    [canEditSpawn, editingSpawn, isDrawingRegion],
+  );
+
   const handleContextMenu = useCallback(
     (event: MouseEvent) => {
       if (!mapInstanceRef.current) return;
       event.preventDefault();
 
       const map = mapInstanceRef.current;
-      const pixel = map.getEventPixel(event);
-      const coordinate = map.getCoordinateFromPixel(pixel);
-      if (!coordinate) {
-        return;
-      }
+      let coordinate = map.getEventCoordinate(event) as [number, number] | undefined;
+      const pixel = coordinate ? map.getPixelFromCoordinate(coordinate) : undefined;
 
       const feature = castGeometryFeature(
-        map.forEachFeatureAtPixel(pixel, (candidate) => candidate),
+        pixel ? map.forEachFeatureAtPixel(pixel, (candidate) => candidate) : undefined,
       );
+
+      if (!coordinate || coordinate.some((value) => !Number.isFinite(value))) {
+        // Fallback: use the feature geometry center if available
+        if (feature?.getGeometry()) {
+          const center = getCenter(feature.getGeometry()!.getExtent());
+          if (center && center.every((v) => Number.isFinite(v))) {
+            coordinate = center as [number, number];
+          }
+        }
+      }
+
+      if (!coordinate || coordinate.some((value) => !Number.isFinite(value))) {
+        // Final fallback: use view center if valid
+        const center = map.getView().getCenter();
+        if (center && center.every((v) => Number.isFinite(v))) {
+          coordinate = center as [number, number];
+        } else {
+          if (typeof process !== 'undefined' && process.env?.NODE_ENV === 'development') {
+            console.warn("[CampaignPrepMap] Ignoring context menu with invalid coordinate", coordinate);
+          }
+          return;
+        }
+      }
 
       const context: MapContextDetails = {
         coordinate: [coordinate[0], coordinate[1]],
         feature,
         featureType: featureTypeFromProperties(feature),
-        pixel,
+        pixel: pixel ?? map.getPixelFromCoordinate(coordinate),
         originalEvent: event,
       };
 
@@ -803,49 +1060,96 @@ export function CampaignPrepMap({
     [buildContextActions],
   );
 
+  const pointerMoveHandlerRef = useRef(handlePointerMove);
+  useEffect(() => {
+    pointerMoveHandlerRef.current = handlePointerMove;
+  }, [handlePointerMove]);
+
+  const mapClickHandlerRef = useRef(handleMapClick);
+  useEffect(() => {
+    mapClickHandlerRef.current = handleMapClick;
+  }, [handleMapClick]);
+
+  const loadWorldLayersHandlerRef = useRef(loadWorldLayers);
+  useEffect(() => {
+    loadWorldLayersHandlerRef.current = loadWorldLayers;
+  }, [loadWorldLayers]);
+
+  const contextMenuHandlerRef = useRef(handleContextMenu);
+  useEffect(() => {
+    contextMenuHandlerRef.current = handleContextMenu;
+  }, [handleContextMenu]);
+
   const attachEventListeners = useCallback(() => {
     const map = mapInstanceRef.current;
     const container = mapContainerRef.current;
     if (!map || !container) return;
 
-    map.on("pointermove", handlePointerMove);
-    map.on("moveend", loadWorldLayers);
-    map.on("click", handleMapClick);
-    container.addEventListener("contextmenu", handleContextMenu);
+    const pointerMoveWrapper = (event: MapBrowserEvent<UIEvent>) => {
+      pointerMoveHandlerRef.current?.(event);
+    };
+    const moveEndWrapper = () => {
+      loadWorldLayersHandlerRef.current?.();
+    };
+    const mapClickWrapper = (event: MapBrowserEvent<UIEvent>) => {
+      mapClickHandlerRef.current?.(event);
+    };
+    const contextMenuWrapper = (event: MouseEvent) => {
+      contextMenuHandlerRef.current?.(event);
+    };
+
+    map.on("pointermove", pointerMoveWrapper);
+    map.on("moveend", moveEndWrapper);
+    map.on("click", mapClickWrapper);
+    container.addEventListener("contextmenu", contextMenuWrapper);
 
     return () => {
-      map.un("pointermove", handlePointerMove);
-      map.un("moveend", loadWorldLayers);
-      map.un("click", handleMapClick);
-      container.removeEventListener("contextmenu", handleContextMenu);
+      map.un("pointermove", pointerMoveWrapper);
+      map.un("moveend", moveEndWrapper);
+      map.un("click", mapClickWrapper);
+      container.removeEventListener("contextmenu", contextMenuWrapper);
     };
-  }, [handleContextMenu, handleMapClick, handlePointerMove, loadWorldLayers]);
+  }, []);
 
   useEffect(() => {
     let cancelled = false;
     setLoadingTiles(true);
+
     (async () => {
       try {
         const tileSetRecords = await mapDataLoader.loadTileSets();
+
         if (cancelled) return;
-        const normalized = (tileSetRecords ?? [])
-          .filter((entry): entry is QuestablesTileSetConfig => Boolean(entry?.id && entry?.base_url))
-          .map((entry) => ({
-            id: String(entry.id),
-            name: typeof entry.name === "string" && entry.name.trim() ? entry.name : String(entry.id),
-            base_url: entry.base_url,
-            attribution: entry.attribution ?? undefined,
-            min_zoom: Number.isFinite(entry.min_zoom) ? Number(entry.min_zoom) : undefined,
-            max_zoom: Number.isFinite(entry.max_zoom) ? Number(entry.max_zoom) : undefined,
-            tile_size: Number.isFinite(entry.tile_size) ? Number(entry.tile_size) : undefined,
-            wrapX: Boolean(entry.wrapX),
-          }));
+
+        const normalized: QuestablesTileSetConfig[] = (Array.isArray(tileSetRecords) ? tileSetRecords : [])
+          .filter(isTileSetRecord)
+          .map((entry) => {
+            const id = String(entry.id);
+            const name =
+              typeof entry.name === "string" && entry.name.trim() ? entry.name : id;
+
+            return {
+              id,
+              name,
+              base_url: entry.base_url as string, // guaranteed by the guard
+              attribution: typeof entry.attribution === "string" ? entry.attribution : undefined,
+              min_zoom: isFiniteNumber(entry.min_zoom) ? entry.min_zoom : undefined,
+              max_zoom: isFiniteNumber(entry.max_zoom) ? entry.max_zoom : undefined,
+              tile_size: isFiniteNumber(entry.tile_size) ? entry.tile_size : undefined,
+              wrapX: Boolean(entry.wrapX),
+            };
+          });
+
         setTileSets(normalized);
-        if (normalized.length > 0) {
-          setSelectedTileSetId((prev) => (prev && normalized.some((ts) => ts.id === prev) ? prev : normalized[0].id));
-        } else {
-          setSelectedTileSetId("");
-        }
+        setMapError((prev) =>
+          prev && prev.startsWith("Failed to load available tile sets.") ? null : prev
+        );
+
+        setSelectedTileSetId((prev) =>
+          normalized.length > 0 && prev && normalized.some((ts) => ts.id === prev)
+            ? prev
+            : normalized[0]?.id ?? ""
+        );
       } catch (error) {
         const derivedMessage =
           error instanceof Error && error.message
@@ -854,9 +1158,7 @@ export function CampaignPrepMap({
         setMapError(derivedMessage);
         handleMapError(derivedMessage);
       } finally {
-        if (!cancelled) {
-          setLoadingTiles(false);
-        }
+        if (!cancelled) setLoadingTiles(false);
       }
     })();
 
@@ -865,34 +1167,49 @@ export function CampaignPrepMap({
     };
   }, [handleMapError]);
 
+
+  useEffect(() => {
+    if (tileSets.length === 0) {
+      if (selectedTileSetId !== "") {
+        setSelectedTileSetId("");
+      }
+      return;
+    }
+    if (!selectedTileSetId || !tileSets.some((tileSet) => tileSet.id === selectedTileSetId)) {
+      setSelectedTileSetId(tileSets[0].id);
+    }
+  }, [selectedTileSetId, tileSets]);
+
   useEffect(() => {
     if (!mapContainerRef.current) return;
     if (currentWorldMapIdRef.current === worldMap.id && mapInstanceRef.current) {
       // Ensure bounds update when world map metadata changes
-      const [west, south, east, north] = [
-        worldMap.bounds.west,
-        worldMap.bounds.south,
-        worldMap.bounds.east,
-        worldMap.bounds.north,
-      ];
-      const view = mapInstanceRef.current.getView();
-      view.fit([west, south, east, north], {
-        size: mapInstanceRef.current.getSize(),
-        duration: 0,
-        padding: [48, 48, 48, 48],
-      });
+      updateViewExtent(worldMap.bounds);
+      initialFitDoneRef.current = true;
+      if (!mapReadyRef.current) {
+        setMapReady(true);
+      }
       return;
     }
     initializeMap();
-  }, [initializeMap, worldMap]);
+  }, [initializeMap, setMapReady, updateViewExtent, worldMap]);
 
   useEffect(() => () => {
+    if (pendingFrameRef.current !== null) {
+      cancelAnimationFrame(pendingFrameRef.current);
+      pendingFrameRef.current = null;
+    }
+    if (resizeObserverRef.current) {
+      resizeObserverRef.current.disconnect();
+      resizeObserverRef.current = null;
+    }
     if (mapInstanceRef.current) {
       mapInstanceRef.current.setTarget(undefined);
       mapInstanceRef.current.dispose();
       mapInstanceRef.current = null;
     }
-  }, []);
+    setMapReady(false);
+  }, [setMapReady]);
 
   useEffect(() => {
     if (!mapReady) return;
@@ -909,10 +1226,22 @@ export function CampaignPrepMap({
 
   useEffect(() => {
     if (!mapReady) return;
+
+    if (tileSets.length > 0) {
+      const nextId = selectedTileSetId && tileSets.some((ts) => ts.id === selectedTileSetId)
+        ? selectedTileSetId
+        : tileSets[0].id;
+      if (nextId !== selectedTileSetId) {
+        setSelectedTileSetId(nextId);
+        return;
+      }
+    }
+
     if (!selectedTileSetId) {
       baseLayerRef.current?.setSource(null);
       return;
     }
+
     const tileSet = tileSets.find((ts) => ts.id === selectedTileSetId) ?? null;
     refreshMapTileSource(tileSet);
   }, [mapReady, refreshMapTileSource, selectedTileSetId, tileSets]);
@@ -936,7 +1265,10 @@ export function CampaignPrepMap({
 
     (regions ?? []).forEach((region) => {
       try {
-        const feature = geoJsonReader.readFeature(region.geometry);
+        const featureOrArray = geoJsonReader.readFeature(region.geometry);
+        const feature = Array.isArray(featureOrArray) ? featureOrArray[0] : featureOrArray;
+        if (!feature) return;
+        
         feature.setId(region.id);
         feature.set("data", region);
         feature.set("type", "region");
@@ -1018,7 +1350,12 @@ export function CampaignPrepMap({
   }, [tileSets]);
 
   return (
-    <div className={cn("relative flex h-full flex-col rounded-md border bg-background", className)}>
+    <div
+      className={cn(
+        "relative flex h-full w-full flex-col rounded-md border bg-background",
+        className,
+      )}
+    >
       <div className="flex items-center justify-between gap-3 border-b bg-muted/40 px-4 py-2">
         <div className="flex items-center gap-2">
           <Badge variant="outline" className="text-xs font-medium">
@@ -1033,7 +1370,7 @@ export function CampaignPrepMap({
               <Skeleton className="h-8 w-40 rounded-sm" />
             ) : (
               <Select
-                value={selectedTileSetId || (tileSets[0]?.id ?? "__none__")}
+                value={tileSets.length === 0 ? "__none__" : selectedTileSetId}
                 onValueChange={(value) => {
                   if (value === "__none__") {
                     setSelectedTileSetId("");
@@ -1076,16 +1413,19 @@ export function CampaignPrepMap({
       </div>
 
       <div className="relative flex-1">
-        <div ref={mapContainerRef} className="h-full w-full rounded-b-md bg-muted" />
+        <div
+          ref={mapContainerRef}
+          className="relative z-0 h-full min-h-[520px] w-full overflow-hidden rounded-b-md bg-muted"
+        />
 
         {isDrawingRegion && (
-          <div className="pointer-events-none absolute inset-0 flex items-center justify-center bg-background/70 text-sm font-semibold text-foreground">
+          <div className="pointer-events-none absolute inset-0 z-20 flex items-center justify-center bg-transparent text-sm font-semibold text-foreground">
             Drawing region… double-click to finish
           </div>
         )}
 
         {mapError ? (
-          <div className="absolute inset-0 flex items-center justify-center bg-background/80">
+          <div className="absolute inset-0 z-30 flex items-center justify-center bg-transparent">
             <div className="max-w-sm rounded border border-destructive bg-destructive/10 px-4 py-3 text-sm text-destructive">
               {mapError}
             </div>
@@ -1093,7 +1433,7 @@ export function CampaignPrepMap({
         ) : null}
 
         {!mapReady ? (
-          <div className="absolute inset-0 flex items-center justify-center bg-background/70">
+          <div className="pointer-events-none absolute inset-0 z-10 flex items-center justify-center bg-transparent">
             <LoadingSpinner className="mr-2 h-4 w-4" />
             <span className="text-sm font-medium text-muted-foreground">Preparing campaign map…</span>
           </div>

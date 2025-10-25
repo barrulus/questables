@@ -68,6 +68,10 @@ export const parseBounds = (bounds) => {
     return null;
   }
 
+  if (east <= west || north <= south) {
+    return null;
+  }
+
   return { west, east, south, north };
 };
 
