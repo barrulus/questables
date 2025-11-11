@@ -19,6 +19,7 @@ import {
   coerceLevelRange,
   createEditFormDefaults,
   createSettingsFormDefaults,
+  CAMPAIGN_SYSTEM_OPTIONS,
 } from "./campaign-shared";
 import { Card, CardContent, CardHeader, CardTitle } from "./ui/card";
 import { Badge } from "./ui/badge";
@@ -394,11 +395,11 @@ export function Settings() {
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent>
-                  <SelectItem value="D&D 5e">D&D 5e</SelectItem>
-                  <SelectItem value="Pathfinder 2e">Pathfinder 2e</SelectItem>
-                  <SelectItem value="Call of Cthulhu">Call of Cthulhu</SelectItem>
-                  <SelectItem value="Vampire: The Masquerade">Vampire: The Masquerade</SelectItem>
-                  <SelectItem value="Other">Other</SelectItem>
+                  {CAMPAIGN_SYSTEM_OPTIONS.map((option) => (
+                    <SelectItem key={option.value} value={option.value}>
+                      {option.label}
+                    </SelectItem>
+                  ))}
                 </SelectContent>
               </Select>
             </div>

@@ -661,7 +661,7 @@ export function CampaignPrep({
                   {burgResults.slice(0, 6).map((burg) => (
                     <Button
                       key={burg.id}
-                      size="xs"
+                      size="sm"
                       variant="outline"
                       onClick={() => handleSelectBurgResult(burg)}
                     >

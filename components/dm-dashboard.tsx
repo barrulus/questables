@@ -8,6 +8,7 @@ import { Progress } from "./ui/progress";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "./ui/tabs";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "./ui/select";
 import { CampaignManager } from "./campaign-manager";
+import { hasCampaignDescription } from "./campaign-shared";
 import { toast } from "sonner";
 import {
   AlertCircle,
@@ -40,7 +41,7 @@ type CampaignStatus = "planning" | "recruiting" | "active" | "paused" | "complet
 interface DMCampaignSummary {
   id: string;
   name: string;
-  description: string;
+  description: string | null;
   status: CampaignStatus;
   system: string;
   maxPlayers: number;
@@ -105,7 +106,7 @@ interface CharacterProfile {
 interface PlayerCampaign {
   id: string;
   name: string;
-  description: string;
+  description: string | null;
   dmName: string;
   status: CampaignStatus | "full";
   playerCount: number;
@@ -222,10 +223,11 @@ function normaliseCampaignStatus(value: unknown): CampaignStatus {
 
 function mapCampaignSummary(record: Record<string, unknown>): DMCampaignSummary {
   const levelRange = parseLevelRange(record.level_range ?? record.levelRange);
+  const rawDescription = typeof record.description === "string" ? record.description : null;
   return {
     id: String(record.id),
     name: String(record.name ?? "Untitled Campaign"),
-    description: String(record.description ?? ""),
+    description: hasCampaignDescription(rawDescription) ? rawDescription : null,
     status: normaliseCampaignStatus(record.status),
     system: String(record.system ?? "Unknown"),
     maxPlayers: toNumber(record.max_players ?? record.maxPlayers, 0),
@@ -499,7 +501,9 @@ export function DMDashboard({ user, onEnterGame, onLogout }: DMDashboardProps) {
     const lowered = searchQuery.toLowerCase();
     return publicCampaigns.filter((campaign) =>
       campaign.name.toLowerCase().includes(lowered) ||
-      campaign.description.toLowerCase().includes(lowered) ||
+      (hasCampaignDescription(campaign.description)
+        ? campaign.description.toLowerCase().includes(lowered)
+        : false) ||
       campaign.tags.some((tag) => tag.toLowerCase().includes(lowered))
     );
   }, [publicCampaigns, searchQuery]);
@@ -665,7 +669,11 @@ export function DMDashboard({ user, onEnterGame, onLogout }: DMDashboardProps) {
                       </div>
                     )}
 
-                    <p className="text-sm text-muted-foreground">{selectedCampaign.description || "No campaign summary provided."}</p>
+                    <p className="text-sm text-muted-foreground">
+                      {hasCampaignDescription(selectedCampaign.description)
+                        ? selectedCampaign.description
+                        : "No campaign summary provided."}
+                    </p>
 
                     <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
                       <Card>
@@ -894,7 +902,9 @@ export function DMDashboard({ user, onEnterGame, onLogout }: DMDashboardProps) {
                           )}
                         </div>
                         <p className="text-sm text-muted-foreground">
-                          {campaign.description || "No public description provided."}
+                          {hasCampaignDescription(campaign.description)
+                            ? campaign.description
+                            : "No public description provided."}
                         </p>
                         {campaign.tags.length > 0 && (
                           <div className="flex flex-wrap gap-1">

@@ -786,7 +786,7 @@ Get campaigns for the authenticated user (as DM and as player).
     {
       "id": "uuid-string",
       "name": "The Fellowship Campaign",
-      "description": "An epic journey...",
+      "description": null,
       "dm_user_id": "user-uuid",
       "dm_username": "dungeon_master",
       "system": "D&D 5e",
@@ -804,6 +804,8 @@ Get campaigns for the authenticated user (as DM and as player).
   "publicCampaigns": [...]
 }
 ```
+
+Clients MUST treat `description`, `system`, and `setting` as nullable fields. When these values are `null`, the UI should surface the absence instead of defaulting to placeholder strings that imply stored content.
 
 ### GET /api/campaigns/:id
 
@@ -892,6 +894,7 @@ Update an existing campaign. Only the owning DM (or an authenticated admin) may 
 **Request Body:** Partial campaign data. CamelCase and snake_case keys are accepted; the examples below use snake_case to align with the persisted columns.
 
 Optional string fields (`description`, `system`, `setting`) accept either a trimmed string or `null` to clear the stored value.
+The client only transmits fields that differ from the persisted campaign, preventing accidental overwrites; clearing a field results in an explicit `null`.
 
 ```json
 {

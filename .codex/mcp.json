@@ -1,0 +1,19 @@
+{
+  "mcpServers": {
+    "chrome-devtools": {
+      "type": "stdio",
+      "command": "bash",
+      "args": [
+        "-lc",
+        "echo $(date +%s) spawn chrome >> /tmp/mcp_spawn.log; ./node_modules/.bin/chrome-devtools-mcp --browserUrl=http://127.0.0.1:9222"
+      ],
+      "env": {
+        "DEBUG": "mcp:*"
+      }
+    },
+    "vite-vue-mcp": {
+      "type": "sse",
+      "url": "http://localhost:3000/__mcp/sse"
+    }
+  }
+}

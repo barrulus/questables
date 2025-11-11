@@ -32,11 +32,11 @@ _Notes:_ Live burg search endpoint available at `GET /api/maps/:worldId/burgs/se
 - Map clicks populate a live feature inspector card (burgs, rivers, routes, markers, regions) while ObjectivesPanel consumes the new region links and refresh hooks after map-driven updates.
 - Campaign prep map + panel share the refreshed data (regions + objective refresh key) so linking and area creation stay in sync without legacy modal workflows.
 
-## Phase 4 · Objective Editor Refactor
-- Convert `ObjectivesPanel` into a permanent accordion alongside the map (no dialogs); restructure layout within `campaign-prep.tsx` to dedicate map width while keeping objectives scrollable.
-- Remove legacy location controls from the objective form; instead, subscribe to map-driven location updates and reflect current linkage state within the accordion panels.
-- Ensure objective create/update/delete flows still call the authenticated APIs and reconcile optimistic updates with websocket broadcasts where applicable.
-- Update any tests, stories, or fixtures that assumed modal-based editing to cover the new accordion experience.
+## Phase 4 · Objective Editor Refactor _(Status: ✅ Completed — 2025-10-03)_
+- ✅ Converted `ObjectivesPanel` into a permanent accordion with inline forms and transitioned `campaign-prep.tsx` to a wider map-first layout plus a scroll-stable objective column.
+- ✅ Removed legacy location selectors from objective editing, relying on map-driven updates and surfacing live linkage summaries inside each accordion panel.
+- ✅ Preserved authenticated objective CRUD flows, refreshing accordion state through websocket events so optimistic updates reconcile with backend truth.
+- ✅ Adjusted lint coverage and documentation cadence for the new accordion workflow; modal-based fixtures retired in favor of the permanent panel.
 
 ## Phase 5 · Quality, Docs, and Release Prep
 - Add backend integration tests covering burg search and polygon CRUD (verify SRID 0, bounds filtering, and authorization). Add frontend tests for the new map menu and objective accordion interactions where feasible (JSDOM + OpenLayers stubs).

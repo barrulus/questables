@@ -13,7 +13,8 @@ export default {
   moduleFileExtensions: ['ts', 'tsx', 'js', 'jsx', 'json'],
   moduleNameMapper: {
     '^@/(.*)$': '<rootDir>/$1',
-    '\\.(css|less|scss|sass)$': 'identity-obj-proxy',
+    '^ol/ol\\.css$': '<rootDir>/ol/ol.css',
+    '\\.(css|less|scss|sass)$': '<rootDir>/identity-obj-proxy.cjs',
   },
   setupFilesAfterEnv: ['<rootDir>/src/setupTests.ts'],
   testMatch: [

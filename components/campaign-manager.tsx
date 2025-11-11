@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useRef, memo, useMemo } from "react";
+import { useState, useEffect, useCallback, useRef, memo, useMemo, useReducer } from "react";
 import { Card, CardContent, CardHeader, CardTitle } from "./ui/card";
 import { Button } from "./ui/button";
 import { Badge } from "./ui/badge";
@@ -32,16 +32,17 @@ import {
   updateCampaign,
   type CampaignLevelRange,
   type CreateCampaignRequest,
-  type UpdateCampaignRequest,
 } from "../utils/api-client";
 import {
   Campaign,
-  CampaignEditFormState,
   CampaignSettingsFormState,
   CampaignStatus,
   ExperienceType,
   RestingRules,
   DeathSaveRules,
+  CreateCampaignFormState,
+  LevelRangeInputState,
+  NumericInputValue,
   clampLevelValue,
   coerceLevelRange,
   buildEditFormState,
@@ -49,32 +50,25 @@ import {
   createEditFormDefaults,
   createSettingsFormDefaults,
   DEFAULT_LEVEL_RANGE,
+  DEFAULT_MAX_PLAYERS,
+  WORLD_MAP_NONE_SENTINEL,
+  resetWorldMapSelectValue,
+  toWorldMapSelectValue,
+  fromWorldMapSelectValue,
+  buildCampaignUpdatePayload,
+  CAMPAIGN_SYSTEM_OPTIONS,
+  type CampaignEditSnapshot,
+  createCampaignFormReducer,
+  editCampaignFormReducer,
+  resolveWorldMapIdForUpdate,
+  hasCampaignDescription,
 } from "./campaign-shared";
 import { CampaignPrep } from "./campaign-prep";
-
-interface WorldMapSummary {
-  id: string;
-  name: string;
-  description: string | null;
-}
-
-type NumericInputValue = number | '';
-
-interface LevelRangeInputState {
-  min: NumericInputValue;
-  max: NumericInputValue;
-}
-
-interface CreateCampaignFormState {
-  name: string;
-  description: string;
-  system: string;
-  setting: string;
-  maxPlayers: NumericInputValue;
-  levelRange: LevelRangeInputState;
-  isPublic: boolean;
-  worldMapId: string;
-}
+import {
+  loadWorldMapSummaries,
+  peekWorldMapSummaries,
+  type WorldMapSummary,
+} from "../utils/world-map-cache";
 
 const parseIntegerInput = (value: NumericInputValue): number | null => {
   if (value === '') {
@@ -101,22 +95,30 @@ export function CampaignManager() {
   
   const [isCreating, setIsCreating] = useState(false);
   const [createLoading, setCreateLoading] = useState(false);
-  const NO_WORLD_MAP_VALUE = "__none";
 
   const createFormDefaults = useCallback((): CreateCampaignFormState => ({
     name: "",
     description: "",
     system: "",
     setting: "",
-    maxPlayers: 6,
+    maxPlayers: DEFAULT_MAX_PLAYERS,
     levelRange: { min: DEFAULT_LEVEL_RANGE.min, max: DEFAULT_LEVEL_RANGE.max },
     isPublic: false,
-    worldMapId: NO_WORLD_MAP_VALUE,
-  }), [NO_WORLD_MAP_VALUE]);
+    worldMapId: resetWorldMapSelectValue(),
+  }), []);
 
-  const [newCampaign, setNewCampaign] = useState<CreateCampaignFormState>(createFormDefaults);
+  const [newCampaign, dispatchCreateForm] = useReducer(
+    createCampaignFormReducer,
+    undefined,
+    () => createFormDefaults(),
+  );
   const [editDialogCampaign, setEditDialogCampaign] = useState<Campaign | null>(null);
-  const [editForm, setEditForm] = useState<CampaignEditFormState>(() => createEditFormDefaults());
+  const [editForm, dispatchEditForm] = useReducer(
+    editCampaignFormReducer,
+    undefined,
+    () => createEditFormDefaults(),
+  );
+  const [editWorldMapTouched, setEditWorldMapTouched] = useState(false);
   const [editSaving, setEditSaving] = useState(false);
   const [settingsDialogCampaign, setSettingsDialogCampaign] = useState<Campaign | null>(null);
   const [settingsForm, setSettingsForm] = useState<CampaignSettingsFormState>(() => createSettingsFormDefaults());
@@ -134,77 +136,51 @@ export function CampaignManager() {
     }
   }, []);
 
-  const loadWorldMaps = useCallback(async ({ signal }: { signal?: AbortSignal } = {}) => {
-    try {
-      setWorldMapsLoading(true);
-      const response = await apiFetch('/api/maps/world', { signal });
-      if (!response.ok) {
-        throw new Error(await readErrorMessage(response, 'Failed to load world maps'));
-      }
-      const payload = await readJsonBody<unknown>(response);
-      if (!Array.isArray(payload)) {
-        setWorldMaps([]);
-        return;
-      }
-
-      const toWorldMapSummary = (item: unknown): WorldMapSummary | null => {
-        if (!item || typeof item !== 'object') {
-          return null;
+  const loadWorldMaps = useCallback(
+    async ({
+      signal,
+      force = false,
+    }: {
+      signal?: AbortSignal;
+      force?: boolean;
+    } = {}) => {
+      if (!force) {
+        const cached = peekWorldMapSummaries();
+        if (cached !== null) {
+          setWorldMaps(cached);
+          return;
         }
-
-        const record = item as Record<string, unknown>;
-        const id = typeof record.id === 'string' && record.id.trim() ? record.id : null;
-        const rawName = typeof record.name === 'string' ? record.name.trim() : '';
-
-        if (!id || !rawName) {
-          return null;
-        }
-
-        const descriptionValue = record.description;
-        const description = typeof descriptionValue === 'string' && descriptionValue.trim()
-          ? descriptionValue
-          : null;
-
-        return {
-          id,
-          name: rawName,
-          description,
-        } satisfies WorldMapSummary;
-      };
-
-      const maps: WorldMapSummary[] = payload
-        .map(toWorldMapSummary)
-        .filter((value): value is WorldMapSummary => value !== null);
-
-      setWorldMaps(maps);
-    } catch (err) {
-      if (err instanceof DOMException && err.name === 'AbortError') {
-        return;
       }
-      const message = err instanceof Error ? err.message : 'Failed to load world maps';
-      toast.error(message);
-    } finally {
-      setWorldMapsLoading(false);
-    }
-  }, []);
+
+      try {
+        setWorldMapsLoading(true);
+        const maps = await loadWorldMapSummaries({ signal, force });
+        setWorldMaps(maps);
+      } catch (err) {
+        if (err instanceof DOMException && err.name === 'AbortError') {
+          return;
+        }
+        const message = err instanceof Error ? err.message : 'Failed to load world maps';
+        toast.error(message);
+      } finally {
+        setWorldMapsLoading(false);
+      }
+    },
+    [],
+  );
 
   const openEditDialog = useCallback((campaign: Campaign) => {
     const nextForm = buildEditFormState(campaign);
     setEditDialogCampaign(campaign);
-    setEditForm({
-      ...nextForm,
-      description: '',
-      system: '',
-      setting: '',
-      worldMapId: nextForm.worldMapId || NO_WORLD_MAP_VALUE,
-    });
-  }, [NO_WORLD_MAP_VALUE]);
+    setEditWorldMapTouched(false);
+    dispatchEditForm({ type: 'hydrate', payload: nextForm });
+  }, [buildEditFormState]);
 
   const closeEditDialog = useCallback(() => {
     setEditDialogCampaign(null);
-    const defaults = createEditFormDefaults();
-    setEditForm({ ...defaults, worldMapId: NO_WORLD_MAP_VALUE });
-  }, [NO_WORLD_MAP_VALUE, createEditFormDefaults]);
+    setEditWorldMapTouched(false);
+    dispatchEditForm({ type: 'reset', payload: createEditFormDefaults() });
+  }, [createEditFormDefaults]);
 
   const openSettingsDialog = useCallback((campaign: Campaign) => {
     setSettingsDialogCampaign(campaign);
@@ -293,19 +269,11 @@ export function CampaignManager() {
   }, [loadWorldMaps]);
 
   useEffect(() => {
-    setNewCampaign((prev) => {
-      if (worldMaps.length === 0) {
-        return prev.worldMapId === NO_WORLD_MAP_VALUE ? prev : { ...prev, worldMapId: NO_WORLD_MAP_VALUE };
-      }
-
-      const hasMatch = worldMaps.some((map) => map.id === prev.worldMapId);
-      if (hasMatch || prev.worldMapId === NO_WORLD_MAP_VALUE) {
-        return prev;
-      }
-
-      return { ...prev, worldMapId: NO_WORLD_MAP_VALUE };
+    dispatchCreateForm({
+      type: 'syncWorldMapOptions',
+      mapIds: worldMaps.map((map) => map.id),
     });
-  }, [worldMaps, NO_WORLD_MAP_VALUE]);
+  }, [worldMaps]);
 
   const buildLevelRange = useCallback((range: LevelRangeInputState): CampaignLevelRange | null => {
     if (range.min === '' || range.max === '') {
@@ -372,7 +340,7 @@ export function CampaignManager() {
     const description = newCampaign.description.trim();
     const system = newCampaign.system.trim();
     const setting = newCampaign.setting.trim();
-    const worldMapId = newCampaign.worldMapId === NO_WORLD_MAP_VALUE ? undefined : newCampaign.worldMapId;
+    const worldMapId = fromWorldMapSelectValue(newCampaign.worldMapId) ?? undefined;
 
     const payload: CreateCampaignRequest = {
       name: trimmedName,
@@ -390,7 +358,7 @@ export function CampaignManager() {
       const createdCampaign = await createCampaign(payload);
       lastSelectedCampaignIdRef.current = createdCampaign.id;
       await loadCampaignData({ mode: "refresh" });
-      setNewCampaign(createFormDefaults());
+      dispatchCreateForm({ type: 'reset', payload: createFormDefaults() });
       setIsCreating(false);
       toast.success("Campaign created successfully!");
     } catch (error) {
@@ -403,7 +371,6 @@ export function CampaignManager() {
     user,
     newCampaign,
     buildLevelRange,
-    NO_WORLD_MAP_VALUE,
     createFormDefaults,
     loadCampaignData,
   ]);
@@ -456,22 +423,32 @@ export function CampaignManager() {
       return;
     }
 
-    const worldMapId = editForm.worldMapId === NO_WORLD_MAP_VALUE ? null : editForm.worldMapId || null;
+    const worldMapId = resolveWorldMapIdForUpdate({
+      selectedValue: editForm.worldMapId,
+      baselineValue: editDialogCampaign.world_map_id,
+      touched: editWorldMapTouched,
+    });
     if (editForm.status === 'active' && !worldMapId) {
       toast.error('Select a world map before activating the campaign.');
       return;
     }
 
-    const payload: UpdateCampaignRequest = {
+    const snapshot: CampaignEditSnapshot = {
       name: trimmedName,
-      description: editForm.description.trim() ? editForm.description.trim() : null,
-      system: editForm.system.trim() || null,
-      setting: editForm.setting.trim() || null,
+      description: editForm.description,
+      system: editForm.system,
+      setting: editForm.setting,
       status: editForm.status,
       maxPlayers: maxPlayersValue,
       levelRange,
       worldMapId,
     };
+
+    const payload = buildCampaignUpdatePayload(editDialogCampaign, snapshot);
+    if (Object.keys(payload).length === 0) {
+      toast.info("No changes to update.");
+      return;
+    }
 
     try {
       setEditSaving(true);
@@ -497,11 +474,12 @@ export function CampaignManager() {
     editForm.status,
     editForm.system,
     editForm.worldMapId,
+    editWorldMapTouched,
     buildLevelRange,
-    NO_WORLD_MAP_VALUE,
     user,
     loadCampaignData,
     closeEditDialog,
+    buildCampaignUpdatePayload,
   ]);
 
   const handleUpdateCampaignSettings = useCallback(async () => {
@@ -672,7 +650,9 @@ export function CampaignManager() {
                   <Input
                     id="name"
                     value={newCampaign.name}
-                    onChange={(e) => setNewCampaign(prev => ({ ...prev, name: e.target.value }))}
+                    onChange={(e) =>
+                      dispatchCreateForm({ type: 'updateText', field: 'name', value: e.target.value })
+                    }
                     placeholder="Enter campaign name"
                   />
                 </div>
@@ -681,7 +661,13 @@ export function CampaignManager() {
                   <Textarea
                     id="description"
                     value={newCampaign.description}
-                    onChange={(e) => setNewCampaign(prev => ({ ...prev, description: e.target.value }))}
+                    onChange={(e) =>
+                      dispatchCreateForm({
+                        type: 'updateText',
+                        field: 'description',
+                        value: e.target.value,
+                      })
+                    }
                     placeholder="Enter campaign description"
                     rows={3}
                   />
@@ -691,17 +677,19 @@ export function CampaignManager() {
                     <Label htmlFor="system">Game System</Label>
                     <Select 
                       value={newCampaign.system} 
-                      onValueChange={(value) => setNewCampaign(prev => ({ ...prev, system: value }))}
+                      onValueChange={(value) =>
+                        dispatchCreateForm({ type: 'updateText', field: 'system', value })
+                      }
                     >
                       <SelectTrigger>
                         <SelectValue />
                       </SelectTrigger>
                       <SelectContent>
-                        <SelectItem value="D&D 5e">D&D 5e</SelectItem>
-                        <SelectItem value="Pathfinder 2e">Pathfinder 2e</SelectItem>
-                        <SelectItem value="Call of Cthulhu">Call of Cthulhu</SelectItem>
-                        <SelectItem value="Vampire: The Masquerade">Vampire: The Masquerade</SelectItem>
-                        <SelectItem value="Other">Other</SelectItem>
+                        {CAMPAIGN_SYSTEM_OPTIONS.map((option) => (
+                          <SelectItem key={option.value} value={option.value}>
+                            {option.label}
+                          </SelectItem>
+                        ))}
                       </SelectContent>
                     </Select>
                   </div>
@@ -710,7 +698,13 @@ export function CampaignManager() {
                     <Input
                       id="setting"
                       value={newCampaign.setting}
-                      onChange={(e) => setNewCampaign(prev => ({ ...prev, setting: e.target.value }))}
+                      onChange={(e) =>
+                        dispatchCreateForm({
+                          type: 'updateText',
+                          field: 'setting',
+                          value: e.target.value,
+                        })
+                      }
                       placeholder="e.g., Fantasy, Modern, Sci-fi"
                     />
                   </div>
@@ -723,14 +717,14 @@ export function CampaignManager() {
                     <Select
                       value={newCampaign.worldMapId}
                       onValueChange={(value) =>
-                        setNewCampaign((prev) => ({ ...prev, worldMapId: value }))
+                        dispatchCreateForm({ type: 'setWorldMap', value })
                       }
                     >
                       <SelectTrigger id="create-world-map">
                         <SelectValue placeholder="Select a world map" />
                       </SelectTrigger>
                       <SelectContent>
-                        <SelectItem value={NO_WORLD_MAP_VALUE}>No world map (set later)</SelectItem>
+                        <SelectItem value={WORLD_MAP_NONE_SENTINEL}>No world map (set later)</SelectItem>
                         {worldMaps.map((map) => (
                           <SelectItem key={map.id} value={map.id}>
                             {map.name}
@@ -753,21 +747,9 @@ export function CampaignManager() {
                       min="1"
                       max="20"
                       value={newCampaign.maxPlayers}
-                      onChange={(e) => {
-                        const raw = e.target.value;
-                        if (raw === '') {
-                          setNewCampaign((prev) => ({ ...prev, maxPlayers: '' }));
-                          return;
-                        }
-
-                        const parsed = Number.parseInt(raw, 10);
-                        if (Number.isNaN(parsed)) {
-                          return;
-                        }
-
-                        const clamped = Math.min(20, Math.max(1, parsed));
-                        setNewCampaign((prev) => ({ ...prev, maxPlayers: clamped }));
-                      }}
+                      onChange={(e) =>
+                        dispatchCreateForm({ type: 'setMaxPlayers', value: e.target.value })
+                      }
                     />
                   </div>
                   <div>
@@ -778,27 +760,9 @@ export function CampaignManager() {
                       min="1"
                       max="20"
                       value={newCampaign.levelRange.min}
-                      onChange={(e) => {
-                        const raw = e.target.value;
-                        if (raw === '') {
-                          setNewCampaign((prev) => ({
-                            ...prev,
-                            levelRange: { ...prev.levelRange, min: '' },
-                          }));
-                          return;
-                        }
-
-                        const parsed = Number.parseInt(raw, 10);
-                        if (Number.isNaN(parsed)) {
-                          return;
-                        }
-
-                        const clamped = Math.max(1, Math.min(20, parsed));
-                        setNewCampaign((prev) => ({
-                          ...prev,
-                          levelRange: { ...prev.levelRange, min: clamped },
-                        }));
-                      }}
+                      onChange={(e) =>
+                        dispatchCreateForm({ type: 'setLevel', field: 'min', value: e.target.value })
+                      }
                     />
                   </div>
                   <div>
@@ -809,27 +773,9 @@ export function CampaignManager() {
                       min="1"
                       max="20"
                       value={newCampaign.levelRange.max}
-                      onChange={(e) => {
-                        const raw = e.target.value;
-                        if (raw === '') {
-                          setNewCampaign((prev) => ({
-                            ...prev,
-                            levelRange: { ...prev.levelRange, max: '' },
-                          }));
-                          return;
-                        }
-
-                        const parsed = Number.parseInt(raw, 10);
-                        if (Number.isNaN(parsed)) {
-                          return;
-                        }
-
-                        const clamped = Math.max(1, Math.min(20, parsed));
-                        setNewCampaign((prev) => ({
-                          ...prev,
-                          levelRange: { ...prev.levelRange, max: clamped },
-                        }));
-                      }}
+                      onChange={(e) =>
+                        dispatchCreateForm({ type: 'setLevel', field: 'max', value: e.target.value })
+                      }
                     />
                   </div>
                 </div>
@@ -841,7 +787,9 @@ export function CampaignManager() {
                   <Switch
                     id="isPublic"
                     checked={newCampaign.isPublic}
-                    onCheckedChange={(checked) => setNewCampaign((prev) => ({ ...prev, isPublic: checked }))}
+                    onCheckedChange={(checked) =>
+                      dispatchCreateForm({ type: 'updateBoolean', field: 'isPublic', value: checked })
+                    }
                     aria-label="Toggle public campaign"
                   />
                 </div>
@@ -881,7 +829,7 @@ export function CampaignManager() {
                     <h3 className="font-medium text-sm truncate">{campaign.name}</h3>
                   </div>
                   <p className="text-xs text-muted-foreground mb-2 line-clamp-2">
-                    {campaign.description || 'No description'}
+                    {hasCampaignDescription(campaign.description) ? campaign.description : 'No description'}
                   </p>
                   <div className="flex items-center justify-between mb-2">
                     <Badge variant="outline" className="text-xs">{campaign.system}</Badge>
@@ -998,7 +946,9 @@ export function CampaignManager() {
                   <div>
                     <h4 className="font-medium mb-2">Description</h4>
                     <p className="text-muted-foreground">
-                      {selectedCampaign.description || 'No description provided'}
+                      {hasCampaignDescription(selectedCampaign.description)
+                        ? selectedCampaign.description
+                        : 'No description provided'}
                     </p>
                   </div>
                   <div className="grid grid-cols-2 gap-4">
@@ -1057,7 +1007,9 @@ export function CampaignManager() {
               <Input
                 id="edit-campaign-name"
                 value={editForm.name}
-                onChange={(event) => setEditForm((prev) => ({ ...prev, name: event.target.value }))}
+                onChange={(event) =>
+                  dispatchEditForm({ type: 'updateText', field: 'name', value: event.target.value })
+                }
                 placeholder="Enter campaign name"
               />
             </div>
@@ -1066,7 +1018,13 @@ export function CampaignManager() {
               <Textarea
                 id="edit-campaign-description"
                 value={editForm.description}
-                onChange={(event) => setEditForm((prev) => ({ ...prev, description: event.target.value }))}
+                onChange={(event) =>
+                  dispatchEditForm({
+                    type: 'updateText',
+                    field: 'description',
+                    value: event.target.value,
+                  })
+                }
                 placeholder="What should players know about this campaign?"
                 rows={4}
               />
@@ -1076,17 +1034,19 @@ export function CampaignManager() {
                 <Label htmlFor="edit-campaign-system">Game System</Label>
                 <Select
                   value={editForm.system}
-                  onValueChange={(value) => setEditForm((prev) => ({ ...prev, system: value }))}
+                  onValueChange={(value) =>
+                    dispatchEditForm({ type: 'updateText', field: 'system', value })
+                  }
                 >
                   <SelectTrigger id="edit-campaign-system">
                     <SelectValue placeholder="Select a ruleset" />
                   </SelectTrigger>
                   <SelectContent>
-                    <SelectItem value="D&D 5e">D&D 5e</SelectItem>
-                    <SelectItem value="Pathfinder 2e">Pathfinder 2e</SelectItem>
-                    <SelectItem value="Call of Cthulhu">Call of Cthulhu</SelectItem>
-                    <SelectItem value="Vampire: The Masquerade">Vampire: The Masquerade</SelectItem>
-                    <SelectItem value="Other">Other</SelectItem>
+                    {CAMPAIGN_SYSTEM_OPTIONS.map((option) => (
+                      <SelectItem key={option.value} value={option.value}>
+                        {option.label}
+                      </SelectItem>
+                    ))}
                   </SelectContent>
                 </Select>
               </div>
@@ -1095,7 +1055,13 @@ export function CampaignManager() {
                 <Input
                   id="edit-campaign-setting"
                   value={editForm.setting}
-                  onChange={(event) => setEditForm((prev) => ({ ...prev, setting: event.target.value }))}
+                  onChange={(event) =>
+                    dispatchEditForm({
+                      type: 'updateText',
+                      field: 'setting',
+                      value: event.target.value,
+                    })
+                  }
                   placeholder="e.g., Homebrew, Eberron, Sci-Fi"
                 />
               </div>
@@ -1106,16 +1072,17 @@ export function CampaignManager() {
                 <p className="text-sm text-muted-foreground">Loading world maps…</p>
               ) : worldMaps.length > 0 ? (
                 <Select
-                  value={editForm.worldMapId || NO_WORLD_MAP_VALUE}
-                  onValueChange={(value) =>
-                    setEditForm((prev) => ({ ...prev, worldMapId: value }))
-                  }
+                  value={toWorldMapSelectValue(editForm.worldMapId)}
+                  onValueChange={(value) => {
+                    setEditWorldMapTouched(true);
+                    dispatchEditForm({ type: 'setWorldMap', value });
+                  }}
                 >
                   <SelectTrigger id="edit-campaign-world-map">
                     <SelectValue placeholder="Select a world map" />
                   </SelectTrigger>
                   <SelectContent>
-                    <SelectItem value={NO_WORLD_MAP_VALUE}>No world map (set later)</SelectItem>
+                    <SelectItem value={WORLD_MAP_NONE_SENTINEL}>No world map (set later)</SelectItem>
                     {worldMaps.map((map) => (
                       <SelectItem key={map.id} value={map.id}>
                         {map.name}
@@ -1135,7 +1102,7 @@ export function CampaignManager() {
                 <Select
                   value={editForm.status}
                   onValueChange={(value) =>
-                    setEditForm((prev) => ({ ...prev, status: value as CampaignStatus }))
+                    dispatchEditForm({ type: 'setStatus', value: value as CampaignStatus })
                   }
                 >
                   <SelectTrigger id="edit-campaign-status">
@@ -1159,21 +1126,9 @@ export function CampaignManager() {
                   min="1"
                   max="20"
                   value={editForm.maxPlayers}
-                  onChange={(event) => {
-                    const raw = event.target.value;
-                    if (raw === '') {
-                      setEditForm((prev) => ({ ...prev, maxPlayers: '' }));
-                      return;
-                    }
-
-                    const parsed = Number.parseInt(raw, 10);
-                    if (Number.isNaN(parsed)) {
-                      return;
-                    }
-
-                    const clamped = Math.min(20, Math.max(1, parsed));
-                    setEditForm((prev) => ({ ...prev, maxPlayers: clamped }));
-                  }}
+                  onChange={(event) =>
+                    dispatchEditForm({ type: 'setMaxPlayers', value: event.target.value })
+                  }
                 />
               </div>
               <div>
@@ -1184,30 +1139,9 @@ export function CampaignManager() {
                   min="1"
                   max="20"
                   value={editForm.minLevel}
-                  onChange={(event) => {
-                    const raw = event.target.value;
-                    if (raw === '') {
-                      setEditForm((prev) => ({
-                        ...prev,
-                        minLevel: '',
-                        maxLevel: prev.maxLevel,
-                      }));
-                      return;
-                    }
-
-                    const parsed = Number.parseInt(raw, 10);
-                    if (Number.isNaN(parsed)) {
-                      return;
-                    }
-
-                    const clamped = clampLevelValue(parsed);
-                    setEditForm((prev) => ({
-                      ...prev,
-                      minLevel: clamped,
-                      maxLevel:
-                        prev.maxLevel !== '' && prev.maxLevel < clamped ? clamped : prev.maxLevel,
-                    }));
-                  }}
+                  onChange={(event) =>
+                    dispatchEditForm({ type: 'setLevel', field: 'min', value: event.target.value })
+                  }
                 />
               </div>
               <div>
@@ -1218,28 +1152,9 @@ export function CampaignManager() {
                   min="1"
                   max="20"
                   value={editForm.maxLevel}
-                  onChange={(event) => {
-                    const raw = event.target.value;
-                    if (raw === '') {
-                      setEditForm((prev) => ({
-                        ...prev,
-                        maxLevel: '',
-                      }));
-                      return;
-                    }
-
-                    const parsed = Number.parseInt(raw, 10);
-                    if (Number.isNaN(parsed)) {
-                      return;
-                    }
-
-                    const clamped = clampLevelValue(parsed);
-                    setEditForm((prev) => ({
-                      ...prev,
-                      maxLevel:
-                        prev.minLevel !== '' && clamped < prev.minLevel ? prev.minLevel : clamped,
-                    }));
-                  }}
+                  onChange={(event) =>
+                    dispatchEditForm({ type: 'setLevel', field: 'max', value: event.target.value })
+                  }
                 />
               </div>
             </div>

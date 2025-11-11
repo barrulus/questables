@@ -161,7 +161,7 @@ export interface SpellcastingInfo {
 export interface Campaign {
   id: string;
   name: string;
-  description: string;
+  description: string | null;
   dmUserId: string; // DM's user ID
   
   // Campaign settings

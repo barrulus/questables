@@ -3,10 +3,12 @@ import type { ConfigEnv, HmrOptions, UserConfig, BuildOptions } from 'vite'
 import type { PreRenderedChunk } from 'rollup'
 import react from '@vitejs/plugin-react'
 import tailwindcss from '@tailwindcss/vite'
+import { VueMcp } from 'vite-plugin-vue-mcp'
 import path from 'path'
 import { existsSync, readFileSync } from 'fs'
 import { fileURLToPath } from 'url'
 
+const enableGlobalShim = true
 const __filename = fileURLToPath(import.meta.url)
 const __dirname = path.dirname(__filename)
 
@@ -51,11 +53,11 @@ export default defineConfig(({ mode }: ConfigEnv): UserConfig => {
 
   const hmrConfig: HmrOptions | undefined = publicHmrHost
     ? {
-        host: publicHmrHost,
-        port: publicHmrPort ?? 3000,
-        clientPort: publicHmrClientPort ?? publicHmrPort ?? 3000,
-        protocol: httpsOptions ? 'wss' : 'ws',
-      }
+      host: publicHmrHost,
+      port: publicHmrPort ?? 3000,
+      clientPort: publicHmrClientPort ?? publicHmrPort ?? 3000,
+      protocol: httpsOptions ? 'wss' : 'ws',
+    }
     : (httpsOptions ? { protocol: 'wss' } : undefined);
 
   const buildConfig: BuildOptions = {
@@ -83,32 +85,48 @@ export default defineConfig(({ mode }: ConfigEnv): UserConfig => {
   }
 
   return {
-    plugins: [react(), tailwindcss()],
+    plugins: [react(), tailwindcss(), VueMcp()],
+
     optimizeDeps: {
-      // Limit dependency pre-bundling scan to the main app entry
       entries: ['index.html'],
+      include: [
+        'ol', 'ol/Map', 'ol/View',
+        'ol/layer/Tile', 'ol/source/XYZ',
+        'ol/layer/Vector', 'ol/source/Vector',
+        'ol/format/GeoJSON'
+      ]
     },
+
     resolve: {
       alias: {
         '@': path.resolve(__dirname, './'),
       },
     },
-    build: buildConfig,
+
+    build: {
+      ...buildConfig,
+      sourcemap: true
+    },
+
     server: {
       port: 3000,
       host: true,
+      strictPort: true,
       https: httpsOptions,
-      hmr: hmrConfig,
+      cors: true,
+      hmr: hmrConfig ?? { host: 'localhost', protocol: httpsOptions ? 'wss' : 'ws' },
       watch: {
-        ignored: ['**/map_data/**','**/public/**'],
+        ignored: ['**/map_data/**', '**/public/**'],
       },
     },
+
     esbuild: process.env.NODE_ENV === 'production'
       ? { drop: ['console', 'debugger'] }
       : undefined,
+
     define: {
-      // This helps ensure environment variables are accessible
-      'process.env': {} as Record<string, string>
+      'process.env': {} as Record<string, string>,
+      ...(enableGlobalShim ? { global: 'globalThis' } : {})
     }
   }
 })

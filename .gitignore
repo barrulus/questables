@@ -21,3 +21,4 @@ public/tiles-hm/10/
 public/
 server/tegola/tegola.toml
 server/tegola/cache/
+:TEMP/chrome-mcp/

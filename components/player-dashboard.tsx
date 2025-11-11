@@ -31,6 +31,7 @@ import {
 } from "lucide-react";
 import { apiFetch, readErrorMessage, readJsonBody } from "../utils/api-client";
 import { CharacterManager, type CharacterManagerCommand } from "./character-manager";
+import { hasCampaignDescription } from "./campaign-shared";
 import { useGameSession } from "../contexts/GameSessionContext";
 
 interface PlayerDashboardProps {
@@ -73,7 +74,7 @@ type PlayerCharacter = {
 type PlayerCampaign = {
   id: string;
   name: string;
-  description?: string | null;
+  description: string | null;
   dmUserId: string;
   dmUsername?: string | null;
   status: "recruiting" | "active" | "paused" | "completed" | "full";
@@ -355,10 +356,13 @@ const mapCampaign = (raw: RawCampaign): PlayerCampaign => {
 
   const status = raw.status ?? "recruiting";
 
+  const rawDescription = typeof raw.description === "string" ? raw.description : null;
+  const description = hasCampaignDescription(rawDescription) ? rawDescription : null;
+
   return {
     id: raw.id,
     name: raw.name ?? "Untitled Campaign",
-    description: raw.description ?? null,
+    description,
     dmUserId: raw.dm_user_id ?? raw.dmUserId ?? "",
     dmUsername: raw.dm_username ?? raw.dmUsername ?? null,
     status,
@@ -949,7 +953,11 @@ export function PlayerDashboard({ user, onEnterGame, onLogout }: PlayerDashboard
                             </Badge>
                           </div>
 
-                          <p className="text-muted-foreground mb-3">{campaign.description || "No description provided."}</p>
+                          <p className="text-muted-foreground mb-3">
+                            {hasCampaignDescription(campaign.description)
+                              ? campaign.description
+                              : "No description provided."}
+                          </p>
 
                           <div className="flex flex-wrap gap-4 text-sm text-muted-foreground">
                             <div className="flex items-center gap-1">
@@ -1072,7 +1080,11 @@ export function PlayerDashboard({ user, onEnterGame, onLogout }: PlayerDashboard
                               )}
                             </div>
 
-                            <p className="text-muted-foreground mb-3">{campaign.description || "No description provided."}</p>
+                            <p className="text-muted-foreground mb-3">
+                              {hasCampaignDescription(campaign.description)
+                                ? campaign.description
+                                : "No description provided."}
+                            </p>
 
                             <div className="flex flex-wrap gap-4 text-sm text-muted-foreground">
                               <div className="flex items-center gap-1">

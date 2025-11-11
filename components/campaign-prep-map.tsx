@@ -2,14 +2,12 @@ import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } fro
 import Map from "ol/Map";
 import View from "ol/View";
 import TileLayer from "ol/layer/Tile";
-import VectorLayer from "ol/layer/Vector";
 import VectorSource from "ol/source/Vector";
 import 'ol/ol.css';
 import Feature, { FeatureLike } from 'ol/Feature';
 import Point from "ol/geom/Point";
 import Polygon from "ol/geom/Polygon";
 import MultiPolygon from "ol/geom/MultiPolygon";
-import type Geometry from "ol/geom/Geometry";
 import GeoJSON from "ol/format/GeoJSON";
 import Draw from "ol/interaction/Draw";
 import type { DrawEvent } from "ol/interaction/Draw";
@@ -24,18 +22,33 @@ import { toast } from "sonner";
 
 import { mapDataLoader, type WorldMapBounds } from "./map-data-loader";
 import { PIXEL_PROJECTION_CODE, questablesProjection, updateProjectionExtent, DEFAULT_PIXEL_EXTENT } from "./map-projection";
-import {
-  createBurgStyleFactory,
-  createMarkerStyleFactory,
-  createRouteStyleFactory,
-  getCellStyle,
-  getRiverStyle,
-  type ZoomResolver,
-} from "./maps/questables-style-factory";
+import { type ZoomResolver } from "./maps/questables-style-factory";
 import {
   createQuestablesTileSource,
   type TileSetConfig as QuestablesTileSetConfig,
 } from "./maps/questables-tile-source";
+import {
+  createBaseTileLayer,
+  createBurgsLayer,
+  createCellsLayer,
+  createDrawLayer,
+  createHighlightLayer,
+  createMarkersLayer,
+  createRegionLayer,
+  createRiversLayer,
+  createRoutesLayer,
+  createSpawnLayer,
+  type GeometryFeature,
+  type GeometryLayer,
+  type GeometrySource,
+  type HighlightLayer,
+  type SpawnFeature,
+  type SpawnLayer,
+} from "./layers";
+import {
+  createDebouncedExecutor,
+  type DebouncedExecutor,
+} from "./campaign-prep-debounce";
 import { cn } from "./ui/utils";
 import { Button } from "./ui/button";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "./ui/select";
@@ -43,11 +56,9 @@ import { Checkbox } from "./ui/checkbox";
 import { Badge } from "./ui/badge";
 import { Skeleton } from "./ui/skeleton";
 import { LoadingSpinner } from "./ui/loading-spinner";
+import { useLayerVisibility, type LayerVisibilityState } from "./campaign-prep-layer-visibility";
+import { refreshTileLayerSource } from "./campaign-prep-map-tile-refresh";
 import { type SpawnPoint, type CampaignRegion } from "../utils/api-client";
-
-type GeometryFeature = Feature<Geometry>;
-type GeometrySource = VectorSource<GeometryFeature>;
-type GeometryLayer = VectorLayer<GeometrySource>;
 
 export interface MapContextDetails {
   coordinate: [number, number];
@@ -95,14 +106,6 @@ export interface CampaignPrepMapProps {
   onError?: (_message: string) => void;
 }
 
-interface LayerVisibilityState {
-  burgs: boolean;
-  routes: boolean;
-  rivers: boolean;
-  markers: boolean;
-  cells: boolean;
-}
-
 const INITIAL_LAYER_VISIBILITY: LayerVisibilityState = {
   burgs: true,
   routes: true,
@@ -130,6 +133,43 @@ const padExtent = (
   return [extent[0] - padX, extent[1] - padY, extent[2] + padX, extent[3] + padY];
 };
 
+type BoundsLike = {
+  west: number;
+  south: number;
+  east: number;
+  north: number;
+};
+
+type CachedViewState = {
+  center: [number, number];
+  zoom: number | null;
+  resolution: number | null;
+  extent: [number, number, number, number];
+  size: [number, number];
+  boundsSignature: string;
+  userAdjusted: boolean;
+};
+
+const createBoundsSignature = (bounds: BoundsLike | null | undefined): string => {
+  if (!bounds) {
+    return "bounds:none";
+  }
+  const { west, south, east, north } = bounds;
+  const serialize = (value: number) =>
+    Number.isFinite(value) ? value.toFixed(4) : "nan";
+  return `bounds:${serialize(west)}|${serialize(south)}|${serialize(east)}|${serialize(north)}`;
+};
+
+const isFiniteCoordinateTuple = (
+  candidate: [number, number] | undefined | null,
+): candidate is [number, number] => {
+  return (
+    Array.isArray(candidate)
+    && candidate.length >= 2
+    && candidate.every((value) => typeof value === "number" && Number.isFinite(value))
+  );
+};
+
 type LooseTileSet = {
   id?: unknown;
   name?: unknown;
@@ -149,9 +189,6 @@ const isTileSetRecord = (v: unknown): v is Required<Pick<LooseTileSet, "id" | "b
   return typeof candidate.id === "string" && typeof candidate.base_url === "string";
 };
 
-type SpawnVectorLayer = VectorLayer<VectorSource<Feature<Point>>>;
-type HighlightVectorLayer = VectorLayer<VectorSource<Feature<Point>>>;
-
 const spawnStyle = new Style({
   image: new CircleStyle({
     radius: 9,
@@ -167,7 +204,7 @@ const spawnStyle = new Style({
   }),
 });
 
-const convertSpawnToFeature = (spawn: SpawnPoint | null): Feature<Point> | null => {
+const convertSpawnToFeature = (spawn: SpawnPoint | null): SpawnFeature | null => {
   if (!spawn?.geometry?.coordinates || spawn.geometry.coordinates.length < 2) {
     return null;
   }
@@ -236,20 +273,6 @@ const buildFeatureDetails = (feature: GeometryFeature | null, coordinate: Coordi
   };
 };
 
-const useLayerVisibility = (initial: LayerVisibilityState) => {
-  const [visibility, setVisibility] = useState(initial);
-  const toggle = useCallback(
-    (key: keyof LayerVisibilityState, explicit?: boolean) => {
-      setVisibility((prev) => ({
-        ...prev,
-        [key]: typeof explicit === "boolean" ? explicit : !prev[key],
-      }));
-    },
-    [],
-  );
-  return { visibility, toggle, setVisibility };
-};
-
 export function CampaignPrepMap({
   worldMap,
   spawn,
@@ -273,12 +296,13 @@ export function CampaignPrepMap({
   const riversLayerRef = useRef<GeometryLayer | null>(null);
   const markersLayerRef = useRef<GeometryLayer | null>(null);
   const cellsLayerRef = useRef<GeometryLayer | null>(null);
-  const spawnLayerRef = useRef<SpawnVectorLayer | null>(null);
+  const spawnLayerRef = useRef<SpawnLayer | null>(null);
   const regionsLayerRef = useRef<GeometryLayer | null>(null);
-  const highlightLayerRef = useRef<HighlightVectorLayer | null>(null);
+  const highlightLayerRef = useRef<HighlightLayer | null>(null);
   const drawLayerRef = useRef<GeometryLayer | null>(null);
   const drawInteractionRef = useRef<Draw | null>(null);
-  const drawSourceRef = useRef<VectorSource<GeometryFeature> | null>(null);
+  const drawSourceRef = useRef<GeometrySource | null>(null);
+  const debouncedLayerLoaderRef = useRef<DebouncedExecutor | null>(null);
   const regionSeedContextRef = useRef<MapContextDetails | null>(null);
   const hoverOverlayRef = useRef<Overlay | null>(null);
   const hoverElementRef = useRef<HTMLDivElement | null>(null);
@@ -315,6 +339,9 @@ export function CampaignPrepMap({
   const lastFittedSizeRef = useRef<[number, number] | null>(null);
   const mapReadyRef = useRef(false);
   const pendingFrameRef = useRef<number | null>(null);
+  const viewStateCacheRef = useRef<Record<string, CachedViewState>>({});
+  const isProgrammaticViewUpdateRef = useRef(false);
+  const lastAppliedBoundsSignatureRef = useRef<string | null>(null);
 
   const setMapReady = useCallback((value: boolean) => {
     mapReadyRef.current = value;
@@ -361,14 +388,142 @@ export function CampaignPrepMap({
     );
   }, []);
 
-  const updateViewExtent = useCallback((bounds?: { west: number; south: number; east: number; north: number } | null) => {
+  const scheduleProgrammaticReset = useCallback(() => {
+    if (typeof requestAnimationFrame === "function") {
+      requestAnimationFrame(() => {
+        isProgrammaticViewUpdateRef.current = false;
+      });
+      return;
+    }
+    setTimeout(() => {
+      isProgrammaticViewUpdateRef.current = false;
+    }, 0);
+  }, []);
+
+  const storeCurrentViewState = useCallback((
+    worldMapId: string,
+    options: { userAdjusted?: boolean; boundsSignature?: string } = {},
+  ) => {
+    if (!worldMapId) return;
+
     const map = mapInstanceRef.current;
     const view = map?.getView();
     if (!map || !view) return;
 
-    const extent = updateProjectionExtent(bounds ?? null);
+    const cache = viewStateCacheRef.current;
+
+    const size = map.getSize();
+    if (!size || size[0] <= 0 || size[1] <= 0) {
+      return;
+    }
+
+    const centerCandidate = view.getCenter();
+    if (!isFiniteCoordinateTuple(centerCandidate as [number, number])) {
+      return;
+    }
+    const center = [
+      (centerCandidate as number[])[0],
+      (centerCandidate as number[])[1],
+    ] as [number, number];
+
+    const zoom = view.getZoom();
+    const resolution = view.getResolution();
+    const extent = view.calculateExtent(size);
+    if (!extent || extent.some((value) => !Number.isFinite(value))) {
+      return;
+    }
+
+    const existing = cache[worldMapId];
+    const boundsSignature =
+      options.boundsSignature
+      ?? lastAppliedBoundsSignatureRef.current
+      ?? existing?.boundsSignature
+      ?? "bounds:unknown";
+
+    const userAdjusted =
+      typeof options.userAdjusted === "boolean"
+        ? options.userAdjusted
+        : existing?.userAdjusted ?? false;
+
+    const zoomValue =
+      typeof zoom === "number" && Number.isFinite(zoom) ? zoom : null;
+    const resolutionValue =
+      typeof resolution === "number" && Number.isFinite(resolution) ? resolution : null;
+
+    cache[worldMapId] = {
+      center,
+      zoom: zoomValue,
+      resolution: resolutionValue,
+      extent: [
+        extent[0],
+        extent[1],
+        extent[2],
+        extent[3],
+      ],
+      size: [size[0], size[1]],
+      boundsSignature,
+      userAdjusted,
+    };
+  }, []);
+
+  const updateViewExtent = useCallback((
+    bounds?: BoundsLike | null,
+    options?: { force?: boolean; reason?: string },
+  ) => {
+    const map = mapInstanceRef.current;
+    const view = map?.getView();
+    if (!map || !view) return;
+
+    const worldMapId = currentWorldMapIdRef.current ?? worldMap.id;
+    const targetBounds = bounds ?? worldMap.bounds ?? null;
+    const extent = updateProjectionExtent(targetBounds ?? null);
     const paddedExtent = padExtent(extent);
     view.setProperties({ extent: paddedExtent });
+
+    const boundsSignature = createBoundsSignature(targetBounds);
+    lastAppliedBoundsSignatureRef.current = boundsSignature;
+
+    const size = map.getSize();
+    if (!size || size[0] === 0 || size[1] === 0) {
+      if (typeof requestAnimationFrame === "function") {
+        requestAnimationFrame(() => {
+          updateViewExtent(targetBounds, options);
+        });
+      } else {
+        setTimeout(() => {
+          updateViewExtent(targetBounds, options);
+        }, 0);
+      }
+      return;
+    }
+
+    const cache = viewStateCacheRef.current;
+
+    const cachedState = worldMapId ? cache[worldMapId] : undefined;
+
+    if (
+      cachedState
+      && cachedState.boundsSignature === boundsSignature
+      && !options?.force
+      && (cachedState.userAdjusted || initialFitDoneRef.current)
+    ) {
+      isProgrammaticViewUpdateRef.current = true;
+      view.setCenter(cachedState.center);
+      if (typeof cachedState.zoom === "number") {
+        view.setZoom(cachedState.zoom);
+      } else if (typeof cachedState.resolution === "number") {
+        view.setResolution(cachedState.resolution);
+      }
+      lastFittedExtentRef.current = cachedState.extent;
+      lastFittedSizeRef.current = cachedState.size;
+      initialFitDoneRef.current = true;
+      storeCurrentViewState(worldMapId, {
+        userAdjusted: cachedState.userAdjusted,
+        boundsSignature,
+      });
+      scheduleProgrammaticReset();
+      return;
+    }
 
     const targetCenter: [number, number] = [
       (extent[0] + extent[2]) / 2,
@@ -376,19 +531,18 @@ export function CampaignPrepMap({
     ];
     view.setCenter(targetCenter);
 
-    const size = map.getSize();
-    if (!size || size[0] === 0 || size[1] === 0) {
-      requestAnimationFrame(() => updateViewExtent(bounds ?? null));
-      return;
-    }
-
     const previousExtent = lastFittedExtentRef.current;
     const previousSize = lastFittedSizeRef.current;
     const extentChanged = !previousExtent || !areExtentsEqual(previousExtent, extent);
     const sizeChanged = !previousSize || previousSize[0] !== size[0] || previousSize[1] !== size[1];
-    const shouldFit = !initialFitDoneRef.current || extentChanged || sizeChanged;
+    const shouldFit =
+      options?.force === true
+      || !initialFitDoneRef.current
+      || extentChanged
+      || sizeChanged;
 
     if (shouldFit) {
+      isProgrammaticViewUpdateRef.current = true;
       view.fit(extent, {
         size,
         nearest: true,
@@ -398,8 +552,13 @@ export function CampaignPrepMap({
       lastFittedExtentRef.current = extent;
       lastFittedSizeRef.current = [size[0], size[1]];
       initialFitDoneRef.current = true;
+      storeCurrentViewState(worldMapId, {
+        userAdjusted: false,
+        boundsSignature,
+      });
+      scheduleProgrammaticReset();
     }
-  }, [areExtentsEqual]);
+  }, [areExtentsEqual, scheduleProgrammaticReset, storeCurrentViewState, worldMap]);
 
   const handleMapError = useCallback(
     (message: string) => {
@@ -420,7 +579,7 @@ export function CampaignPrepMap({
     const rawMaxZoom = tileSet?.max_zoom;
 
     const minZoom = typeof rawMinZoom === "number" && Number.isFinite(rawMinZoom) ? rawMinZoom : 0;
-    const maxZoom = typeof rawMaxZoom === "number" && Number.isFinite(rawMaxZoom) ? rawMaxZoom : 20;
+    const maxZoom = typeof rawMaxZoom === "number" && Number.isFinite(rawMaxZoom) ? rawMaxZoom : 9;
 
     if (maxZoom < minZoom) {
       const identifier = tileSet?.name ?? tileSet?.id ?? "selected tile set";
@@ -479,14 +638,26 @@ export function CampaignPrepMap({
     }
     regionSeedContextRef.current = seedContext;
     setIsDrawingRegion(true);
-    if (!drawSourceRef.current) {
-      drawSourceRef.current = new VectorSource<GeometryFeature>({ wrapX: false });
+    let drawSource = drawSourceRef.current;
+    if (!drawSource) {
+      const layerSource = drawLayerRef.current?.getSource() as GeometrySource | null | undefined;
+      if (layerSource) {
+        drawSource = layerSource;
+      } else {
+        drawSource = new VectorSource<GeometryFeature>({ wrapX: false });
+        drawLayerRef.current?.setSource(drawSource);
+      }
+      drawSourceRef.current = drawSource;
     } else {
-      drawSourceRef.current.clear();
+      drawSource.clear();
+    }
+
+    if (!drawSource) {
+      return;
     }
 
     const draw = new Draw({
-      source: drawSourceRef.current,
+      source: drawSource,
       type: "Polygon",
       stopClick: true,
     });
@@ -595,6 +766,8 @@ export function CampaignPrepMap({
     initialFitDoneRef.current = false;
     lastFittedExtentRef.current = null;
     lastFittedSizeRef.current = null;
+    isProgrammaticViewUpdateRef.current = false;
+    lastAppliedBoundsSignatureRef.current = null;
   
     if (mapInstanceRef.current) {
       mapInstanceRef.current.setTarget(undefined);
@@ -612,7 +785,6 @@ export function CampaignPrepMap({
       minZoom: 0,
       maxZoom: 20,
       extent: padExtent(DEFAULT_PIXEL_EXTENT),
-      constrainOnlyCenter: true,
       enableRotation: false,
     });
   
@@ -621,81 +793,44 @@ export function CampaignPrepMap({
       return typeof zoom === "number" ? zoom : 0;
     };
   
-    const burgLayer = new VectorLayer({
-      source: new VectorSource({ wrapX: false }),
-      style: (feature, resolution) => createBurgStyleFactory(getZoomForResolution)(feature as Feature<Geometry>, resolution),
+    const burgLayer = createBurgsLayer({
+      resolveZoom: getZoomForResolution,
       visible: layerVisibility.burgs,
     });
   
-    const routesLayer = new VectorLayer({
-      source: new VectorSource({ wrapX: false }),
-      style: (feature, resolution) => createRouteStyleFactory(getZoomForResolution)(feature as Feature<Geometry>, resolution),
+    const routesLayer = createRoutesLayer({
+      resolveZoom: getZoomForResolution,
       visible: layerVisibility.routes,
     });
   
-    const riversLayer = new VectorLayer({
-      source: new VectorSource({ wrapX: false }),
-      style: (feature) => getRiverStyle(feature as Feature<Geometry>),
+    const riversLayer = createRiversLayer({
       visible: layerVisibility.rivers,
     });
   
-    const markersLayer = new VectorLayer({
-      source: new VectorSource({ wrapX: false }),
-      style: (feature, resolution) => createMarkerStyleFactory(getZoomForResolution)(feature as Feature<Geometry>, resolution),
+    const markersLayer = createMarkersLayer({
+      resolveZoom: getZoomForResolution,
       visible: layerVisibility.markers,
     });
   
-    const cellsLayer = new VectorLayer({
-      source: new VectorSource({ wrapX: false }),
-      style: (feature) => getCellStyle(feature as Feature<Geometry>),
+    const cellsLayer = createCellsLayer({
       visible: layerVisibility.cells,
     });
   
-    const regionLayer = new VectorLayer({
-      source: new VectorSource<GeometryFeature>({ wrapX: false }),
-      style: (feature) => {
-        const data = (feature as Feature<Geometry>).get("data") as CampaignRegion | undefined;
-        return getRegionStyle(
-          data ?? {
-            id: "placeholder",
-            campaignId: "",
-            worldMapId: worldMap.id,
-            name: String((feature as Feature<Geometry>).get("name") ?? "Region"),
-            description: null,
-            category: "custom",
-            color: (feature as Feature<Geometry>).get("color") ?? null,
-            metadata: {},
-            geometry: {},
-            createdAt: "",
-            updatedAt: "",
-          },
-        );
-      },
-      visible: true,
+    const regionLayer = createRegionLayer({
+      worldMapId: worldMap.id,
+      getRegionStyle,
     });
   
-    const drawSource = new VectorSource<GeometryFeature>({ wrapX: false });
+    const { layer: drawLayer, source: drawSource } = createDrawLayer();
     drawSourceRef.current = drawSource;
-    const drawLayer = new VectorLayer({
-      source: drawSource,
-      style: new Style({
-        fill: new Fill({ color: "rgba(16,185,129,0.2)" }),
-        stroke: new Stroke({ color: "#0f766e", width: 2, lineDash: [6, 4] }),
-      }),
-      visible: true,
-    });
   
-    const spawnLayer = new VectorLayer({
-      source: new VectorSource<Feature<Point>>({ wrapX: false }),
-    });
+    const spawnLayer = createSpawnLayer();
   
-    const highlightLayer = new VectorLayer({
-      source: new VectorSource<Feature<Point>>({ wrapX: false }),
+    const highlightLayer = createHighlightLayer({
       style: highlightStyle,
-      visible: true,
     });
   
-    const baseLayer = new TileLayer({ preload: 2, zIndex: 0, opacity: 1 });
+    const baseLayer = createBaseTileLayer();
   
     const map = new Map({
       target: container,
@@ -790,6 +925,8 @@ const initializeMap = useCallback(() => {
     pendingFrameRef.current = null;
   }
 
+  debouncedLayerLoaderRef.current?.cancel();
+
   const ensureSized = () => {
     const container = mapContainerRef.current;
     if (!container) return;
@@ -807,28 +944,33 @@ const initializeMap = useCallback(() => {
 
   const refreshMapTileSource = useCallback(
     (tileSet: QuestablesTileSetConfig | null) => {
-      if (!baseLayerRef.current) return;
-      try {
-        if (tileSet) {
-          const source = createQuestablesTileSource(tileSet, worldMap.bounds);
-          baseLayerRef.current.setSource(source);
-          baseLayerRef.current.setVisible(true);
-          baseLayerRef.current.setOpacity(1);
-          baseLayerRef.current.changed();
-          mapInstanceRef.current?.renderSync?.();
-          updateViewExtent(worldMap.bounds);
-          applyTileSetConstraints(tileSet);
-          setMapError(null);
-        } else {
-          baseLayerRef.current.setSource(null);
-          setMapError(null);
-        }
-      } catch (error) {
-        console.error("[CampaignPrepMap] Failed to initialise tile source", error);
-        handleMapError("Failed to initialise map tiles. Upload or configure tile sets before using the map.");
+      const currentBaseLayer = baseLayerRef.current;
+      if (typeof console !== "undefined" && console.debug) {
+        console.debug(
+          "[CampaignPrepMap] refreshMapTileSource",
+          {
+            tileSetId: tileSet?.id ?? null,
+            tileSetName: tileSet?.name ?? null,
+            hasBaseLayer: Boolean(currentBaseLayer),
+            hasSource: Boolean(currentBaseLayer?.getSource?.()),
+          },
+        );
       }
+
+      refreshTileLayerSource({
+        baseLayer: baseLayerRef.current,
+        tileSet,
+        worldBounds: worldMap.bounds,
+        createSource: createQuestablesTileSource,
+        applyConstraints: (config) => applyTileSetConstraints(config),
+        clearError: () => setMapError(null),
+        onFailure: (error) => {
+          console.error("[CampaignPrepMap] Failed to initialise tile source", error);
+          handleMapError("Failed to initialise map tiles. Upload or configure tile sets before using the map.");
+        },
+      });
     },
-    [applyTileSetConstraints, handleMapError, worldMap.bounds, updateViewExtent],
+    [applyTileSetConstraints, handleMapError, worldMap.bounds],
   );
 
   const loadWorldLayers = useCallback(async () => {
@@ -870,45 +1012,79 @@ const initializeMap = useCallback(() => {
 
     const dataTypes = mapDataLoader.getDataTypesForZoom(Math.floor(zoom));
 
-    const requests: Array<Promise<GeometryFeature[]>> = [];
-    const layerAssignments: Array<{ type: string; layer: GeometryLayer | null }> = [];
+    const layerLoaders: Array<{
+      type: keyof LayerVisibilityState;
+      visible: boolean;
+      loader: (_worldId: string, _bounds: WorldMapBounds) => Promise<GeometryFeature[]>;
+      layerRef: React.MutableRefObject<GeometryLayer | null>;
+    }> = [
+      {
+        type: "burgs",
+        visible: layerVisibility.burgs,
+        loader: mapDataLoader.loadBurgs,
+        layerRef: burgLayerRef,
+      },
+      {
+        type: "routes",
+        visible: layerVisibility.routes,
+        loader: mapDataLoader.loadRoutes,
+        layerRef: routesLayerRef,
+      },
+      {
+        type: "rivers",
+        visible: layerVisibility.rivers,
+        loader: mapDataLoader.loadRivers,
+        layerRef: riversLayerRef,
+      },
+      {
+        type: "markers",
+        visible: layerVisibility.markers,
+        loader: mapDataLoader.loadMarkers,
+        layerRef: markersLayerRef,
+      },
+      {
+        type: "cells",
+        visible: layerVisibility.cells,
+        loader: mapDataLoader.loadCells,
+        layerRef: cellsLayerRef,
+      },
+    ];
 
-    if (dataTypes.includes("burgs")) {
-      requests.push(mapDataLoader.loadBurgs(worldMap.id, bounds));
-      layerAssignments.push({ type: "burgs", layer: burgLayerRef.current });
-    }
-    if (dataTypes.includes("routes")) {
-      requests.push(mapDataLoader.loadRoutes(worldMap.id, bounds));
-      layerAssignments.push({ type: "routes", layer: routesLayerRef.current });
-    }
-    if (dataTypes.includes("rivers")) {
-      requests.push(mapDataLoader.loadRivers(worldMap.id, bounds));
-      layerAssignments.push({ type: "rivers", layer: riversLayerRef.current });
-    }
-    if (dataTypes.includes("markers")) {
-      requests.push(mapDataLoader.loadMarkers(worldMap.id, bounds));
-      layerAssignments.push({ type: "markers", layer: markersLayerRef.current });
-    }
-    if (dataTypes.includes("cells")) {
-      requests.push(mapDataLoader.loadCells(worldMap.id, bounds));
-      layerAssignments.push({ type: "cells", layer: cellsLayerRef.current });
-    }
+    const requests: Array<Promise<{ type: keyof LayerVisibilityState; features: GeometryFeature[]; layer: GeometryLayer | null }>> = []; 
+
+    layerLoaders.forEach(({ type, visible, loader, layerRef }) => {
+      if (!visible) {
+        return;
+      }
+      if (!dataTypes.includes(type)) {
+        const layer = layerRef.current;
+        const source = layer?.getSource();
+        source?.clear();
+        return;
+      }
+
+      requests.push(
+        loader(worldMap.id, bounds).then((features) => ({
+          type,
+          features,
+          layer: layerRef.current,
+        })),
+      );
+    });
 
     try {
       const results = await Promise.allSettled(requests);
-      results.forEach((result, index) => {
-        const assignment = layerAssignments[index];
-        if (!assignment?.layer) {
+      results.forEach((result) => {
+        if (result.status !== "fulfilled") {
           return;
         }
-        const source = assignment.layer.getSource();
+        const { layer, features } = result.value;
+        const source = layer?.getSource();
         if (!source) {
           return;
         }
         source.clear();
-        if (result.status === "fulfilled" && Array.isArray(result.value)) {
-          source.addFeatures(result.value);
-        }
+        source.addFeatures(features);
       });
     } catch (error) {
       console.error("[CampaignPrepMap] Failed to load world layers", error);
@@ -1075,6 +1251,22 @@ const initializeMap = useCallback(() => {
     loadWorldLayersHandlerRef.current = loadWorldLayers;
   }, [loadWorldLayers]);
 
+  useEffect(() => {
+    const executor = createDebouncedExecutor(() => {
+      loadWorldLayersHandlerRef.current?.();
+    }, 200);
+
+    debouncedLayerLoaderRef.current?.cancel();
+    debouncedLayerLoaderRef.current = executor;
+
+    return () => {
+      executor.cancel();
+      if (debouncedLayerLoaderRef.current === executor) {
+        debouncedLayerLoaderRef.current = null;
+      }
+    };
+  }, [loadWorldLayers]);
+
   const contextMenuHandlerRef = useRef(handleContextMenu);
   useEffect(() => {
     contextMenuHandlerRef.current = handleContextMenu;
@@ -1085,29 +1277,59 @@ const initializeMap = useCallback(() => {
     const container = mapContainerRef.current;
     if (!map || !container) return;
 
+    const contextTargets = new Set<EventTarget>();
+    const viewport = map.getViewport?.();
+    if (viewport) {
+      contextTargets.add(viewport);
+    }
+    const overlayStop = map.getOverlayContainerStopEvent?.();
+    if (overlayStop) {
+      contextTargets.add(overlayStop);
+    }
+    contextTargets.add(container);
+
     const pointerMoveWrapper = (event: MapBrowserEvent<UIEvent>) => {
       pointerMoveHandlerRef.current?.(event);
     };
     const moveEndWrapper = () => {
-      loadWorldLayersHandlerRef.current?.();
+      const worldMapId = currentWorldMapIdRef.current;
+      if (worldMapId) {
+        storeCurrentViewState(worldMapId, {
+          userAdjusted: !isProgrammaticViewUpdateRef.current,
+          boundsSignature: lastAppliedBoundsSignatureRef.current ?? undefined,
+        });
+      }
+      if (isProgrammaticViewUpdateRef.current) {
+        scheduleProgrammaticReset();
+      }
+      if (debouncedLayerLoaderRef.current) {
+        debouncedLayerLoaderRef.current.trigger();
+      } else {
+        loadWorldLayersHandlerRef.current?.();
+      }
     };
     const mapClickWrapper = (event: MapBrowserEvent<UIEvent>) => {
       mapClickHandlerRef.current?.(event);
     };
     const contextMenuWrapper = (event: MouseEvent) => {
+      event.stopPropagation();
       contextMenuHandlerRef.current?.(event);
     };
 
     map.on("pointermove", pointerMoveWrapper);
     map.on("moveend", moveEndWrapper);
     map.on("click", mapClickWrapper);
-    container.addEventListener("contextmenu", contextMenuWrapper);
+    contextTargets.forEach((target) => {
+      target.addEventListener("contextmenu", contextMenuWrapper);
+    });
 
     return () => {
       map.un("pointermove", pointerMoveWrapper);
       map.un("moveend", moveEndWrapper);
       map.un("click", mapClickWrapper);
-      container.removeEventListener("contextmenu", contextMenuWrapper);
+      contextTargets.forEach((target) => {
+        target.removeEventListener("contextmenu", contextMenuWrapper);
+      });
     };
   }, []);
 
@@ -1184,8 +1406,14 @@ const initializeMap = useCallback(() => {
     if (!mapContainerRef.current) return;
     if (currentWorldMapIdRef.current === worldMap.id && mapInstanceRef.current) {
       // Ensure bounds update when world map metadata changes
-      updateViewExtent(worldMap.bounds);
-      initialFitDoneRef.current = true;
+      const boundsSignature = createBoundsSignature(worldMap.bounds);
+      const cache = viewStateCacheRef.current;
+      const cachedState = cache[worldMap.id];
+      const shouldForceFit = !cachedState || cachedState.boundsSignature !== boundsSignature;
+      updateViewExtent(worldMap.bounds, {
+        force: shouldForceFit,
+        reason: shouldForceFit ? "bounds-change" : "world-map-sync",
+      });
       if (!mapReadyRef.current) {
         setMapReady(true);
       }
@@ -1203,6 +1431,7 @@ const initializeMap = useCallback(() => {
       resizeObserverRef.current.disconnect();
       resizeObserverRef.current = null;
     }
+    debouncedLayerLoaderRef.current?.cancel();
     if (mapInstanceRef.current) {
       mapInstanceRef.current.setTarget(undefined);
       mapInstanceRef.current.dispose();
