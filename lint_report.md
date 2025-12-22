@@ -1,5 +1,15 @@
 # Lint & Verification Report
 
+2025-11-11
+- `npx eslint standalone/campaign-prep-map.entry.tsx --ext ts,tsx` (pass; standalone entry to render CampaignPrepMap in isolation)
+- `npx eslint standalone/campaign-prep-harness.entry.tsx --ext ts,tsx` (pass; harness with toggles to add editor components incrementally)
+  - Added SessionManager toggle; requires providers and ?campaignId= in URL.
+  - Added DM actions toggle to pass isDM to SessionManager without URL params.
+- `npx eslint components/ui/dialog.tsx --ext ts,tsx` (pass; prevent closed Radix DialogOverlay from intercepting clicks by adding data-[state=closed]:pointer-events-none and transparent background)
+- `npx eslint components/ui/alert-dialog.tsx --ext ts,tsx` (pass; same closed-overlay guard as Dialog)
+- `npx eslint components/ui/drawer.tsx --ext ts,tsx` (pass; same closed-overlay guard for Drawer overlay)
+- `npx eslint components/campaign-prep.tsx --ext ts,tsx` (pass; pass min-h to CampaignPrepMap to ensure map initializes and remains visible)
+
 2025-10-31
 - `npx eslint vite.config.ts --ext ts,tsx` (pass; enabled Vue MCP plugin for dev server SSE export)
 

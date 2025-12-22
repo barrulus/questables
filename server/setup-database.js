@@ -5,6 +5,7 @@ import { readFileSync, existsSync } from "fs";
 import { join, dirname } from "path";
 import { fileURLToPath } from "url";
 import dotenv from "dotenv";
+import { hashPassword } from "./auth-middleware.js";
 
 // Load env from server and repo root, preferring .env.local
 const __filename = fileURLToPath(import.meta.url);
@@ -60,7 +61,8 @@ async function setupDatabase() {
 
     console.log("✓ Database schema created");
 
-    // Create default admin user if it doesn't exist
+    // Create or update default admin user using the same bcrypt helper
+    // as the HTTP auth layer so login works consistently.
     console.log("Creating default admin user...");
     const defaultAdminUsername = process.env.DEFAULT_ADMIN_USERNAME || "admin";
     const defaultAdminEmail =
@@ -69,28 +71,30 @@ async function setupDatabase() {
       process.env.DEFAULT_ADMIN_PASSWORD || "admin123";
 
     try {
-      const hashResult = await client.query(
-        "SELECT crypt($1, gen_salt('bf')) AS hash",
-        [defaultAdminPassword]
+      const passwordHash = await hashPassword(defaultAdminPassword);
+
+      const upsertResult = await client.query(
+        `INSERT INTO user_profiles (username, email, password_hash, roles, status)
+         VALUES ($1, $2, $3, ARRAY['admin','dm','player']::TEXT[], 'active')
+         ON CONFLICT (email) DO UPDATE
+           SET username = EXCLUDED.username,
+               password_hash = EXCLUDED.password_hash,
+               roles = EXCLUDED.roles,
+               status = 'active'
+         RETURNING id`,
+        [defaultAdminUsername, defaultAdminEmail, passwordHash]
       );
 
-      const insertResult = await client.query(
-        `INSERT INTO user_profiles (username, email, password_hash, roles)
-         VALUES ($1, $2, $3, ARRAY['admin','dm','player']::TEXT[])
-         ON CONFLICT (email) DO NOTHING`,
-        [defaultAdminUsername, defaultAdminEmail, hashResult.rows[0].hash]
+      const action = upsertResult.command === "INSERT" ? "created" : "updated";
+      console.log(
+        `✓ Default admin user ${action} (${defaultAdminEmail} / ${defaultAdminPassword})`
       );
-
-      if (insertResult.rowCount > 0) {
-        console.log(
-          `✓ Default admin user created (${defaultAdminEmail} / ${defaultAdminPassword})`
-        );
-      } else {
-        console.log("ℹ Default admin user already exists");
-      }
-      } catch (error) {
-      console.log("ℹ Default admin user already exists:", error.code || error.message || error);
-      }
+    } catch (error) {
+      console.log(
+        "ℹ Default admin user setup error:",
+        error.code || error.message || error
+      );
+    }
 
     client.release();
     console.log("\n🎉 Database setup complete!");

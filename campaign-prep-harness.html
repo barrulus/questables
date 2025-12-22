@@ -1,0 +1,21 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Campaign Prep Harness</title>
+    <style>
+      /* Harness-only safeguard: ensure closed overlays never block interactions */
+      [data-slot="dialog-overlay"][data-state="closed"],
+      [data-slot="alert-dialog-overlay"][data-state="closed"],
+      [data-slot="drawer-overlay"][data-state="closed"] {
+        pointer-events: none !important;
+        background: transparent !important;
+      }
+    </style>
+  </head>
+  <body>
+    <div id="root"></div>
+    <script type="module" src="/standalone/campaign-prep-harness.entry.tsx"></script>
+  </body>
+  </html>

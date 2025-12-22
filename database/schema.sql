@@ -369,7 +369,7 @@ SELECT
   ST_LineMerge(ST_Collect(ranked.path)) AS trail_geom,
   MIN(ranked.created_at) AS recorded_from,
   MAX(ranked.created_at) AS recorded_to,
-  COUNT(*) AS segment_count
+  COUNT(*) AS point_count
 FROM (
   SELECT
     pmp.campaign_id,
@@ -529,18 +529,6 @@ SELECT
   cp.loc_current AS geom
 FROM public.campaign_players cp
 WHERE cp.loc_current IS NOT NULL;
-
--- Normalized NPC world positions (SRID 0)
-CREATE OR REPLACE VIEW public.v_npc_world_positions AS
-SELECT
-  npc.id,
-  npc.campaign_id,
-  npc.name,
-  npc.occupation,
-  COALESCE(npc.world_position, loc.world_position) AS geom
-FROM public.npcs npc
-LEFT JOIN public.locations loc ON npc.current_location_id = loc.id
-WHERE COALESCE(npc.world_position, loc.world_position) IS NOT NULL;
 
 -- movement audit log
 CREATE TABLE IF NOT EXISTS public.player_movement_audit (
@@ -776,6 +764,18 @@ CREATE TABLE IF NOT EXISTS public.npc_relationships (
     trust_delta_total INTEGER DEFAULT 0,
     UNIQUE(npc_id, target_type, target_id)
 );
+
+-- Normalized NPC world positions (SRID 0)
+CREATE OR REPLACE VIEW public.v_npc_world_positions AS
+SELECT
+  npc.id,
+  npc.campaign_id,
+  npc.name,
+  npc.occupation,
+  COALESCE(npc.world_position, loc.world_position) AS geom
+FROM public.npcs npc
+LEFT JOIN public.locations loc ON npc.current_location_id = loc.id
+WHERE COALESCE(npc.world_position, loc.world_position) IS NOT NULL;
 
 -- =============================================================================
 -- LLM CONFIG & LOGS

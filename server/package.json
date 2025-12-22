@@ -6,7 +6,7 @@
   "type": "module",
   "scripts": {
     "start": "node database-server.js",
-    "dev": "nodemon database-server.js",
+    "dev": "node node_modules/nodemon/bin/nodemon.js database-server.js",
     "setup": "node setup-database.js"
   },
   "dependencies": {

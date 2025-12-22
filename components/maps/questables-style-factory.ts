@@ -16,7 +16,7 @@ const DEFAULT_ROUTE_STYLE = new Style({
 
 const ROUTE_STYLE_CONFIG: Record<string, { minZoom: number; styles: Style[] }> = {
   trade: {
-    minZoom: 3,
+    minZoom: 2,
     styles: [
       new Style({
         stroke: new Stroke({
@@ -38,7 +38,7 @@ const ROUTE_STYLE_CONFIG: Record<string, { minZoom: number; styles: Style[] }> =
     ]
   },
   pilgrimage: {
-    minZoom: 3,
+    minZoom: 2,
     styles: [
       new Style({
         stroke: new Stroke({
@@ -52,7 +52,7 @@ const ROUTE_STYLE_CONFIG: Record<string, { minZoom: number; styles: Style[] }> =
     ]
   },
   naval: {
-    minZoom: 3,
+    minZoom: 2,
     styles: [
       new Style({
         stroke: new Stroke({
@@ -66,7 +66,7 @@ const ROUTE_STYLE_CONFIG: Record<string, { minZoom: number; styles: Style[] }> =
     ]
   },
   footpath: {
-    minZoom: 7,
+    minZoom: 6,
     styles: [
       new Style({
         stroke: new Stroke({
@@ -120,16 +120,19 @@ const MARKER_TYPE_ICONS: Record<string, string> = {
 
 export const LABEL_VISIBILITY = {
   burgs: 3,
-  markers: 6,
+  // Relax marker visibility to appear earlier while keeping labels readable
+  markers: 4,
   campaignLocations: 7,
   pins: 6
 } as const;
 
+// Allow burgs to render at world view with conservative population threshold
 const BURG_ZOOM_RULES = [
   { minZoom: 6, minPopulation: 0 },
   { minZoom: 5, minPopulation: 250 },
   { minZoom: 4, minPopulation: 1000 },
-  { minZoom: 3, minPopulation: 10000 }
+  { minZoom: 3, minPopulation: 10000 },
+  { minZoom: 2, minPopulation: 10000 },
 ] as const;
 
 const BURG_CATEGORY_THRESHOLDS = [
@@ -177,7 +180,7 @@ export const createBurgStyleFactory = (getZoomForResolution: ZoomResolver) => {
     );
     const minPopulation = getMinPopulationForZoom(effectiveZoom);
 
-    if (population < minPopulation || effectiveZoom < 3) {
+    if (population < minPopulation || effectiveZoom < 2) {
       return undefined;
     }
 
@@ -236,7 +239,8 @@ export const createRouteStyleFactory = (getZoomForResolution: ZoomResolver) => {
       return config.styles;
     }
 
-    return (zoom as number) >= 3 ? DEFAULT_ROUTE_STYLES : undefined;
+    // Relax default route visibility to start at zoom 2
+    return (zoom as number) >= 2 ? DEFAULT_ROUTE_STYLES : undefined;
   };
 };
 

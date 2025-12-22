@@ -788,9 +788,14 @@ export function CampaignPrepMap({
       enableRotation: false,
     });
   
-    const getZoomForResolution: ZoomResolver = (resolution: number) => {
-      const zoom = view.getZoomForResolution(resolution);
-      return typeof zoom === "number" ? zoom : 0;
+    const getZoomForResolution: ZoomResolver = (_resolution: number) => {
+      // Prefer the view's current zoom; fall back safely for custom projections
+      const current = view.getZoom();
+      if (typeof current === 'number' && Number.isFinite(current)) {
+        return current;
+      }
+      const derived = view.getZoomForResolution(_resolution);
+      return Number.isFinite(derived as number) ? (derived as number) : 0;
     };
   
     const burgLayer = createBurgsLayer({
@@ -839,9 +844,10 @@ export function CampaignPrepMap({
         cellsLayer,
         riversLayer,
         routesLayer,
+        // Regions should render beneath point features so they don't obscure burgs/markers
+        regionLayer,
         burgLayer,
         markersLayer,
-        regionLayer,
         drawLayer,
         spawnLayer,
         highlightLayer,
@@ -997,6 +1003,13 @@ const initializeMap = useCallback(() => {
     }
 
     let bounds = mapDataLoader.getBoundsFromExtent(extent);
+    if (typeof process !== 'undefined' && process.env?.NODE_ENV === 'development') {
+      console.debug('[CampaignPrepMap] Loading world layers', {
+        zoom: Number(zoom).toFixed(2),
+        bounds,
+        visibility: layerVisibility,
+      });
+    }
     if (Object.values(bounds).some((value) => !Number.isFinite(value))) {
       const fallback = worldMap.bounds;
       if (Object.values(fallback).every((value) => Number.isFinite(value))) {
@@ -1073,19 +1086,32 @@ const initializeMap = useCallback(() => {
     });
 
     try {
-      const results = await Promise.allSettled(requests);
-      results.forEach((result) => {
-        if (result.status !== "fulfilled") {
-          return;
+    const results = await Promise.allSettled(requests);
+    let loadedFeatureCount = 0;
+    results.forEach((result) => {
+      if (result.status !== 'fulfilled') {
+        if (typeof process !== 'undefined' && process.env?.NODE_ENV === 'development') {
+          console.warn('[CampaignPrepMap] World layer load rejected', result.reason);
         }
-        const { layer, features } = result.value;
-        const source = layer?.getSource();
-        if (!source) {
-          return;
-        }
-        source.clear();
-        source.addFeatures(features);
-      });
+        return;
+      }
+      const { layer, features, type } = result.value as unknown as { layer: GeometryLayer | null; features: GeometryFeature[]; type?: string };
+      const source = layer?.getSource();
+      if (!source) {
+        return;
+      }
+      source.clear();
+      if (Array.isArray(features) && features.length) {
+        loadedFeatureCount += features.length;
+      }
+      source.addFeatures(features);
+      if (typeof process !== 'undefined' && process.env?.NODE_ENV === 'development') {
+        console.debug('[CampaignPrepMap] Applied layer features', { type, count: features?.length ?? 0 });
+      }
+    });
+    if (loadedFeatureCount === 0 && typeof process !== 'undefined' && process.env?.NODE_ENV === 'development') {
+      console.warn('[CampaignPrepMap] No world features loaded at current zoom/bounds');
+    }
     } catch (error) {
       console.error("[CampaignPrepMap] Failed to load world layers", error);
       handleMapError("Unable to load world data for this map.");

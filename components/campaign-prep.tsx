@@ -628,6 +628,7 @@ export function CampaignPrep({
         onFeatureSelected={setFeatureDetails}
         highlightPoint={highlightPoint}
         regions={regions}
+        className="h-[70vh]"
         onError={(message) => {
           toast.error(message);
         }}
