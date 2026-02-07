@@ -15,13 +15,13 @@ const DEFAULT_ROUTE_STYLE = new Style({
 });
 
 const ROUTE_STYLE_CONFIG: Record<string, { minZoom: number; styles: Style[] }> = {
-  trade: {
+  royal: {
     minZoom: 2,
     styles: [
       new Style({
         stroke: new Stroke({
           color: '#C084FC',
-          width: 3,
+          width: 3.5,
           lineCap: 'round',
           lineJoin: 'round'
         })
@@ -37,13 +37,40 @@ const ROUTE_STYLE_CONFIG: Record<string, { minZoom: number; styles: Style[] }> =
       })
     ]
   },
-  pilgrimage: {
+  majorSea: {
     minZoom: 2,
     styles: [
       new Style({
         stroke: new Stroke({
-          color: '#10B981',
+          color: '#38BDF8',
+          width: 3,
+          lineCap: 'round',
+          lineJoin: 'round',
+          lineDash: [8, 6]
+        })
+      })
+    ]
+  },
+  regional: {
+    minZoom: 4,
+    styles: [
+      new Style({
+        stroke: new Stroke({
+          color: '#A78BFA',
           width: 2.5,
+          lineCap: 'round',
+          lineJoin: 'round'
+        })
+      })
+    ]
+  },
+  market: {
+    minZoom: 5,
+    styles: [
+      new Style({
+        stroke: new Stroke({
+          color: '#10B981',
+          width: 2,
           lineCap: 'round',
           lineJoin: 'round',
           lineDash: [6, 8]
@@ -51,30 +78,29 @@ const ROUTE_STYLE_CONFIG: Record<string, { minZoom: number; styles: Style[] }> =
       })
     ]
   },
-  naval: {
-    minZoom: 2,
+  local: {
+    minZoom: 7,
     styles: [
       new Style({
         stroke: new Stroke({
-          color: '#38BDF8',
-          width: 2.5,
+          color: '#D2B48C',
+          width: 1.5,
           lineCap: 'round',
-          lineJoin: 'round',
-          lineDash: [4, 6]
+          lineJoin: 'round'
         })
       })
     ]
   },
   footpath: {
-    minZoom: 6,
+    minZoom: 7,
     styles: [
       new Style({
         stroke: new Stroke({
           color: '#D2B48C',
-          width: 2.0,
+          width: 1.5,
           lineCap: 'round',
           lineJoin: 'round',
-          lineDash: [1, 8]
+          lineDash: [2, 6]
         })
       })
     ]
@@ -120,8 +146,7 @@ const MARKER_TYPE_ICONS: Record<string, string> = {
 
 export const LABEL_VISIBILITY = {
   burgs: 3,
-  // Relax marker visibility to appear earlier while keeping labels readable
-  markers: 4,
+  markers: 7,
   campaignLocations: 7,
   pins: 6
 } as const;
@@ -239,8 +264,8 @@ export const createRouteStyleFactory = (getZoomForResolution: ZoomResolver) => {
       return config.styles;
     }
 
-    // Relax default route visibility to start at zoom 2
-    return (zoom as number) >= 2 ? DEFAULT_ROUTE_STYLES : undefined;
+    // Unknown route types appear at zoom 5
+    return (zoom as number) >= 5 ? DEFAULT_ROUTE_STYLES : undefined;
   };
 };
 

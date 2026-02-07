@@ -18,6 +18,7 @@ import type { Coordinate } from "ol/coordinate";
 import type MapBrowserEvent from "ol/MapBrowserEvent";
 //import type { MapBrowserEvent } from 'ol';
 import { toast } from "sonner";
+import { ZoomIn, ZoomOut } from "lucide-react";
 
 import { mapDataLoader, type WorldMapBounds } from "./map-data-loader";
 import { PIXEL_PROJECTION_CODE, questablesProjection, updateProjectionExtent, DEFAULT_PIXEL_EXTENT } from "./map-projection";
@@ -317,10 +318,13 @@ export function CampaignPrepMap({
     useLayerVisibility(INITIAL_LAYER_VISIBILITY);
   const [isDrawingRegion, setIsDrawingRegion] = useState(false);
   const [selectedFeature, setSelectedFeature] = useState<MapFeatureDetails | null>(null);
+  const [currentZoom, setCurrentZoom] = useState(2);
+  const currentZoomRef = useRef(2);
 
   const [hoverInfo, setHoverInfo] = useState<{
     title: string;
     subtitle: string | null;
+    details: string[] | null;
     screenX: number;
     screenY: number;
   } | null>(null);
@@ -627,6 +631,44 @@ export function CampaignPrepMap({
     markersLayerRef.current?.setVisible(layerVisibility.markers);
     cellsLayerRef.current?.setVisible(layerVisibility.cells);
   }, [layerVisibility]);
+
+  const handleZoomChange = useCallback(() => {
+    const view = mapInstanceRef.current?.getView();
+    if (!view) return;
+
+    const zoom = view.getZoom() || 0;
+    setCurrentZoom(Math.round(zoom));
+    currentZoomRef.current = zoom;
+
+    // Auto-enable/disable cells layer based on zoom
+    if (zoom >= 10 && !layerVisibility.cells) {
+      toggleLayer("cells", true);
+    } else if (zoom < 8 && layerVisibility.cells) {
+      toggleLayer("cells", false);
+    }
+
+    // Re-render layers so zoom-dependent style rules take effect
+    burgLayerRef.current?.changed();
+    routesLayerRef.current?.changed();
+    markersLayerRef.current?.changed();
+  }, [layerVisibility.cells, toggleLayer]);
+
+  const zoomIn = useCallback(() => {
+    const view = mapInstanceRef.current?.getView();
+    if (view) {
+      view.animate({ zoom: (view.getZoom() || 0) + 1, duration: 250 });
+    }
+  }, []);
+
+  const zoomOut = useCallback(() => {
+    const view = mapInstanceRef.current?.getView();
+    if (view) {
+      const current = view.getZoom() || 0;
+      const minZoom = view.getMinZoom();
+      const next = current - 1;
+      view.animate({ zoom: next < minZoom ? minZoom : next, duration: 250 });
+    }
+  }, []);
 
   const startRegionDraw = useCallback((seedContext: MapContextDetails) => {
     if (!mapInstanceRef.current) return;
@@ -1174,12 +1216,52 @@ const initializeMap = useCallback(() => {
         feature.get("name") ??
         featureTypeFromProperties(feature) ??
         "Feature";
-      const typeLabel = featureTypeFromProperties(feature);
+      const layerType = featureTypeFromProperties(feature);
+      const subtype = data && typeof data === "object" && "type" in data && typeof data.type === "string"
+        ? data.type.trim()
+        : null;
+      let typeLabel: string | null;
+      if (layerType === "burg" && data && typeof data === "object") {
+        const pop = Number(data.population ?? data.populationraw ?? 0);
+        const isCapital = Boolean(data.capital);
+        const isPort = Boolean(data.port);
+        const size = pop >= 10000 ? "city" : pop >= 1000 ? "town" : pop >= 250 ? "village" : "hamlet";
+        if (isCapital) {
+          typeLabel = "Capital";
+        } else if (isPort && size === "village") {
+          typeLabel = "Fishing village";
+        } else if (isPort && size === "hamlet") {
+          typeLabel = "Fishing hamlet";
+        } else if (isPort) {
+          typeLabel = `Port ${size}`;
+        } else {
+          typeLabel = size[0].toUpperCase() + size.slice(1);
+        }
+      } else if (subtype && layerType && subtype !== layerType) {
+        typeLabel = subtype[0].toUpperCase() + subtype.slice(1) + " " + layerType;
+      } else {
+        typeLabel = subtype ?? layerType;
+        if (typeLabel) typeLabel = typeLabel[0].toUpperCase() + typeLabel.slice(1);
+      }
+
+      let details: string[] | null = null;
+      if (layerType === "burg" && data && typeof data === "object") {
+        const lines: string[] = [];
+        const pop = data.population ?? data.populationraw;
+        if (pop != null) lines.push(`Pop. ${Number(pop).toLocaleString()}`);
+        if (data.elevation != null) lines.push(`Elev. ${data.elevation}`);
+        if (data.temperature != null) lines.push(`Temp. ${data.temperature}`);
+        if (data.culture) lines.push(String(data.culture));
+        if (data.religion) lines.push(String(data.religion));
+        if (lines.length > 0) details = lines;
+      }
+
       map.getTargetElement().style.cursor = "pointer";
 
       setHoverInfo({
         title,
-        subtitle: typeLabel ? typeLabel[0].toUpperCase() + typeLabel.slice(1) : null,
+        subtitle: typeLabel,
+        details,
         screenX: event.pixel[0],
         screenY: event.pixel[1],
       });
@@ -1277,6 +1359,11 @@ const initializeMap = useCallback(() => {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  const handleZoomChangeRef = useRef(handleZoomChange);
+  useEffect(() => {
+    handleZoomChangeRef.current = handleZoomChange;
+  }, [handleZoomChange]);
+
   const contextMenuHandlerRef = useRef(handleContextMenu);
   useEffect(() => {
     contextMenuHandlerRef.current = handleContextMenu;
@@ -1325,10 +1412,15 @@ const initializeMap = useCallback(() => {
       event.stopPropagation();
       contextMenuHandlerRef.current?.(event as MouseEvent);
     };
+    const zoomChangeWrapper = () => {
+      handleZoomChangeRef.current?.();
+    };
 
+    const view = map.getView();
     map.on("pointermove", pointerMoveWrapper);
     map.on("moveend", moveEndWrapper);
     map.on("click", mapClickWrapper);
+    view.on("change:resolution", zoomChangeWrapper);
     contextTargets.forEach((target) => {
       target.addEventListener("contextmenu", contextMenuWrapper);
     });
@@ -1337,6 +1429,7 @@ const initializeMap = useCallback(() => {
       map.un("pointermove", pointerMoveWrapper);
       map.un("moveend", moveEndWrapper);
       map.un("click", mapClickWrapper);
+      view.un("change:resolution", zoomChangeWrapper);
       contextTargets.forEach((target) => {
         target.removeEventListener("contextmenu", contextMenuWrapper);
       });
@@ -1648,6 +1741,15 @@ const initializeMap = useCallback(() => {
                 <span className="capitalize">{layerKey}</span>
               </label>
             ))}
+            <div className="flex items-center gap-1 border-l pl-2">
+              <Button variant="outline" size="sm" onClick={zoomOut} className="h-7 px-2">
+                <ZoomOut className="h-3 w-3" />
+              </Button>
+              <span className="w-8 text-center text-xs font-medium">{currentZoom}</span>
+              <Button variant="outline" size="sm" onClick={zoomIn} className="h-7 px-2">
+                <ZoomIn className="h-3 w-3" />
+              </Button>
+            </div>
           </div>
         </div>
       </div>
@@ -1708,6 +1810,9 @@ const initializeMap = useCallback(() => {
           >
             <div className="font-medium">{hoverInfo.title}</div>
             {hoverInfo.subtitle ? <div className="text-[10px] uppercase text-slate-300">{hoverInfo.subtitle}</div> : null}
+            {hoverInfo.details ? hoverInfo.details.map((line, i) => (
+              <div key={i} className="text-[10px] text-slate-300">{line}</div>
+            )) : null}
           </div>
         ) : null}
       </div>
