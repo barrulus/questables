@@ -115,6 +115,9 @@ interface WorldMapSummary {
   id: string;
   name: string;
   bounds: WorldMapBounds;
+  width_pixels?: number | null;
+  height_pixels?: number | null;
+  meters_per_pixel?: number | null;
 }
 
 interface PopupDetails {
@@ -798,10 +801,16 @@ export function OpenLayersMap() {
         if (!map?.id || !map?.bounds) {
           return null;
         }
+        const wp = Number(map.width_pixels);
+        const hp = Number(map.height_pixels);
+        const mpp = Number(map.meters_per_pixel);
         return {
           id: String(map.id),
           name: typeof map.name === 'string' && map.name.trim() ? map.name : 'World Map',
           bounds: map.bounds as WorldMapBounds,
+          width_pixels: Number.isFinite(wp) && wp > 0 ? wp : null,
+          height_pixels: Number.isFinite(hp) && hp > 0 ? hp : null,
+          meters_per_pixel: Number.isFinite(mpp) && mpp > 0 ? mpp : null,
         } as WorldMapSummary;
       })
       .filter((map): map is WorldMapSummary => Boolean(map));
@@ -923,7 +932,16 @@ export function OpenLayersMap() {
       return;
     }
 
-    const newSource = createQuestablesTileSource(tileSet, worldBounds);
+    const pixelDims =
+      currentWorldMap?.width_pixels && currentWorldMap?.height_pixels && currentWorldMap?.meters_per_pixel
+        ? {
+            widthPixels: currentWorldMap.width_pixels,
+            heightPixels: currentWorldMap.height_pixels,
+            metersPerPixel: currentWorldMap.meters_per_pixel,
+          }
+        : null;
+
+    const newSource = createQuestablesTileSource(tileSet, worldBounds, pixelDims);
     baseLayerRef.current.setSource(newSource);
     updateViewExtent(worldBounds);
     applyTileSetConstraints(tileSet);

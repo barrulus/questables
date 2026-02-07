@@ -56,6 +56,9 @@ interface WorldMapRecord {
     east: number;
     west: number;
   };
+  width_pixels?: number | null;
+  height_pixels?: number | null;
+  meters_per_pixel?: number | null;
 }
 
 type MapLocationKind = "pin" | "burg" | "marker" | "region";
@@ -242,10 +245,17 @@ export function CampaignPrep({
         throw new Error("World map is missing bounds; regenerate the map metadata before using the prep view.");
       }
 
+      const widthPixels = Number(payload.width_pixels);
+      const heightPixels = Number(payload.height_pixels);
+      const metersPerPixel = Number(payload.meters_per_pixel);
+
       setWorldMap({
         id: String(payload.id ?? campaign.world_map_id),
         name: typeof payload.name === "string" && payload.name.trim() ? String(payload.name) : "World Map",
         bounds,
+        width_pixels: Number.isFinite(widthPixels) && widthPixels > 0 ? widthPixels : null,
+        height_pixels: Number.isFinite(heightPixels) && heightPixels > 0 ? heightPixels : null,
+        meters_per_pixel: Number.isFinite(metersPerPixel) && metersPerPixel > 0 ? metersPerPixel : null,
       });
     } catch (error) {
       setWorldMapError(error instanceof Error ? error.message : "Failed to load world map");

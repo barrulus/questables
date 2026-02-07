@@ -80,6 +80,9 @@ interface BaseWorldMap {
   id: string;
   name: string;
   bounds: WorldMapBounds;
+  width_pixels?: number | null;
+  height_pixels?: number | null;
+  meters_per_pixel?: number | null;
 }
 
 export interface MapFeatureDetails {
@@ -963,11 +966,20 @@ const initializeMap = useCallback(() => {
         );
       }
 
+      const pixelDims =
+        worldMap.width_pixels && worldMap.height_pixels && worldMap.meters_per_pixel
+          ? {
+              widthPixels: worldMap.width_pixels,
+              heightPixels: worldMap.height_pixels,
+              metersPerPixel: worldMap.meters_per_pixel,
+            }
+          : null;
+
       refreshTileLayerSource({
         baseLayer: baseLayerRef.current,
         tileSet,
         worldBounds: worldMap.bounds,
-        createSource: createQuestablesTileSource,
+        createSource: (ts, bounds) => createQuestablesTileSource(ts, bounds, pixelDims),
         applyConstraints: (config) => applyTileSetConstraints(config),
         clearError: () => setMapError(null),
         onFailure: (error) => {
@@ -976,7 +988,7 @@ const initializeMap = useCallback(() => {
         },
       });
     },
-    [applyTileSetConstraints, handleMapError, worldMap.bounds],
+    [applyTileSetConstraints, handleMapError, worldMap],
   );
 
   const loadWorldLayers = useCallback(async () => {
@@ -1034,31 +1046,31 @@ const initializeMap = useCallback(() => {
       {
         type: "burgs",
         visible: layerVisibility.burgs,
-        loader: mapDataLoader.loadBurgs,
+        loader: (id, b) => mapDataLoader.loadBurgs(id, b),
         layerRef: burgLayerRef,
       },
       {
         type: "routes",
         visible: layerVisibility.routes,
-        loader: mapDataLoader.loadRoutes,
+        loader: (id, b) => mapDataLoader.loadRoutes(id, b),
         layerRef: routesLayerRef,
       },
       {
         type: "rivers",
         visible: layerVisibility.rivers,
-        loader: mapDataLoader.loadRivers,
+        loader: (id, b) => mapDataLoader.loadRivers(id, b),
         layerRef: riversLayerRef,
       },
       {
         type: "markers",
         visible: layerVisibility.markers,
-        loader: mapDataLoader.loadMarkers,
+        loader: (id, b) => mapDataLoader.loadMarkers(id, b),
         layerRef: markersLayerRef,
       },
       {
         type: "cells",
         visible: layerVisibility.cells,
-        loader: mapDataLoader.loadCells,
+        loader: (id, b) => mapDataLoader.loadCells(id, b),
         layerRef: cellsLayerRef,
       },
     ];

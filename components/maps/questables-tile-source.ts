@@ -14,11 +14,18 @@ export interface TileSetConfig {
   wrapX?: boolean;
 }
 
+export interface PixelDimensions {
+  widthPixels: number;
+  heightPixels: number;
+  metersPerPixel: number;
+}
+
 const DEFAULT_TILE_SIZE = 256;
 
 export const createQuestablesTileSource = (
   tileSet: TileSetConfig,
   worldBounds?: WorldMapBounds | null,
+  pixelDimensions?: PixelDimensions | null,
 ) => {
   const minZoom = Number.isFinite(tileSet?.min_zoom)
     ? Math.max(0, Math.floor(Number(tileSet.min_zoom)))
@@ -31,14 +38,34 @@ export const createQuestablesTileSource = (
     ? Math.max(1, Number(tileSet.tile_size))
     : DEFAULT_TILE_SIZE;
 
-  const extent = updateProjectionExtent(worldBounds ?? null);
-  const width = extent[2] - extent[0];
+  const projectionExtent = updateProjectionExtent(worldBounds ?? null);
+
+  // Tile images cover the full SVG area, which may be larger than the content
+  // bounds stored in the DB. Use pixel dimensions to compute the true tile
+  // extent when available; otherwise fall back to the projection extent.
+  const tileExtent: [number, number, number, number] =
+    pixelDimensions &&
+    Number.isFinite(pixelDimensions.widthPixels) &&
+    Number.isFinite(pixelDimensions.heightPixels) &&
+    Number.isFinite(pixelDimensions.metersPerPixel) &&
+    pixelDimensions.widthPixels > 0 &&
+    pixelDimensions.heightPixels > 0 &&
+    pixelDimensions.metersPerPixel > 0
+      ? [
+          0,
+          -(pixelDimensions.heightPixels * pixelDimensions.metersPerPixel),
+          pixelDimensions.widthPixels * pixelDimensions.metersPerPixel,
+          0,
+        ]
+      : projectionExtent;
+
+  const width = tileExtent[2] - tileExtent[0];
 
   const resolutions = Array.from({ length: maxZoom + 1 }, (_, z) => width / tileSize / Math.pow(2, z));
 
   const tileGrid = new TileGrid({
-    extent,
-    origin: [extent[0], extent[3]],
+    extent: tileExtent,
+    origin: [tileExtent[0], tileExtent[3]],
     resolutions,
     tileSize
   });
