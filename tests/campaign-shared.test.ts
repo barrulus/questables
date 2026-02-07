@@ -181,7 +181,7 @@ describe("buildCampaignUpdatePayload", () => {
 
   const snapshotFrom = (overrides: Partial<CampaignEditSnapshot> = {}): CampaignEditSnapshot => ({
     name: baseCampaign.name,
-    description: baseCampaign.description,
+    description: baseCampaign.description ?? "",
     system: baseCampaign.system,
     setting: baseCampaign.setting,
     status: baseCampaign.status,

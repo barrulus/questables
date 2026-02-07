@@ -1644,7 +1644,7 @@ export function ObjectivesPanel({ campaign, canEdit, worldMap, worldMapLoading, 
                     assistStates={disabledAssistState}
                     onRequestAssist={() => {}}
                     assistDisabledReason="Save the objective before requesting an LLM assist."
-                    locationSummary={null}
+                    locationSummary={undefined}
                   />
                 </AccordionContent>
               </AccordionItem>

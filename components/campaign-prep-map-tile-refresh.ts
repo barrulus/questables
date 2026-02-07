@@ -27,7 +27,7 @@ export const refreshTileLayerSource = ({
   try {
     if (tileSet) {
       const source = createSource(tileSet, worldBounds);
-      baseLayer.setSource(source);
+      baseLayer.setSource(source as Parameters<NonNullable<RefreshTileLayerOptions['baseLayer']>['setSource']>[0]);
       baseLayer.setVisible(true);
       baseLayer.setOpacity(1);
       baseLayer.changed();

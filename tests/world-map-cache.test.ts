@@ -6,10 +6,7 @@ import {
   setWorldMapListFetcher,
 } from "../utils/world-map-cache";
 type ListWorldMapsFn = typeof import("../utils/api/maps")["listWorldMaps"];
-type ListWorldMapsArgs = Parameters<ListWorldMapsFn>;
-type ListWorldMapsReturn = ReturnType<ListWorldMapsFn>;
-
-const mockListWorldMaps = jest.fn<ListWorldMapsReturn, ListWorldMapsArgs>();
+const mockListWorldMaps = jest.fn<ListWorldMapsFn>();
 
 describe("world map cache", () => {
   beforeEach(() => {
@@ -57,7 +54,7 @@ describe("world map cache", () => {
       { id: "", name: "Missing id" },
       { id: "missing-name" },
       null,
-    ] as unknown[]);
+    ] as any);
 
     const results = await loadWorldMapSummaries();
     expect(results).toEqual([{ id: "valid-id", name: "Valid Map", description: null }]);

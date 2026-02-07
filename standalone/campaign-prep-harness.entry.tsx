@@ -58,21 +58,23 @@ function useWorld() {
   return state;
 }
 
+type ControlsState = {
+  useGrid: boolean;
+  wrapInCard: boolean;
+  addObjectivesPanel: boolean;
+  useProviders: boolean;
+  addSessionManager: boolean;
+  useCampaignPrep: boolean;
+  dmActions: boolean;
+  debugOverlays?: boolean;
+};
+
 function Controls({
   state,
   onChange,
 }: {
-  state: {
-    useGrid: boolean;
-    wrapInCard: boolean;
-    addObjectivesPanel: boolean;
-    useProviders: boolean;
-    addSessionManager: boolean;
-    useCampaignPrep: boolean;
-    dmActions: boolean;
-    debugOverlays?: boolean;
-  };
-  onChange: (_partial: Partial<Controls['state']>) => void;
+  state: ControlsState;
+  onChange: (_partial: Partial<ControlsState>) => void;
 }) {
   return (
     <div style={{ padding: 12, borderBottom: '1px solid var(--border, #e5e7eb)', display: 'flex', gap: 16, flexWrap: 'wrap' }}>

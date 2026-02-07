@@ -1379,35 +1379,35 @@ export function OpenLayersMap() {
     // Vector layers for different data types
     const burgsLayer = new VectorLayer<GeometrySource>({
       source: new VectorSource<GeometryFeature>({ wrapX: false }),
-      style: (feature, resolution) => getBurgStyleRef.current(feature, resolution),
+      style: (feature, resolution) => getBurgStyleRef.current(asGeometryFeature(feature), resolution),
       visible: initialVisibility.burgs
     });
     burgsLayerRef.current = burgsLayer;
 
     const routesLayer = new VectorLayer<GeometrySource>({
       source: new VectorSource<GeometryFeature>({ wrapX: false }),
-      style: (feature, resolution) => getRouteStyleRef.current(feature, resolution),
+      style: (feature, resolution) => getRouteStyleRef.current(asGeometryFeature(feature), resolution),
       visible: initialVisibility.routes
     });
     routesLayerRef.current = routesLayer;
 
     const riversLayer = new VectorLayer<GeometrySource>({
       source: new VectorSource<GeometryFeature>({ wrapX: false }),
-      style: getRiverStyle,
+      style: (feature) => getRiverStyle(asGeometryFeature(feature)),
       visible: initialVisibility.rivers
     });
     riversLayerRef.current = riversLayer;
 
     const cellsLayer = new VectorLayer<GeometrySource>({
       source: new VectorSource<GeometryFeature>({ wrapX: false }),
-      style: getCellStyle,
+      style: (feature) => getCellStyle(asGeometryFeature(feature)),
       visible: initialVisibility.cells
     });
     cellsLayerRef.current = cellsLayer;
 
     const markersLayer = new VectorLayer<GeometrySource>({
       source: new VectorSource<GeometryFeature>({ wrapX: false }),
-      style: (feature, resolution) => getMarkerStyleRef.current(feature, resolution),
+      style: (feature, resolution) => getMarkerStyleRef.current(asGeometryFeature(feature), resolution),
       visible: initialVisibility.markers
     });
     markersLayerRef.current = markersLayer;

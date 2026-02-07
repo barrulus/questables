@@ -946,7 +946,6 @@ export function CampaignPrep({
                   <div className="space-y-2">
                     <Label htmlFor="objective-location-kind">Link as</Label>
                     <Select
-                      id="objective-location-kind"
                       value={objectiveLocationKind}
                       onValueChange={(value) => setObjectiveLocationKind(value as MapLocationKind)}
                     >

@@ -31,16 +31,11 @@ await jest.unstable_mockModule("ol/View", () => {
   private zoom: number;
   private extent: [number, number, number, number];
   private fitCount: number;
-  private minZoom: number;
-  private maxZoom: number;
-
   constructor(options: { center?: [number, number]; zoom?: number; extent?: [number, number, number, number] }) {
     this.center = options.center ?? [0, 0];
     this.zoom = options.zoom ?? 0;
     this.extent = options.extent ?? [0, 0, 100, 100];
     this.fitCount = 0;
-    this.minZoom = 0;
-    this.maxZoom = 20;
     globalThis.__mockViewInstance = this;
   }
 
@@ -88,13 +83,9 @@ await jest.unstable_mockModule("ol/View", () => {
 
   animate() {}
 
-  setMinZoom(value: number) {
-    this.minZoom = value;
-  }
+  setMinZoom(_value: number) {}
 
-  setMaxZoom(value: number) {
-    this.maxZoom = value;
-  }
+  setMaxZoom(_value: number) {}
 }
 
   return {
@@ -536,7 +527,7 @@ await jest.unstable_mockModule("../components/ui/loading-spinner", () => ({
 }));
 
 const { CampaignPrepMap } = await import("../components/campaign-prep-map");
-const mockedMapDataLoader = (await import("../components/map-data-loader")).mapDataLoader as {
+const mockedMapDataLoader = (await import("../components/map-data-loader")).mapDataLoader as unknown as {
   loadTileSets: jest.Mock;
   getBoundsFromExtent: jest.Mock;
   getDataTypesForZoom: jest.Mock;
@@ -642,7 +633,7 @@ describe("CampaignPrepMap viewport cache", () => {
     const loadBurgsMock = mockedMapDataLoader.loadBurgs;
     const dataTypesMock = mockedMapDataLoader.getDataTypesForZoom;
 
-    loadBurgsMock.mockResolvedValue([]);
+    loadBurgsMock.mockResolvedValue([] as never);
     dataTypesMock.mockReturnValue(["burgs"]);
 
     const renderResult = render(<CampaignPrepMap {...baseProps} />);

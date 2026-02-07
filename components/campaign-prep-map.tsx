@@ -1121,7 +1121,7 @@ const initializeMap = useCallback(() => {
   }, [handleMapError, worldMap.id, worldMap.bounds]);
 
   const handleMapClick = useCallback(
-    (event: MapBrowserEvent<UIEvent>) => {
+    (event: MapBrowserEvent) => {
 
       closeContextMenu();
 
@@ -1156,7 +1156,7 @@ const initializeMap = useCallback(() => {
   );
 
   const handlePointerMove = useCallback(
-    (event: MapBrowserEvent<UIEvent>) => {
+    (event: MapBrowserEvent) => {
       const map = mapInstanceRef.current;
       if (!map) return;
 
@@ -1314,7 +1314,7 @@ const initializeMap = useCallback(() => {
     }
     contextTargets.add(container);
 
-    const pointerMoveWrapper = (event: MapBrowserEvent<UIEvent>) => {
+    const pointerMoveWrapper = (event: MapBrowserEvent) => {
       pointerMoveHandlerRef.current?.(event);
     };
     const moveEndWrapper = () => {
@@ -1334,12 +1334,12 @@ const initializeMap = useCallback(() => {
         loadWorldLayersHandlerRef.current?.();
       }
     };
-    const mapClickWrapper = (event: MapBrowserEvent<UIEvent>) => {
+    const mapClickWrapper = (event: MapBrowserEvent) => {
       mapClickHandlerRef.current?.(event);
     };
-    const contextMenuWrapper = (event: MouseEvent) => {
+    const contextMenuWrapper = (event: Event) => {
       event.stopPropagation();
-      contextMenuHandlerRef.current?.(event);
+      contextMenuHandlerRef.current?.(event as MouseEvent);
     };
 
     map.on("pointermove", pointerMoveWrapper);

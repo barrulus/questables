@@ -13,10 +13,10 @@ const createMockTileLayer = (): jest.Mocked<TileLayer> =>
 
 describe("refreshTileLayerSource", () => {
   const worldBounds = {
-    minX: 0,
-    minY: 0,
-    maxX: 10,
-    maxY: 10,
+    west: 0,
+    south: 0,
+    east: 10,
+    north: 10,
   };
 
   const tileSet = {

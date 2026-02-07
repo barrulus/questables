@@ -32,6 +32,7 @@ import {
   updateCampaign,
   type CampaignLevelRange,
   type CreateCampaignRequest,
+  type UpdateCampaignRequest,
 } from "../utils/api-client";
 import {
   Campaign,

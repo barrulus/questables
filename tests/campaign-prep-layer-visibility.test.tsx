@@ -48,7 +48,7 @@ describe("useLayerVisibility", () => {
       expect(controller).not.toBeNull();
     });
 
-    expect(controller?.visibility).toEqual(baseState);
+    expect((controller as VisibilityController | null)?.visibility).toEqual(baseState);
 
     await act(async () => {
       controller?.toggle("rivers");
