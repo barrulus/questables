@@ -13,7 +13,6 @@ import Draw from "ol/interaction/Draw";
 import type { DrawEvent } from "ol/interaction/Draw";
 import { Circle as CircleStyle, Fill, Stroke, Style, Text } from "ol/style";
 import { defaults as defaultControls } from "ol/control";
-import { Overlay } from "ol";
 import { getCenter } from "ol/extent";
 import type { Coordinate } from "ol/coordinate";
 import type MapBrowserEvent from "ol/MapBrowserEvent";
@@ -307,8 +306,6 @@ export function CampaignPrepMap({
   const drawSourceRef = useRef<GeometrySource | null>(null);
   const debouncedLayerLoaderRef = useRef<DebouncedExecutor | null>(null);
   const regionSeedContextRef = useRef<MapContextDetails | null>(null);
-  const hoverOverlayRef = useRef<Overlay | null>(null);
-  const hoverElementRef = useRef<HTMLDivElement | null>(null);
   const contextMenuContainerRef = useRef<HTMLDivElement | null>(null);
 
   const [tileSets, setTileSets] = useState<QuestablesTileSetConfig[]>([]);
@@ -859,19 +856,7 @@ export function CampaignPrepMap({
       controls: defaultControls({ zoom: false, attribution: true }),
     });
   
-    const hoverElement = document.createElement("div");
-    hoverElement.className =
-      "pointer-events-none rounded-md bg-slate-900/90 text-white shadow px-3 py-1 text-xs";
-    const hoverOverlay = new Overlay({
-      element: hoverElement,
-      offset: [12, 12],
-      positioning: "bottom-left",
-    });
-    map.addOverlay(hoverOverlay);
-    
     mapInstanceRef.current = map;
-    hoverOverlayRef.current = hoverOverlay;
-    hoverElementRef.current = hoverElement;
     baseLayerRef.current = baseLayer;
     burgLayerRef.current = burgLayer;
     routesLayerRef.current = routesLayer;
@@ -1160,9 +1145,6 @@ const initializeMap = useCallback(() => {
       );
       const details = buildFeatureDetails(feature, [x, y]);
       setSelectedFeature(details);
-      if (!feature && hoverOverlayRef.current) {
-        hoverOverlayRef.current.setPosition(undefined);
-      }
     },
     [canEditSpawn, closeContextMenu, editingSpawn, isDrawingRegion, onSelectSpawn],
   );
@@ -1183,7 +1165,6 @@ const initializeMap = useCallback(() => {
       if (!feature) {
         setHoverInfo(null);
         map.getTargetElement().style.cursor = editingSpawn && canEditSpawn ? "crosshair" : "";
-        hoverOverlayRef.current?.setPosition(undefined);
         return;
       }
 
@@ -1202,16 +1183,6 @@ const initializeMap = useCallback(() => {
         screenX: event.pixel[0],
         screenY: event.pixel[1],
       });
-
-      if (hoverOverlayRef.current) {
-        const coordinate = map.getCoordinateFromPixel(event.pixel);
-        if (coordinate && coordinate.every(Number.isFinite)) {
-          hoverOverlayRef.current.setPosition(coordinate);
-          if (hoverElementRef.current) hoverElementRef.current.textContent = title;
-        } else {
-          hoverOverlayRef.current.setPosition(undefined);
-        }
-      }
     },
     [canEditSpawn, editingSpawn, isDrawingRegion],
   );
@@ -1303,7 +1274,8 @@ const initializeMap = useCallback(() => {
         debouncedLayerLoaderRef.current = null;
       }
     };
-  }, [loadWorldLayers]);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   const contextMenuHandlerRef = useRef(handleContextMenu);
   useEffect(() => {
@@ -1515,8 +1487,9 @@ const initializeMap = useCallback(() => {
 
   useEffect(() => {
     if (!mapReady) return;
-    void loadWorldLayers();
-  }, [loadWorldLayers, mapReady, selectedTileSetId, layerVisibility]);
+    loadWorldLayersHandlerRef.current?.();
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [mapReady, selectedTileSetId, layerVisibility]);
 
   useEffect(() => {
     updateSpawnFeature(spawn);
@@ -1730,7 +1703,7 @@ const initializeMap = useCallback(() => {
 
         {hoverInfo ? (
           <div
-            className="pointer-events-none fixed z-40 rounded-md bg-slate-900/90 px-3 py-1 text-xs text-white shadow"
+            className="pointer-events-none absolute z-40 rounded-md bg-slate-900/90 px-3 py-1 text-xs text-white shadow"
             style={{ left: hoverInfo.screenX + 16, top: hoverInfo.screenY + 16 }}
           >
             <div className="font-medium">{hoverInfo.title}</div>

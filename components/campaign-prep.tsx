@@ -355,6 +355,10 @@ export function CampaignPrep({
     };
   }, [burgQuery, worldMap]);
 
+  const handleMapErrorStable = useCallback((message: string) => {
+    toast.error(message);
+  }, []);
+
   const handleSelectPosition = useCallback((position: { x: number; y: number }) => {
     setPendingPosition(position);
     setNoteDraft(spawn?.note ?? "");
@@ -639,9 +643,7 @@ export function CampaignPrep({
         highlightPoint={highlightPoint}
         regions={regions}
         className="h-[70vh]"
-        onError={(message) => {
-          toast.error(message);
-        }}
+        onError={handleMapErrorStable}
       />
     );
   };
