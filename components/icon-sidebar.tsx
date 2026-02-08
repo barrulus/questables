@@ -82,7 +82,7 @@ export function IconSidebar({ activePanel, onPanelChange }: IconSidebarProps) {
   };
 
   return (
-    <div className="w-16 bg-sidebar border-r border-sidebar-border flex flex-col">
+    <div className="w-16 bg-sidebar border-r border-sidebar-border hidden md:flex flex-col">
       {/* Logo/Brand */}
       <div className="h-12 flex items-center justify-center border-b border-sidebar-border">
         <div className="w-8 h-8 bg-primary rounded flex items-center justify-center">

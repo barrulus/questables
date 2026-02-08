@@ -5,6 +5,7 @@ import {
   logError,
 } from './utils/logger.js';
 import { verifyToken } from './auth-middleware.js';
+import { getClient } from './db/pool.js';
 
 export const REALTIME_EVENTS = {
   spawnUpdated: 'spawn-updated',
@@ -111,7 +112,7 @@ class WebSocketServer {
       });
 
       // Handle chat messages
-      socket.on('chat-message', (payload) => {
+      socket.on('chat-message', async (payload) => {
         try {
           const { campaignId } = payload;
           if (!campaignId) {
@@ -120,6 +121,19 @@ class WebSocketServer {
 
           const incoming = payload?.message || {};
           const now = new Date().toISOString();
+
+          // Resolve character_name from DB to prevent spoofing
+          const characterId = incoming.characterId ?? null;
+          let characterName = null;
+          if (characterId) {
+            const client = await getClient({ label: 'ws-character-name' });
+            try {
+              const { rows } = await client.query('SELECT name FROM characters WHERE id = $1', [characterId]);
+              characterName = rows[0]?.name ?? null;
+            } finally {
+              client.release();
+            }
+          }
 
           const messageData = {
             type: 'new_message',
@@ -131,8 +145,8 @@ class WebSocketServer {
               sender_id: socket.user.id,
               sender_name: socket.user.username,
               username: socket.user.username,
-              character_id: incoming.characterId ?? null,
-              character_name: incoming.characterName || incoming.character_name || null,
+              character_id: characterId,
+              character_name: characterName,
               dice_roll: incoming.diceRoll ?? null,
               created_at: incoming.createdAt || now,
             }

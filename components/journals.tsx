@@ -3,25 +3,18 @@ import { Card, CardContent, CardHeader, CardTitle } from './ui/card';
 import { Button } from './ui/button';
 import { Badge } from './ui/badge';
 import { Input } from './ui/input';
-import { Label } from './ui/label';
 import { ScrollArea } from './ui/scroll-area';
-import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from './ui/dialog';
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from './ui/select';
+import { Dialog, DialogContent, DialogHeader, DialogTitle } from './ui/dialog';
 import { toast } from 'sonner';
 import { fetchJson } from "../utils/api-client";
-import { Alert, AlertDescription, AlertTitle } from './ui/alert';
-import { 
+import {
   ScrollText,
   Search,
   Calendar,
-  MapPin,
   Star,
   Clock,
-  FileText,
   Loader2,
-  Users,
-  Coins,
-  AlertCircle
+  Coins
 } from 'lucide-react';
 
 interface JournalEntry {
@@ -33,13 +26,7 @@ interface JournalEntry {
   date: string;
   duration?: number;
   experience_awarded?: number;
-  participants: string[];
-  locations_visited: string[];
-  npcs_encountered: string[];
   treasure_found: Array<{ name: string; description?: string }>;
-  personal_notes?: string;
-  favorite_moments?: string;
-  character_thoughts?: string;
 }
 
 interface JournalsProps {
@@ -64,7 +51,7 @@ export default function Journals({ campaignId }: JournalsProps) {
   const [journalEntries, setJournalEntries] = useState<JournalEntry[]>([]);
   const [loading, setLoading] = useState(true);
   const [searchTerm, setSearchTerm] = useState('');
-  const [filterCategory, setFilterCategory] = useState<string>('all');
+  const [detailEntry, setDetailEntry] = useState<JournalEntry | null>(null);
 
   // Load journal entries from completed sessions
   const loadJournalEntries = async () => {
@@ -92,13 +79,7 @@ export default function Journals({ campaignId }: JournalsProps) {
             date: session.ended_at || session.started_at || session.created_at,
             duration: session.duration,
             experience_awarded: session.experience_awarded,
-            participants: [], // Would need to join with session_participants
-            locations_visited: [], // Would need session-location tracking
-            npcs_encountered: [], // Would need session-npc tracking
             treasure_found: session.treasure_awarded || [],
-            personal_notes: '',
-            favorite_moments: '',
-            character_thoughts: ''
           }));
 
         setJournalEntries(completedSessions);
@@ -113,17 +94,10 @@ export default function Journals({ campaignId }: JournalsProps) {
     }
   };
 
-  // Filter entries based on search and category
+  // Filter entries based on search
   const filteredEntries = journalEntries.filter(entry => {
-    const matchesSearch = entry.session_title.toLowerCase().includes(searchTerm.toLowerCase()) ||
-                         entry.summary?.toLowerCase().includes(searchTerm.toLowerCase()) ||
-                         entry.personal_notes?.toLowerCase().includes(searchTerm.toLowerCase());
-    
-    const matchesCategory = filterCategory === 'all' || 
-                           (filterCategory === 'with_notes' && (entry.personal_notes || entry.favorite_moments || entry.character_thoughts)) ||
-                           (filterCategory === 'without_notes' && !entry.personal_notes && !entry.favorite_moments && !entry.character_thoughts);
-    
-    return matchesSearch && matchesCategory;
+    return entry.session_title.toLowerCase().includes(searchTerm.toLowerCase()) ||
+           entry.summary?.toLowerCase().includes(searchTerm.toLowerCase());
   });
 
   // Format date for display
@@ -182,29 +156,17 @@ export default function Journals({ campaignId }: JournalsProps) {
           </div>
         </CardHeader>
         <CardContent>
-          {/* Search and Filter */}
-          <div className="flex gap-4 mb-6">
-            <div className="flex-1">
-              <div className="relative">
-                <Search className="absolute left-3 top-3 h-4 w-4 text-muted-foreground" />
-                <Input
-                  placeholder="Search journal entries..."
-                  value={searchTerm}
-                  onChange={(e) => setSearchTerm(e.target.value)}
-                  className="pl-9"
-                />
-              </div>
+          {/* Search */}
+          <div className="mb-6">
+            <div className="relative">
+              <Search className="absolute left-3 top-3 h-4 w-4 text-muted-foreground" />
+              <Input
+                placeholder="Search journal entries..."
+                value={searchTerm}
+                onChange={(e) => setSearchTerm(e.target.value)}
+                className="pl-9"
+              />
             </div>
-            <Select value={filterCategory} onValueChange={setFilterCategory}>
-              <SelectTrigger className="w-48">
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="all">All Entries</SelectItem>
-                <SelectItem value="with_notes">With Personal Notes</SelectItem>
-                <SelectItem value="without_notes">Without Personal Notes</SelectItem>
-              </SelectContent>
-            </Select>
           </div>
 
           {/* Journal Entries */}
@@ -247,173 +209,14 @@ export default function Journals({ campaignId }: JournalsProps) {
                             )}
                           </div>
                         </div>
-                        <div className="flex gap-2">
-                          {(entry.personal_notes || entry.favorite_moments || entry.character_thoughts) && (
-                            <Badge variant="secondary" className="text-xs">
-                              <FileText className="w-3 h-3 mr-1" />
-                              Personal Notes
-                            </Badge>
-                          )}
-                          <Dialog>
-                            <DialogTrigger asChild>
-                              <Button variant="ghost" size="sm">
-                                View Details
-                              </Button>
-                            </DialogTrigger>
-                            <DialogContent className="max-w-2xl max-h-[80vh] overflow-y-auto">
-                              <DialogHeader>
-                                <DialogTitle>
-                                  Session {entry.session_number}: {entry.session_title}
-                                </DialogTitle>
-                              </DialogHeader>
-                              
-                              <div className="space-y-6">
-                                {/* Session Summary */}
-                                <div>
-                                  <h4 className="font-medium mb-2 flex items-center gap-2">
-                                    <ScrollText className="w-4 h-4" />
-                                    Session Summary
-                                  </h4>
-                                  <div className="bg-muted p-3 rounded-lg">
-                                    <p className="text-sm">
-                                      {entry.summary || 'No session summary available.'}
-                                    </p>
-                                  </div>
-                                  
-                                  <div className="grid grid-cols-3 gap-4 mt-4 text-sm">
-                                    <div>
-                                      <strong>Date:</strong>
-                                      <p className="text-muted-foreground">{formatDate(entry.date)}</p>
-                                    </div>
-                                    {entry.duration && (
-                                      <div>
-                                        <strong>Duration:</strong>
-                                        <p className="text-muted-foreground">{formatDuration(entry.duration)}</p>
-                                      </div>
-                                    )}
-                                    {entry.experience_awarded && (
-                                      <div>
-                                        <strong>Experience Awarded:</strong>
-                                        <p className="text-muted-foreground">{entry.experience_awarded} XP</p>
-                                      </div>
-                                    )}
-                                  </div>
-                                </div>
-
-                                {/* Session Data */}
-                                <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-                                  {entry.locations_visited.length > 0 && (
-                                    <div>
-                                      <h4 className="font-medium mb-2 flex items-center gap-2">
-                                        <MapPin className="w-4 h-4" />
-                                        Locations
-                                      </h4>
-                                      <ul className="space-y-1 text-sm">
-                                        {entry.locations_visited.map((location, index) => (
-                                          <li key={index} className="text-muted-foreground">
-                                            • {location}
-                                          </li>
-                                        ))}
-                                      </ul>
-                                    </div>
-                                  )}
-
-                                  {entry.npcs_encountered.length > 0 && (
-                                    <div>
-                                      <h4 className="font-medium mb-2 flex items-center gap-2">
-                                        <Users className="w-4 h-4" />
-                                        NPCs Met
-                                      </h4>
-                                      <ul className="space-y-1 text-sm">
-                                        {entry.npcs_encountered.map((npc, index) => (
-                                          <li key={index} className="text-muted-foreground">
-                                            • {npc}
-                                          </li>
-                                        ))}
-                                      </ul>
-                                    </div>
-                                  )}
-
-                                  {entry.treasure_found.length > 0 && (
-                                    <div>
-                                      <h4 className="font-medium mb-2 flex items-center gap-2">
-                                        <Coins className="w-4 h-4" />
-                                        Treasure
-                                      </h4>
-                                      <ul className="space-y-1 text-sm">
-                                        {entry.treasure_found.map((item, index) => (
-                                          <li key={index} className="text-muted-foreground">
-                                            • {item.name} - {item.description}
-                                          </li>
-                                        ))}
-                                      </ul>
-                                    </div>
-                                  )}
-                                </div>
-
-                                {/* Personal Notes Section */}
-                                <div>
-                                  <h4 className="font-medium mb-2 flex items-center gap-2">
-                                    <FileText className="w-4 h-4" />
-                                    Personal Notes
-                                  </h4>
-                                  <Alert className="mb-4">
-                                    <AlertCircle className="w-4 h-4" />
-                                    <AlertTitle>Personal journaling pending backend support</AlertTitle>
-                                    <AlertDescription>
-                                      Editing and persisting personal notes is blocked until the journaling API
-                                      is delivered. Existing entries are read-only snapshots from completed
-                                      sessions.
-                                    </AlertDescription>
-                                  </Alert>
-
-                                  <div className="space-y-4">
-                                    <div>
-                                      <Label className="text-sm font-medium">Personal Reflections</Label>
-                                      <div className="bg-muted p-3 rounded-lg">
-                                        <p className="text-sm text-muted-foreground whitespace-pre-line">
-                                          {entry.personal_notes || 'No personal reflections recorded.'}
-                                        </p>
-                                      </div>
-                                    </div>
-
-                                    <div>
-                                      <Label className="text-sm font-medium">Favorite Moments</Label>
-                                      <div className="bg-muted p-3 rounded-lg">
-                                        <p className="text-sm text-muted-foreground whitespace-pre-line">
-                                          {entry.favorite_moments || 'No favorite moments recorded.'}
-                                        </p>
-                                      </div>
-                                    </div>
-
-                                    <div>
-                                      <Label className="text-sm font-medium">Character Thoughts</Label>
-                                      <div className="bg-muted p-3 rounded-lg">
-                                        <p className="text-sm text-muted-foreground whitespace-pre-line">
-                                          {entry.character_thoughts || 'No character thoughts recorded.'}
-                                        </p>
-                                      </div>
-                                    </div>
-                                  </div>
-                                </div>
-                              </div>
-                            </DialogContent>
-                          </Dialog>
-                        </div>
+                        <Button variant="ghost" size="sm" onClick={() => setDetailEntry(entry)}>
+                          View Details
+                        </Button>
                       </div>
                       
                       <p className="text-sm text-muted-foreground line-clamp-2 mt-2">
                         {entry.summary || 'No session summary available.'}
                       </p>
-                      
-                      {(entry.personal_notes || entry.favorite_moments || entry.character_thoughts) && (
-                        <div className="mt-3 p-2 bg-muted rounded text-xs">
-                          <div className="flex items-center gap-1 text-muted-foreground">
-                            <FileText className="w-3 h-3" />
-                            <span>Personal notes added</span>
-                          </div>
-                        </div>
-                      )}
                     </CardContent>
                   </Card>
                 ))
@@ -422,6 +225,67 @@ export default function Journals({ campaignId }: JournalsProps) {
           </ScrollArea>
         </CardContent>
       </Card>
+
+      {/* Journal Detail Dialog */}
+      <Dialog open={Boolean(detailEntry)} onOpenChange={(open) => { if (!open) setDetailEntry(null); }}>
+        <DialogContent className="max-w-2xl max-h-[85vh] overflow-y-auto">
+          {detailEntry && (
+            <>
+              <DialogHeader>
+                <DialogTitle>
+                  Session {detailEntry.session_number}: {detailEntry.session_title}
+                </DialogTitle>
+              </DialogHeader>
+
+              <div className="space-y-6">
+                <div>
+                  <h4 className="font-medium mb-2 flex items-center gap-2">
+                    <ScrollText className="w-4 h-4" />
+                    Session Summary
+                  </h4>
+                  <div className="bg-muted p-3 rounded-lg">
+                    <p className="text-sm">{detailEntry.summary || 'No session summary available.'}</p>
+                  </div>
+                  <div className="grid grid-cols-3 gap-4 mt-4 text-sm">
+                    <div>
+                      <strong>Date:</strong>
+                      <p className="text-muted-foreground">{formatDate(detailEntry.date)}</p>
+                    </div>
+                    {detailEntry.duration && (
+                      <div>
+                        <strong>Duration:</strong>
+                        <p className="text-muted-foreground">{formatDuration(detailEntry.duration)}</p>
+                      </div>
+                    )}
+                    {detailEntry.experience_awarded && (
+                      <div>
+                        <strong>Experience Awarded:</strong>
+                        <p className="text-muted-foreground">{detailEntry.experience_awarded} XP</p>
+                      </div>
+                    )}
+                  </div>
+                </div>
+
+                {detailEntry.treasure_found.length > 0 && (
+                  <div>
+                    <h4 className="font-medium mb-2 flex items-center gap-2">
+                      <Coins className="w-4 h-4" />
+                      Treasure Found
+                    </h4>
+                    <ul className="space-y-1 text-sm">
+                      {detailEntry.treasure_found.map((item, index) => (
+                        <li key={index} className="text-muted-foreground">
+                          &bull; {item.name}{item.description ? ` - ${item.description}` : ''}
+                        </li>
+                      ))}
+                    </ul>
+                  </div>
+                )}
+              </div>
+            </>
+          )}
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

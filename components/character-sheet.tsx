@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback } from "react";
 import { Card, CardContent, CardHeader, CardTitle } from "./ui/card";
 import { Badge } from "./ui/badge";
+import { Button } from "./ui/button";
 import { Progress } from "./ui/progress";
 import { Separator } from "./ui/separator";
 import { getCharacter } from "../utils/api/characters";
@@ -155,8 +156,13 @@ export function CharacterSheet({ characterId, refreshTrigger }: CharacterSheetPr
       <div className="space-y-6">
         <Card>
           <CardContent className="p-6">
-            <div className="text-center text-muted-foreground">
-              {error || 'No character selected'}
+            <div className="text-center text-muted-foreground space-y-3">
+              <p>{error || 'No character selected'}</p>
+              {error && characterId && (
+                <Button variant="outline" size="sm" onClick={() => loadCharacter(characterId)}>
+                  Retry
+                </Button>
+              )}
             </div>
           </CardContent>
         </Card>
@@ -396,11 +402,63 @@ export function CharacterSheet({ characterId, refreshTrigger }: CharacterSheetPr
           </CardHeader>
           <CardContent className="space-y-3">
             {character.equipment && Object.keys(character.equipment).length > 0 ? (
-              <div>
+              <div className="space-y-2">
                 <h4 className="font-medium">Equipped Items</h4>
-                <div className="text-sm text-muted-foreground">
-                  {/* Display equipment would need to be properly formatted */}
-                  Equipment system connected
+                <div className="space-y-1 text-sm">
+                  {character.equipment.weapons?.mainHand && (
+                    <div className="flex justify-between">
+                      <span>Main Hand</span>
+                      <span className="text-muted-foreground">{character.equipment.weapons.mainHand.name}</span>
+                    </div>
+                  )}
+                  {character.equipment.weapons?.offHand && (
+                    <div className="flex justify-between">
+                      <span>Off Hand</span>
+                      <span className="text-muted-foreground">{character.equipment.weapons.offHand.name}</span>
+                    </div>
+                  )}
+                  {character.equipment.weapons?.ranged && (
+                    <div className="flex justify-between">
+                      <span>Ranged</span>
+                      <span className="text-muted-foreground">{character.equipment.weapons.ranged.name}</span>
+                    </div>
+                  )}
+                  {character.equipment.armor && (
+                    <div className="flex justify-between">
+                      <span>Armor</span>
+                      <span className="text-muted-foreground">{character.equipment.armor.name}</span>
+                    </div>
+                  )}
+                  {character.equipment.shield && (
+                    <div className="flex justify-between">
+                      <span>Shield</span>
+                      <span className="text-muted-foreground">{character.equipment.shield.name}</span>
+                    </div>
+                  )}
+                  {character.equipment.accessories?.ring1 && (
+                    <div className="flex justify-between">
+                      <span>Ring</span>
+                      <span className="text-muted-foreground">{character.equipment.accessories.ring1.name}</span>
+                    </div>
+                  )}
+                  {character.equipment.accessories?.ring2 && (
+                    <div className="flex justify-between">
+                      <span>Ring</span>
+                      <span className="text-muted-foreground">{character.equipment.accessories.ring2.name}</span>
+                    </div>
+                  )}
+                  {character.equipment.accessories?.necklace && (
+                    <div className="flex justify-between">
+                      <span>Necklace</span>
+                      <span className="text-muted-foreground">{character.equipment.accessories.necklace.name}</span>
+                    </div>
+                  )}
+                  {character.equipment.accessories?.cloak && (
+                    <div className="flex justify-between">
+                      <span>Cloak</span>
+                      <span className="text-muted-foreground">{character.equipment.accessories.cloak.name}</span>
+                    </div>
+                  )}
                 </div>
               </div>
             ) : (

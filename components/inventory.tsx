@@ -60,7 +60,7 @@ export function Inventory({ characterId, onInventoryChange }: InventoryProps) {
     }
   }, [characterId]);
 
-  // Update character in database
+  // Update character in database — re-throws so callers can roll back on failure
   const updateCharacterData = async (updates: CharacterUpdateRequest) => {
     try {
       setUpdating(true);
@@ -69,6 +69,7 @@ export function Inventory({ characterId, onInventoryChange }: InventoryProps) {
     } catch (error) {
       console.error('Failed to update character:', error);
       toast.error('Failed to save changes');
+      throw error;
     } finally {
       setUpdating(false);
     }
@@ -100,10 +101,9 @@ export function Inventory({ characterId, onInventoryChange }: InventoryProps) {
       };
       
       const updatedInventory = [...inventory, item];
-      setInventory(updatedInventory);
-      
       await updateCharacterData({ inventory: updatedInventory });
-      
+      setInventory(updatedInventory);
+
       // Reset form and close dialog
       setNewItem(INITIAL_NEW_ITEM);
       setShowAddDialog(false);
@@ -118,8 +118,8 @@ export function Inventory({ characterId, onInventoryChange }: InventoryProps) {
   const removeItem = async (itemId: string) => {
     try {
       const updatedInventory = inventory.filter(item => item.id !== itemId);
-      setInventory(updatedInventory);
       await updateCharacterData({ inventory: updatedInventory });
+      setInventory(updatedInventory);
       toast.success('Item removed');
     } catch (error) {
       console.error('Failed to remove item:', error);
@@ -142,8 +142,8 @@ export function Inventory({ characterId, onInventoryChange }: InventoryProps) {
         return item;
       }).filter(Boolean) as InventoryItem[];
       
-      setInventory(updatedInventory);
       await updateCharacterData({ inventory: updatedInventory });
+      setInventory(updatedInventory);
     } catch (error) {
       console.error('Failed to update item quantity:', error);
       toast.error('Failed to update quantity');

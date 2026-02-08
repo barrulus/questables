@@ -1,7 +1,6 @@
-import { useState, useEffect, useMemo } from "react";
+import { useState, useEffect, useMemo, useCallback } from "react";
 import { Button } from "./ui/button";
 import { ScrollArea } from "./ui/scroll-area";
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "./ui/select";
 
 import Journals from "./journals";
 import { Settings } from "./settings";
@@ -11,9 +10,7 @@ import { Inventory } from "./inventory";
 import { Spellbook } from "./spellbook";
 import { useUser } from "../contexts/UserContext";
 import { useGameSession } from "../contexts/GameSessionContext";
-import type { Character } from '../utils/database/data-structures';
-import { listUserCharacters } from '../utils/api/characters';
-import { createAsyncHandler } from '../utils/error-handling';
+import { apiFetch, readJsonBody } from "../utils/api-client";
 import { OfflineModeWrapper } from './database-status';
 import { NarrativeConsole } from "./narrative-console";
 import { DMSidebar } from "./dm-sidebar";
@@ -25,8 +22,17 @@ import {
   X,
   ScrollText,
   Cog,
-  Crown
+  Crown,
+  Loader2,
 } from "lucide-react";
+
+interface CampaignCharacterRow {
+  id: string;
+  name: string;
+  level: number;
+  class: string;
+  campaign_user_id: string;
+}
 
 interface ExpandablePanelProps {
   activePanel: string | null;
@@ -35,10 +41,10 @@ interface ExpandablePanelProps {
 
 export function ExpandablePanel({ activePanel, onClose }: ExpandablePanelProps) {
   const { user } = useUser();
-  const { activeCampaign, viewerRole } = useGameSession();
+  const { activeCampaign, activeCampaignId, viewerRole } = useGameSession();
   const [refreshTrigger, setRefreshTrigger] = useState(0);
-  const [selectedCharacter, setSelectedCharacter] = useState<string>('');
-  const [userCharacters, setUserCharacters] = useState<Character[]>([]);
+  const [campaignCharacterId, setCampaignCharacterId] = useState<string>('');
+  const [campaignCharacterLabel, setCampaignCharacterLabel] = useState<string>('');
   const [loadingCharacters, setLoadingCharacters] = useState(true);
   const [characterError, setCharacterError] = useState<string | null>(null);
 
@@ -50,28 +56,45 @@ export function ExpandablePanel({ activePanel, onClose }: ExpandablePanelProps) 
     return false;
   }, [activeCampaign?.dmUserId, user, viewerRole]);
 
-  // Load user's characters when component mounts
-  useEffect(() => {
-    if (user) {
-      loadUserCharacters();
+  const loadCampaignCharacter = useCallback(async (signal?: AbortSignal) => {
+    if (!user || !activeCampaignId) {
+      setCampaignCharacterId('');
+      setCampaignCharacterLabel('');
+      setLoadingCharacters(false);
+      return;
     }
-  }, [user]);
 
-  const loadUserCharacters = createAsyncHandler(
-    async () => {
-      if (!user) return;
-      
-      const characters = await listUserCharacters(user.id);
-      setUserCharacters(characters || []);
-      
-      // Auto-select first character if available and none selected
-      if (characters?.length > 0 && !selectedCharacter) {
-        setSelectedCharacter(characters[0].id);
+    try {
+      setLoadingCharacters(true);
+      setCharacterError(null);
+      const response = await apiFetch(`/api/campaigns/${activeCampaignId}/characters`, { signal });
+      if (!response.ok) {
+        throw new Error('Failed to load campaign characters');
       }
-    },
-    setCharacterError,
-    setLoadingCharacters
-  );
+      const rows = await readJsonBody<CampaignCharacterRow[]>(response);
+      const characters = Array.isArray(rows) ? rows : [];
+      const mine = characters.find((c) => c.campaign_user_id === user.id);
+
+      if (mine) {
+        setCampaignCharacterId(mine.id);
+        setCampaignCharacterLabel(`${mine.name} (Level ${mine.level} ${mine.class})`);
+      } else {
+        setCampaignCharacterId('');
+        setCampaignCharacterLabel('');
+      }
+    } catch (err) {
+      if (err instanceof DOMException && err.name === 'AbortError') return;
+      setCharacterError(err instanceof Error ? err.message : 'Failed to load character');
+    } finally {
+      setLoadingCharacters(false);
+    }
+  }, [activeCampaignId, user]);
+
+  useEffect(() => {
+    const controller = new AbortController();
+    loadCampaignCharacter(controller.signal);
+    return () => controller.abort();
+  }, [loadCampaignCharacter]);
 
   if (!activePanel) return null;
 
@@ -87,25 +110,25 @@ export function ExpandablePanel({ activePanel, onClose }: ExpandablePanelProps) 
       case "character":
         return (
           <OfflineModeWrapper>
-            <CharacterSheet characterId={selectedCharacter} refreshTrigger={refreshTrigger} />
+            <CharacterSheet characterId={campaignCharacterId} refreshTrigger={refreshTrigger} />
           </OfflineModeWrapper>
         );
       case "inventory":
         return (
           <OfflineModeWrapper>
-            <Inventory characterId={selectedCharacter} onInventoryChange={refreshCharacter} />
+            <Inventory characterId={campaignCharacterId} onInventoryChange={refreshCharacter} />
           </OfflineModeWrapper>
         );
       case "spells":
         return (
           <OfflineModeWrapper>
-            <Spellbook characterId={selectedCharacter} onSpellcastingChange={refreshCharacter} />
+            <Spellbook characterId={campaignCharacterId} onSpellcastingChange={refreshCharacter} />
           </OfflineModeWrapper>
         );
       case "narratives":
         return <NarrativeConsole />;
       case "journals":
-        return <Journals />;
+        return <Journals campaignId={activeCampaignId ?? undefined} />;
       case "settings":
         return <Settings />;
       case "dm-sidebar":
@@ -151,7 +174,7 @@ export function ExpandablePanel({ activePanel, onClose }: ExpandablePanelProps) 
   };
 
   return (
-    <div className="w-72 lg:w-96 border-r bg-card flex flex-col">
+    <div className="fixed inset-y-0 left-0 z-40 w-full sm:w-72 lg:w-96 md:static md:z-auto border-r bg-card flex flex-col">
       <div className="border-b p-4">
         <div className="flex items-center justify-between mb-3">
           <div className="flex items-center gap-2">
@@ -163,40 +186,35 @@ export function ExpandablePanel({ activePanel, onClose }: ExpandablePanelProps) 
           </Button>
         </div>
         
-        {/* Character Selection */}
+        {/* Campaign Character */}
         {needsCharacterSelection && user && (
           <div className="space-y-2">
-            <label className="text-sm font-medium">Select Character:</label>
             {characterError ? (
               <div className="p-2 border border-red-200 bg-red-50 rounded">
-                <p className="text-red-800 text-sm">Failed to load characters</p>
+                <p className="text-red-800 text-sm">Failed to load character</p>
                 <p className="text-red-600 text-xs">{characterError}</p>
-                <Button 
-                  variant="outline" 
-                  size="sm" 
-                  className="mt-2" 
-                  onClick={loadUserCharacters}
+                <Button
+                  variant="outline"
+                  size="sm"
+                  className="mt-2"
+                  onClick={() => loadCampaignCharacter()}
                 >
                   Retry
                 </Button>
               </div>
             ) : loadingCharacters ? (
-              <div className="text-sm text-muted-foreground">Loading characters...</div>
-            ) : userCharacters.length > 0 ? (
-              <Select value={selectedCharacter} onValueChange={setSelectedCharacter}>
-                <SelectTrigger>
-                  <SelectValue placeholder="Choose a character" />
-                </SelectTrigger>
-                <SelectContent>
-                  {userCharacters.map((character) => (
-                    <SelectItem key={character.id} value={character.id}>
-                      {character.name} (Level {character.level} {character.class})
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
+              <div className="flex items-center gap-2 text-sm text-muted-foreground">
+                <Loader2 className="w-3 h-3 animate-spin" />
+                Loading character...
+              </div>
+            ) : campaignCharacterId ? (
+              <div className="text-sm text-muted-foreground">
+                Active character: <span className="font-medium text-foreground">{campaignCharacterLabel}</span>
+              </div>
             ) : (
-              <div className="text-sm text-muted-foreground">No characters found</div>
+              <div className="text-sm text-muted-foreground">
+                No character enrolled in this campaign. Join the campaign with a character from the dashboard.
+              </div>
             )}
           </div>
         )}

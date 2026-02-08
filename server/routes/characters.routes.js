@@ -163,7 +163,7 @@ router.post('/', requireAuth, validateCharacter, handleValidationErrors, async (
   }
 });
 
-router.get('/:id', async (req, res) => {
+router.get('/:id', requireAuth, async (req, res) => {
   const { id } = req.params;
   let client;
   try {

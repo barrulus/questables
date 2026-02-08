@@ -11,7 +11,7 @@ import { ResizableHandle, ResizablePanel, ResizablePanelGroup } from "./componen
 import { Badge } from "./components/ui/badge";
 import { Button } from "./components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "./components/ui/card";
-import { Settings, Menu, Loader2, AlertCircle, User, MapIcon, Shield } from "lucide-react";
+import { Settings, Menu, Loader2, AlertCircle, User, MapIcon, Shield, PanelLeft } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
 import { UserProvider, useUser } from "./contexts/UserContext";
 import { ErrorBoundary } from "./components/error-boundary";
@@ -133,7 +133,7 @@ function AppContent() {
     return (
       <div className="min-h-screen bg-background flex items-center justify-center">
         <div className="text-center">
-          <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary mx-auto mb-4"></div>
+          <Loader2 className="h-8 w-8 animate-spin text-primary mx-auto mb-4" />
           <p className="text-muted-foreground">Loading...</p>
         </div>
       </div>
@@ -287,6 +287,15 @@ function AppContent() {
             <div className="flex items-center gap-4">
               <Button variant="ghost" size="sm" onClick={handleExitGame}>
                 <Menu className="w-4 h-4" />
+              </Button>
+              <Button
+                variant="ghost"
+                size="sm"
+                className="md:hidden"
+                onClick={() => setActivePanel(activePanel ? null : "character")}
+                aria-label="Toggle tools panel"
+              >
+                <PanelLeft className="w-4 h-4" />
               </Button>
               <div>
                 <h1 className="font-bold">

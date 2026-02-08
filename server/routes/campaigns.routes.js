@@ -603,7 +603,7 @@ router.post('/api/campaigns/:campaignId/players', async (req, res) => {
   }
 });
 
-router.get('/api/campaigns/:campaignId/characters', async (req, res) => {
+router.get('/api/campaigns/:campaignId/characters', requireAuth, requireCampaignParticipation, async (req, res) => {
   const { campaignId } = req.params;
 
   try {

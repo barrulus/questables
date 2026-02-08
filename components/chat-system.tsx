@@ -547,7 +547,12 @@ export function ChatSystem({ campaignId, campaignName }: ChatSystemProps) {
               </div>
             </>
           ) : (
-            <span className="text-muted-foreground">Speaking as: {user.username} (OOC)</span>
+            <div className="space-y-1">
+              <span className="text-muted-foreground">Speaking as: {user.username} (OOC)</span>
+              <p className="text-xs text-muted-foreground">
+                No character enrolled in this campaign. Join with a character from the dashboard to speak in-character.
+              </p>
+            </div>
           )}
         </div>
         {charactersError && (
