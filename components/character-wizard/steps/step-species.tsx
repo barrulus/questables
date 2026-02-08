@@ -7,6 +7,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '../..
 import { ScrollArea } from '../../ui/scroll-area';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '../../ui/select';
 import { Label } from '../../ui/label';
+import { MarkdownText } from '../markdown-text';
 
 export function StepSpecies() {
   const { state, dispatch } = useWizard();
@@ -73,9 +74,7 @@ export function StepSpecies() {
             </CardHeader>
             <CardContent>
               {s.desc_text && (
-                <p className="text-sm text-muted-foreground line-clamp-3">
-                  {s.desc_text}
-                </p>
+                <MarkdownText text={s.desc_text} className="text-sm text-muted-foreground line-clamp-3" />
               )}
             </CardContent>
           </Card>
@@ -91,7 +90,7 @@ export function StepSpecies() {
             <ScrollArea className="h-64">
               <div className="space-y-4 pr-4">
                 {selectedSpecies.desc_text && (
-                  <p className="text-sm text-muted-foreground">{selectedSpecies.desc_text}</p>
+                  <MarkdownText text={selectedSpecies.desc_text} className="text-sm text-muted-foreground" />
                 )}
 
                 {selectedSpecies.traits.length > 0 && (
@@ -100,7 +99,7 @@ export function StepSpecies() {
                     {selectedSpecies.traits.map((trait, idx) => (
                       <div key={idx} className="mb-3">
                         <h5 className="font-medium text-sm">{trait.name}</h5>
-                        <p className="text-sm text-muted-foreground">{trait.desc}</p>
+                        <MarkdownText text={trait.desc} className="text-sm text-muted-foreground" />
                       </div>
                     ))}
                   </div>
@@ -138,9 +137,10 @@ export function StepSpecies() {
                 </CardTitle>
               </CardHeader>
               <CardContent>
-                <p className="text-sm text-muted-foreground">
-                  {selectedSpecies.subspecies.find((s: SrdSpecies) => s.key === state.subraceKey)?.desc_text}
-                </p>
+                {(() => {
+                  const desc = selectedSpecies.subspecies.find((s: SrdSpecies) => s.key === state.subraceKey)?.desc_text;
+                  return desc ? <MarkdownText text={desc} className="text-sm text-muted-foreground" /> : null;
+                })()}
               </CardContent>
             </Card>
           )}

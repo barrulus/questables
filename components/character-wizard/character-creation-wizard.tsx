@@ -167,7 +167,7 @@ function WizardContent({
         </div>
       </div>
 
-      <div className="flex-1 overflow-hidden">
+      <div className="flex-1 min-h-0">
         <WizardLayout
           mainContent={renderCurrentStep()}
           previewContent={<CharacterPreview />}

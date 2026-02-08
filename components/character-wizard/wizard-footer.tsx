@@ -17,7 +17,7 @@ export function WizardFooter({
   const isLastStep = state.currentStep === WIZARD_STEPS.length - 1;
 
   return (
-    <div className="border-t bg-card">
+    <div className="border-t bg-card relative z-10">
       <div className="px-6 py-4 flex items-center justify-between">
         <div>
           <Button

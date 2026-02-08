@@ -5,6 +5,7 @@ import { fetchBackgrounds } from '../../../utils/api/srd';
 import type { SrdBackground } from '../../../utils/srd/types';
 import { Card, CardContent, CardHeader, CardTitle } from '../../ui/card';
 import { ScrollArea } from '../../ui/scroll-area';
+import { MarkdownText } from '../markdown-text';
 
 export function StepBackground() {
   const { state, dispatch } = useWizard();
@@ -58,9 +59,7 @@ export function StepBackground() {
             </CardHeader>
             <CardContent>
               {bg.desc_text && (
-                <p className="text-sm text-muted-foreground line-clamp-3">
-                  {bg.desc_text}
-                </p>
+                <MarkdownText text={bg.desc_text} className="text-sm text-muted-foreground line-clamp-3" />
               )}
             </CardContent>
           </Card>
@@ -76,7 +75,7 @@ export function StepBackground() {
             <ScrollArea className="h-96">
               <div className="space-y-4 pr-4">
                 {selectedBackground.desc_text && (
-                  <p className="text-sm text-muted-foreground">{selectedBackground.desc_text}</p>
+                  <MarkdownText text={selectedBackground.desc_text} className="text-sm text-muted-foreground" />
                 )}
 
                 {selectedBackground.benefits.length > 0 && (
@@ -85,7 +84,7 @@ export function StepBackground() {
                     {selectedBackground.benefits.map((benefit, idx) => (
                       <div key={idx} className="mb-3">
                         <h5 className="font-medium text-sm">{benefit.name}</h5>
-                        <p className="text-sm text-muted-foreground">{benefit.desc}</p>
+                        <MarkdownText text={benefit.desc} className="text-sm text-muted-foreground" />
                       </div>
                     ))}
                   </div>

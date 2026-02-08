@@ -6,6 +6,7 @@ import type { SrdClass } from '../../../utils/srd/types';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '../../ui/card';
 import { Badge } from '../../ui/badge';
 import { ScrollArea } from '../../ui/scroll-area';
+import { MarkdownText } from '../markdown-text';
 
 export function StepClass() {
   const { state, dispatch } = useWizard();
@@ -92,7 +93,7 @@ export function StepClass() {
             <ScrollArea className="h-96">
               <div className="space-y-4 pr-4">
                 {selectedClass.desc_text && (
-                  <p className="text-sm text-muted-foreground">{selectedClass.desc_text}</p>
+                  <MarkdownText text={selectedClass.desc_text} className="text-sm text-muted-foreground" />
                 )}
 
                 {selectedClass.hit_dice && (
@@ -112,7 +113,7 @@ export function StepClass() {
                       .map((feature, idx) => (
                         <div key={idx} className="mb-3">
                           <h5 className="font-medium text-sm">{feature.name}</h5>
-                          <p className="text-sm text-muted-foreground">{feature.desc}</p>
+                          <MarkdownText text={feature.desc} className="text-sm text-muted-foreground" />
                         </div>
                       ))}
                   </div>

@@ -63,11 +63,31 @@ export function StepAbilityScores() {
     return { strength: 8, dexterity: 8, constitution: 8, intelligence: 8, wisdom: 8, charisma: 8 };
   });
 
-  // Roll state
-  const [rolledScores, setRolledScores] = useState<number[]>([]);
-  const [rollAssignments, setRollAssignments] = useState<Record<AbilityName, number | null>>({
-    strength: null, dexterity: null, constitution: null,
-    intelligence: null, wisdom: null, charisma: null,
+  // Roll state — restore from wizard context if method was 4d6
+  const [rolledScores, setRolledScores] = useState<number[]>(() => {
+    if (state.abilityScoreMethod === '4d6-drop-lowest') {
+      // Reconstruct rolled scores from the assigned abilities
+      const scores = ABILITY_NAMES.map((name) => state.baseAbilities[name]);
+      const allDefault = scores.every((s) => s === 10);
+      return allDefault ? [] : scores;
+    }
+    return [];
+  });
+  const [rollAssignments, setRollAssignments] = useState<Record<AbilityName, number | null>>(() => {
+    if (state.abilityScoreMethod === '4d6-drop-lowest') {
+      const allDefault = ABILITY_NAMES.every((name) => state.baseAbilities[name] === 10);
+      if (!allDefault) {
+        const assignments: Record<AbilityName, number | null> = {
+          strength: null, dexterity: null, constitution: null,
+          intelligence: null, wisdom: null, charisma: null,
+        };
+        for (const name of ABILITY_NAMES) {
+          assignments[name] = state.baseAbilities[name];
+        }
+        return assignments;
+      }
+    }
+    return { strength: null, dexterity: null, constitution: null, intelligence: null, wisdom: null, charisma: null };
   });
 
   const handleMethodChange = (newMethod: string) => {
@@ -83,10 +103,15 @@ export function StepAbilityScores() {
 
   // Standard Array
   const getAvailableStandardValues = (excludeAbility: AbilityName): number[] => {
-    const assigned = Object.entries(standardAssignments)
-      .filter(([ability, val]) => ability !== excludeAbility && val !== null)
-      .map(([, val]) => val as number);
-    return [...STANDARD_ARRAY].filter((val) => !assigned.includes(val));
+    const pool = [...STANDARD_ARRAY] as number[];
+    for (const [ability, val] of Object.entries(standardAssignments)) {
+      if (ability !== excludeAbility && val !== null) {
+        const idx = pool.indexOf(val);
+        if (idx !== -1) pool.splice(idx, 1);
+      }
+    }
+    pool.sort((a, b) => b - a);
+    return pool;
   };
 
   const handleStandardAssignment = (ability: AbilityName, value: string) => {
@@ -96,7 +121,7 @@ export function StepAbilityScores() {
 
     const abilities: Record<AbilityName, number> = { ...state.baseAbilities };
     for (const name of ABILITY_NAMES) {
-      abilities[name] = newAssignments[name] ?? 10;
+      abilities[name] = newAssignments[name] ?? state.baseAbilities[name];
     }
     dispatchAbilities(abilities);
   };
@@ -127,17 +152,31 @@ export function StepAbilityScores() {
   const handleRollAll = () => {
     const rolls = Array.from({ length: 6 }, () => rollAbilityScore());
     setRolledScores(rolls);
-    setRollAssignments({
+
+    // Auto-assign rolled values to abilities in order
+    const assignments: Record<AbilityName, number | null> = {
       strength: null, dexterity: null, constitution: null,
       intelligence: null, wisdom: null, charisma: null,
+    };
+    const abilities: Record<AbilityName, number> = { ...state.baseAbilities };
+    ABILITY_NAMES.forEach((name, i) => {
+      assignments[name] = rolls[i];
+      abilities[name] = rolls[i];
     });
+    setRollAssignments(assignments);
+    dispatchAbilities(abilities);
   };
 
   const getAvailableRolledValues = (excludeAbility: AbilityName): number[] => {
-    const assigned = Object.entries(rollAssignments)
-      .filter(([ability, val]) => ability !== excludeAbility && val !== null)
-      .map(([, val]) => val as number);
-    return rolledScores.filter((val) => !assigned.includes(val));
+    const pool = [...rolledScores];
+    for (const [ability, val] of Object.entries(rollAssignments)) {
+      if (ability !== excludeAbility && val !== null) {
+        const idx = pool.indexOf(val);
+        if (idx !== -1) pool.splice(idx, 1);
+      }
+    }
+    pool.sort((a, b) => b - a);
+    return pool;
   };
 
   const handleRollAssignment = (ability: AbilityName, value: string) => {
@@ -147,7 +186,7 @@ export function StepAbilityScores() {
 
     const abilities: Record<AbilityName, number> = { ...state.baseAbilities };
     for (const name of ABILITY_NAMES) {
-      abilities[name] = newAssignments[name] ?? 10;
+      abilities[name] = newAssignments[name] ?? state.baseAbilities[name];
     }
     dispatchAbilities(abilities);
   };
@@ -183,8 +222,6 @@ export function StepAbilityScores() {
               {ABILITY_NAMES.map((ability) => {
                 const available = getAvailableStandardValues(ability);
                 const currentValue = standardAssignments[ability];
-                if (currentValue !== null) available.push(currentValue);
-                available.sort((a, b) => b - a);
 
                 return (
                   <div key={ability} className="flex items-center justify-between">
@@ -197,8 +234,8 @@ export function StepAbilityScores() {
                         <SelectValue placeholder="Select..." />
                       </SelectTrigger>
                       <SelectContent>
-                        {available.map((val) => (
-                          <SelectItem key={val} value={val.toString()}>
+                        {available.map((val, idx) => (
+                          <SelectItem key={`${val}-${idx}`} value={val.toString()}>
                             {val}
                           </SelectItem>
                         ))}
@@ -284,8 +321,6 @@ export function StepAbilityScores() {
                     {ABILITY_NAMES.map((ability) => {
                       const available = getAvailableRolledValues(ability);
                       const currentValue = rollAssignments[ability];
-                      if (currentValue !== null) available.push(currentValue);
-                      available.sort((a, b) => b - a);
 
                       return (
                         <div key={ability} className="flex items-center justify-between">
