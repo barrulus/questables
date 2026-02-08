@@ -10,8 +10,8 @@ import { MarkdownText } from '../markdown-text';
 export function StepBackground() {
   const { state, dispatch } = useWizard();
   const { data: backgroundsList, loading } = useSrdData(
-    (opts) => fetchBackgrounds(state.sourceKey, opts),
-    [state.sourceKey],
+    (opts) => fetchBackgrounds(undefined, opts),
+    [],
   );
   const [selectedBackground, setSelectedBackground] = useState<SrdBackground | null>(null);
 

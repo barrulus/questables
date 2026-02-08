@@ -329,8 +329,17 @@ async function importSpecies(client) {
   console.log(`  Species: ${items.length}`);
 }
 
+// Backgrounds are imported from additional open-source documents beyond the
+// global DOCUMENTS filter, because the SRD only includes a handful of
+// backgrounds while A5E provides the familiar PHB set under an open licence.
+const BACKGROUND_DOCUMENTS = [...new Set([...DOCUMENTS, 'a5e-ag'])];
+
 async function importBackgrounds(client) {
-  const items = filterByDocuments(await fetchAllPages('backgrounds'));
+  const allBackgrounds = await fetchAllPages('backgrounds');
+  const items = allBackgrounds.filter(item => {
+    const docKey = item.document?.key;
+    return docKey && BACKGROUND_DOCUMENTS.includes(docKey);
+  });
   for (const item of items) {
     const benefits = Array.isArray(item.benefits) ? item.benefits.map(b => ({
       name: b.name,

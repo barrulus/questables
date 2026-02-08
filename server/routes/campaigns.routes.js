@@ -603,6 +603,51 @@ router.post('/api/campaigns/:campaignId/players', async (req, res) => {
   }
 });
 
+// Switch the character a player is using in this campaign
+router.patch('/api/campaigns/:campaignId/my-character', requireAuth, requireCampaignParticipation, async (req, res) => {
+  const { campaignId } = req.params;
+  const userId = req.user.id;
+  const { characterId } = req.body;
+
+  if (!characterId) {
+    return res.status(400).json({ error: 'characterId is required' });
+  }
+
+  let client;
+  try {
+    client = await getClient();
+
+    // Verify the character belongs to the requesting user
+    const charCheck = await client.query(
+      'SELECT id FROM characters WHERE id = $1 AND user_id = $2',
+      [characterId, userId]
+    );
+    if (charCheck.rows.length === 0) {
+      return res.status(403).json({ error: 'You can only switch to your own characters' });
+    }
+
+    // Update the campaign_players row
+    const result = await client.query(
+      `UPDATE campaign_players
+          SET character_id = $1
+        WHERE campaign_id = $2 AND user_id = $3 AND status = 'active'
+        RETURNING id`,
+      [characterId, campaignId, userId]
+    );
+
+    if (result.rows.length === 0) {
+      return res.status(404).json({ error: 'You are not an active player in this campaign' });
+    }
+
+    res.json({ message: 'Character switched successfully' });
+  } catch (error) {
+    logError('[Campaigns] Switch character error:', error);
+    res.status(500).json({ error: 'Failed to switch character' });
+  } finally {
+    client?.release();
+  }
+});
+
 router.get('/api/campaigns/:campaignId/characters', requireAuth, requireCampaignParticipation, async (req, res) => {
   const { campaignId } = req.params;
 

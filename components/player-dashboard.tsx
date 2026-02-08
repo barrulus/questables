@@ -13,7 +13,6 @@ import {
   AlertCircle,
   Calendar,
   Edit,
-  Eye,
   Heart,
   Loader2,
   LogOut,
@@ -22,7 +21,6 @@ import {
   Play,
   Plus,
   Search,
-  Settings,
   Shield,
   Star,
   User,
@@ -31,7 +29,7 @@ import {
 } from "lucide-react";
 import { apiFetch, readErrorMessage, readJsonBody } from "../utils/api-client";
 import { CharacterManager, type CharacterManagerCommand } from "./character-manager";
-import { hasCampaignDescription } from "./campaign-shared";
+import { hasCampaignDescription, parseJsonField, getStatusColor, getStatusBadgeVariant } from "./campaign-shared";
 import { useGameSession } from "../contexts/GameSessionContext";
 
 interface PlayerDashboardProps {
@@ -94,6 +92,14 @@ type CharacterCampaignMap = Record<string, Array<{ id: string; name: string }>>;
 
 type JoinState = {
   campaign: PlayerCampaign | null;
+  selectedCharacterId: string | null;
+  submitting: boolean;
+};
+
+type SwitchState = {
+  campaignId: string | null;
+  campaignName: string | null;
+  currentCharacterId: string | null;
   selectedCharacterId: string | null;
   submitting: boolean;
 };
@@ -175,22 +181,6 @@ const isRawCampaign = (value: unknown): value is RawCampaign => {
   return Boolean(value) && typeof value === "object" && "id" in (value as Record<string, unknown>);
 };
 
-const parseJsonField = <T,>(value: unknown, fallback: T): T => {
-  if (value === null || value === undefined) {
-    return fallback;
-  }
-
-  if (typeof value === "string") {
-    try {
-      return JSON.parse(value) as T;
-    } catch (error) {
-      console.warn("Failed to parse JSON field", { value, error });
-      return fallback;
-    }
-  }
-
-  return value as T;
-};
 
 const PLAYER_VISIBILITY_STATES = new Set<PlayerTokenSummary["visibilityState"]>([
   "visible",
@@ -409,6 +399,7 @@ export function PlayerDashboard({ user, onEnterGame, onLogout, onCreateCharacter
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [joinState, setJoinState] = useState<JoinState>({ campaign: null, selectedCharacterId: null, submitting: false });
+  const [switchState, setSwitchState] = useState<SwitchState>({ campaignId: null, campaignName: null, currentCharacterId: null, selectedCharacterId: null, submitting: false });
   const [characterManagerOpen, setCharacterManagerOpen] = useState(false);
   const [characterManagerCommand, setCharacterManagerCommand] = useState<CharacterManagerCommand | null>(null);
   const { activeCampaignId, selectCampaign } = useGameSession();
@@ -649,32 +640,51 @@ export function PlayerDashboard({ user, onEnterGame, onLogout, onCreateCharacter
     }
   };
 
-  const getStatusColor = (status: string) => {
-    switch (status) {
-      case "active":
-        return "bg-green-500";
-      case "recruiting":
-        return "bg-blue-500";
-      case "full":
-        return "bg-yellow-500";
-      case "completed":
-        return "bg-gray-500";
-      default:
-        return "bg-gray-500";
+  const handleOpenSwitchDialog = (campaign: PlayerCampaign) => {
+    if (characters.length <= 1) {
+      toast.info("You only have one character. Create another to switch.");
+      return;
     }
+    setSwitchState({
+      campaignId: campaign.id,
+      campaignName: campaign.name,
+      currentCharacterId: campaign.characterId ?? null,
+      selectedCharacterId: null,
+      submitting: false,
+    });
   };
 
-  const getStatusBadgeVariant = (status: string) => {
-    switch (status) {
-      case "active":
-        return "default" as const;
-      case "recruiting":
-        return "secondary" as const;
-      case "full":
-      case "completed":
-        return "outline" as const;
-      default:
-        return "outline" as const;
+  const handleCloseSwitchDialog = () => {
+    setSwitchState({ campaignId: null, campaignName: null, currentCharacterId: null, selectedCharacterId: null, submitting: false });
+  };
+
+  const handleConfirmSwitch = async () => {
+    if (!switchState.campaignId || !switchState.selectedCharacterId) {
+      toast.error("Select a character to switch to.");
+      return;
+    }
+
+    try {
+      setSwitchState((current) => ({ ...current, submitting: true }));
+      const response = await apiFetch(`/api/campaigns/${switchState.campaignId}/my-character`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ characterId: switchState.selectedCharacterId }),
+      });
+
+      if (!response.ok) {
+        throw new Error(await readErrorMessage(response, "Failed to switch character"));
+      }
+
+      toast.success("Character switched successfully.");
+      handleCloseSwitchDialog();
+      await loadDashboardData();
+    } catch (err) {
+      const message = err instanceof Error ? err.message : "Failed to switch character";
+      toast.error(message);
+      console.error("[PlayerDashboard] handleConfirmSwitch error", err);
+    } finally {
+      setSwitchState((current) => ({ ...current, submitting: false }));
     }
   };
 
@@ -682,7 +692,7 @@ export function PlayerDashboard({ user, onEnterGame, onLogout, onCreateCharacter
     return (
       <div className="min-h-screen bg-background flex items-center justify-center">
         <div className="text-center">
-          <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary mx-auto mb-4" />
+          <Loader2 className="h-8 w-8 animate-spin text-primary mx-auto mb-4" />
           <p className="text-muted-foreground">Loading your dashboard…</p>
         </div>
       </div>
@@ -740,9 +750,6 @@ export function PlayerDashboard({ user, onEnterGame, onLogout, onCreateCharacter
             >
               <Play className="w-4 h-4 mr-1" />
               Enter Game
-            </Button>
-            <Button variant="ghost" size="sm">
-              <Settings className="w-4 h-4" />
             </Button>
             <Button variant="ghost" size="sm" onClick={onLogout}>
               <LogOut className="w-4 h-4" />
@@ -996,28 +1003,23 @@ export function PlayerDashboard({ user, onEnterGame, onLogout, onCreateCharacter
                           </div>
 
                           {campaign.characterName && (
-                            <div className="mt-3 text-sm text-muted-foreground">
-                              Playing as <span className="font-medium text-foreground">{campaign.characterName}</span>
+                            <div className="mt-3 flex items-center gap-2 text-sm text-muted-foreground">
+                              <span>Playing as <span className="font-medium text-foreground">{campaign.characterName}</span></span>
+                              <Button variant="ghost" size="sm" className="h-6 px-2 text-xs" onClick={() => handleOpenSwitchDialog(campaign)}>
+                                <Edit className="w-3 h-3 mr-1" />
+                                Switch
+                              </Button>
                             </div>
                           )}
                         </div>
 
                         <div className="flex gap-2 ml-4">
-                          <Button variant="outline" size="sm">
-                            <Eye className="w-4 h-4 mr-1" />
-                            View
-                          </Button>
                           {campaign.characterId && campaign.characterName ? (
                             campaign.id === activeCampaignId ? (
-                              <button
-                                type="button"
-                                data-slot="button"
-                                onClick={() => void launchCampaign(campaign.id)}
-                                className="inline-flex items-center justify-center whitespace-nowrap text-sm font-medium transition-all disabled:pointer-events-none disabled:opacity-50 [&_svg]:pointer-events-none [&_svg:not([class*='size-'])]:size-4 [&_svg]:shrink-0 outline-none focus-visible:border-ring focus-visible:ring-ring/50 focus-visible:ring-[3px] aria-invalid:ring-destructive/20 dark:aria-invalid:ring-destructive/40 aria-invalid:border-destructive bg-primary text-primary-foreground hover:bg-primary/90 h-8 rounded-md gap-1.5 px-3 has-[>svg]:px-2.5"
-                              >
+                              <Button size="sm" onClick={() => void launchCampaign(campaign.id)}>
                                 <Play className="w-4 h-4 mr-1" />
                                 Play
-                              </button>
+                              </Button>
                             ) : (
                               <Button size="sm" onClick={() => void handleSelectCampaign(campaign.id)}>
                                 <Play className="w-4 h-4 mr-1" />
@@ -1119,10 +1121,6 @@ export function PlayerDashboard({ user, onEnterGame, onLogout, onCreateCharacter
                           </div>
 
                           <div className="flex gap-2 ml-4">
-                            <Button variant="outline" size="sm">
-                              <Eye className="w-4 h-4 mr-1" />
-                              View Details
-                            </Button>
                             {!isJoined && isRecruiting && (
                               <Button
                                 size="sm"
@@ -1134,15 +1132,10 @@ export function PlayerDashboard({ user, onEnterGame, onLogout, onCreateCharacter
                             )}
                             {isJoined && campaign.characterId && campaign.characterName && (
                               campaign.id === activeCampaignId ? (
-                                <button
-                                  type="button"
-                                  data-slot="button"
-                                  onClick={() => void launchCampaign(campaign.id)}
-                                  className="inline-flex items-center justify-center whitespace-nowrap text-sm font-medium transition-all disabled:pointer-events-none disabled:opacity-50 [&_svg]:pointer-events-none [&_svg:not([class*='size-'])]:size-4 [&_svg]:shrink-0 outline-none focus-visible:border-ring focus-visible:ring-ring/50 focus-visible:ring-[3px] aria-invalid:ring-destructive/20 dark:aria-invalid:ring-destructive/40 aria-invalid:border-destructive bg-primary text-primary-foreground hover:bg-primary/90 h-8 rounded-md gap-1.5 px-3 has-[>svg]:px-2.5"
-                                >
+                                <Button size="sm" onClick={() => void launchCampaign(campaign.id)}>
                                   <Play className="w-4 h-4 mr-1" />
                                   Play
-                                </button>
+                                </Button>
                               ) : (
                                 <Button size="sm" onClick={() => void handleSelectCampaign(campaign.id)}>
                                   <Play className="w-4 h-4 mr-1" />
@@ -1202,6 +1195,54 @@ export function PlayerDashboard({ user, onEnterGame, onLogout, onCreateCharacter
               <Button onClick={handleConfirmJoin} disabled={!joinState.selectedCharacterId || joinState.submitting}>
                 {joinState.submitting && <Loader2 className="w-4 h-4 mr-2 animate-spin" />}
                 Confirm Join
+              </Button>
+            </DialogFooter>
+          </DialogContent>
+        )}
+      </Dialog>
+
+      <Dialog open={Boolean(switchState.campaignId)} onOpenChange={(open) => (!open ? handleCloseSwitchDialog() : undefined)}>
+        {switchState.campaignId && (
+          <DialogContent>
+            <DialogHeader>
+              <DialogTitle>Switch Character</DialogTitle>
+              <DialogDescription>
+                Choose a different character for {switchState.campaignName}.
+              </DialogDescription>
+            </DialogHeader>
+
+            <div className="space-y-4">
+              <div>
+                <p className="text-sm text-muted-foreground mb-2">Character</p>
+                <Select
+                  value={switchState.selectedCharacterId ?? ""}
+                  onValueChange={(value) =>
+                    setSwitchState((current) => ({ ...current, selectedCharacterId: value }))
+                  }
+                >
+                  <SelectTrigger className="w-full">
+                    <SelectValue placeholder="Select a character" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {characters
+                      .filter((c) => c.id !== switchState.currentCharacterId)
+                      .map((character) => (
+                        <SelectItem key={character.id} value={character.id}>
+                          {character.name} — Level {character.level} {character.class}
+                        </SelectItem>
+                      ))}
+                  </SelectContent>
+                </Select>
+              </div>
+            </div>
+
+            <DialogFooter>
+              <Button variant="outline" onClick={handleCloseSwitchDialog} disabled={switchState.submitting}>
+                Cancel
+              </Button>
+              <Button onClick={handleConfirmSwitch} disabled={!switchState.selectedCharacterId || switchState.submitting}>
+                {switchState.submitting && <Loader2 className="w-4 h-4 mr-2 animate-spin" />}
+                Switch Character
               </Button>
             </DialogFooter>
           </DialogContent>
