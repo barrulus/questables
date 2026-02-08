@@ -155,7 +155,7 @@ function getSpellSlots(casterType, level) {
 
   let table;
   switch (casterType) {
-    case 'FULL': table = FULL_CASTER_SLOTS; break;
+    case 'FULL': case 'PACT': table = FULL_CASTER_SLOTS; break;
     case 'HALF': table = HALF_CASTER_SLOTS; break;
     case 'THIRD': table = THIRD_CASTER_SLOTS; break;
     default: return null;

@@ -97,7 +97,7 @@ CREATE TABLE IF NOT EXISTS public.srd_classes (
     name TEXT NOT NULL,
     desc_text TEXT,
     hit_dice TEXT,
-    caster_type TEXT CHECK (caster_type IN ('FULL', 'HALF', 'THIRD', 'NONE')),
+    caster_type TEXT CHECK (caster_type IN ('FULL', 'HALF', 'THIRD', 'PACT', 'NONE')),
     subclass_of_key TEXT,
     features JSONB DEFAULT '[]'::jsonb,
     source_key TEXT
