@@ -497,6 +497,7 @@ CREATE INDEX IF NOT EXISTS idx_campaign_objectives_location_burg ON public.campa
 CREATE INDEX IF NOT EXISTS idx_campaign_objectives_location_marker ON public.campaign_objectives(location_marker_id);
 CREATE INDEX IF NOT EXISTS idx_campaign_objectives_location_pin_gix
     ON public.campaign_objectives USING GIST (location_pin) WHERE location_pin IS NOT NULL;
+CREATE INDEX IF NOT EXISTS idx_campaign_objectives_slug ON public.campaign_objectives(slug) WHERE slug IS NOT NULL;
 DROP TRIGGER IF EXISTS _touch_campaign_objectives ON public.campaign_objectives;
 CREATE TRIGGER _touch_campaign_objectives
 BEFORE UPDATE ON public.campaign_objectives
@@ -855,6 +856,7 @@ ALTER TABLE public.llm_narratives
 CREATE INDEX IF NOT EXISTS idx_llm_narratives_campaign_id ON public.llm_narratives(campaign_id);
 CREATE INDEX IF NOT EXISTS idx_llm_narratives_session_id ON public.llm_narratives(session_id);
 CREATE INDEX IF NOT EXISTS idx_llm_narratives_request_type ON public.llm_narratives(request_type);
+CREATE INDEX IF NOT EXISTS idx_llm_narratives_cache_key ON public.llm_narratives(cache_key) WHERE cache_key IS NOT NULL;
 
 CREATE TABLE IF NOT EXISTS public.npc_memories (
     id UUID DEFAULT uuid_generate_v4() PRIMARY KEY,

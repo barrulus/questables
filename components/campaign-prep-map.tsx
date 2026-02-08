@@ -23,6 +23,7 @@ import { ZoomIn, ZoomOut } from "lucide-react";
 import { mapDataLoader, type WorldMapBounds } from "./map-data-loader";
 import { PIXEL_PROJECTION_CODE, questablesProjection, updateProjectionExtent, DEFAULT_PIXEL_EXTENT } from "./map-projection";
 import { type ZoomResolver } from "./maps/questables-style-factory";
+import { getFeatureTypeFromProperties, buildHoverTooltipInfo } from "./maps/feature-tooltip";
 import {
   createQuestablesTileSource,
   type TileSetConfig as QuestablesTileSetConfig,
@@ -226,18 +227,8 @@ const castGeometryFeature = (feature: FeatureLike | undefined): GeometryFeature 
   return feature as GeometryFeature;
 };
 
-const featureTypeFromProperties = (feature: GeometryFeature | null): string | null => {
-  if (!feature) return null;
-  const rawType = feature.get("type") ?? feature.get("featureType");
-  if (typeof rawType === "string" && rawType.trim().length > 0) {
-    return rawType.trim();
-  }
-  const data = feature.get("data");
-  if (data && typeof data === "object" && "type" in data && typeof data.type === "string") {
-    return data.type.trim();
-  }
-  return null;
-};
+const featureTypeFromProperties = (feature: GeometryFeature | null): string | null =>
+  getFeatureTypeFromProperties(feature);
 
 const buildFeatureDetails = (feature: GeometryFeature | null, coordinate: Coordinate | null): MapFeatureDetails | null => {
   if (!feature) return null;
@@ -1210,58 +1201,14 @@ const initializeMap = useCallback(() => {
         return;
       }
 
-      const data = feature.get("data") ?? feature.getProperties();
-      const title =
-        data?.name ??
-        feature.get("name") ??
-        featureTypeFromProperties(feature) ??
-        "Feature";
-      const layerType = featureTypeFromProperties(feature);
-      const subtype = data && typeof data === "object" && "type" in data && typeof data.type === "string"
-        ? data.type.trim()
-        : null;
-      let typeLabel: string | null;
-      if (layerType === "burg" && data && typeof data === "object") {
-        const pop = Number(data.population ?? data.populationraw ?? 0);
-        const isCapital = Boolean(data.capital);
-        const isPort = Boolean(data.port);
-        const size = pop >= 10000 ? "city" : pop >= 1000 ? "town" : pop >= 250 ? "village" : "hamlet";
-        if (isCapital) {
-          typeLabel = "Capital";
-        } else if (isPort && size === "village") {
-          typeLabel = "Fishing village";
-        } else if (isPort && size === "hamlet") {
-          typeLabel = "Fishing hamlet";
-        } else if (isPort) {
-          typeLabel = `Port ${size}`;
-        } else {
-          typeLabel = size[0].toUpperCase() + size.slice(1);
-        }
-      } else if (subtype && layerType && subtype !== layerType) {
-        typeLabel = subtype[0].toUpperCase() + subtype.slice(1) + " " + layerType;
-      } else {
-        typeLabel = subtype ?? layerType;
-        if (typeLabel) typeLabel = typeLabel[0].toUpperCase() + typeLabel.slice(1);
-      }
-
-      let details: string[] | null = null;
-      if (layerType === "burg" && data && typeof data === "object") {
-        const lines: string[] = [];
-        const pop = data.population ?? data.populationraw;
-        if (pop != null) lines.push(`Pop. ${Number(pop).toLocaleString()}`);
-        if (data.elevation != null) lines.push(`Elev. ${data.elevation}`);
-        if (data.temperature != null) lines.push(`Temp. ${data.temperature}`);
-        if (data.culture) lines.push(String(data.culture));
-        if (data.religion) lines.push(String(data.religion));
-        if (lines.length > 0) details = lines;
-      }
+      const tooltip = buildHoverTooltipInfo(feature);
 
       map.getTargetElement().style.cursor = "pointer";
 
       setHoverInfo({
-        title,
-        subtitle: typeLabel,
-        details,
+        title: tooltip.title,
+        subtitle: tooltip.subtitle,
+        details: tooltip.details,
         screenX: event.pixel[0],
         screenY: event.pixel[1],
       });

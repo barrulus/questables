@@ -1,4 +1,3 @@
-/* eslint-disable @typescript-eslint/no-explicit-any */
 import { useEffect, useRef, useState, useCallback, useMemo } from "react";
 import type { ReactNode } from "react";
 import { Card, CardContent, CardHeader, CardTitle } from "./ui/card";
@@ -44,6 +43,7 @@ import { Style, Fill, Stroke, Circle as CircleStyle, Text } from 'ol/style';
 import 'ol/ol.css';
 import { defaults as defaultControls } from 'ol/control';
 import { Overlay } from 'ol';
+import type MapBrowserEvent from 'ol/MapBrowserEvent';
 import { mapDataLoader, type WorldMapBounds } from './map-data-loader';
 import { DEFAULT_PIXEL_EXTENT, questablesProjection, updateProjectionExtent, PIXEL_PROJECTION_CODE } from './map-projection';
 import {
@@ -55,6 +55,7 @@ import {
   getCellStyle,
 } from './maps/questables-style-factory';
 import { createQuestablesTileSource, type TileSetConfig } from './maps/questables-tile-source';
+import { buildHoverTooltipInfo, getFeatureTypeFromProperties } from './maps/feature-tooltip';
 import { useGameSession } from "../contexts/GameSessionContext";
 import { useUser } from "../contexts/UserContext";
 import { useWebSocket } from "../hooks/useWebSocket";
@@ -285,6 +286,13 @@ export function OpenLayersMap() {
     playerTrails: false
   });
   const [popupContent, setPopupContent] = useState<PopupDetails | null>(null);
+  const [hoverInfo, setHoverInfo] = useState<{
+    title: string;
+    subtitle: string | null;
+    details: string[] | null;
+    screenX: number;
+    screenY: number;
+  } | null>(null);
 
   const {
     activeCampaignId,
@@ -584,7 +592,7 @@ export function OpenLayersMap() {
   const rosterByPlayerRef = useRef<Map<string, CampaignRosterEntry>>(new Map());
   const rosterLoadedForCampaignRef = useRef<string | null>(null);
 
-  const getFeatureType = useCallback((feature: Feature, data?: any) => {
+  const getFeatureType = useCallback((feature: Feature, data?: Record<string, unknown>) => {
     const rawType = data?.type ?? feature.get('type');
     return typeof rawType === 'string' ? rawType.toLowerCase() : '';
   }, []);
@@ -630,8 +638,10 @@ export function OpenLayersMap() {
 
       rows = [
         { label: 'Culture', value: toText(data?.culture) },
+        { label: 'Religion', value: toText(data?.religion) },
         { label: 'Population', value: toText(populationValue) },
-        { label: 'Elevation', value: formatElevation(elevationValue) }
+        { label: 'Elevation', value: formatElevation(elevationValue) },
+        { label: 'Temperature', value: toText(data?.temperature) },
       ];
     } else if (featureType === 'marker') {
       const markerName = data?.name ?? feature.get('name') ?? data?.type ?? 'Marker';
@@ -797,7 +807,7 @@ export function OpenLayersMap() {
     ]);
 
     const normalizedWorldMaps: WorldMapSummary[] = (worldMapsData || [])
-      .map((map: any) => {
+      .map((map: Record<string, unknown>) => {
         if (!map?.id || !map?.bounds) {
           return null;
         }
@@ -818,16 +828,16 @@ export function OpenLayersMap() {
     setWorldMaps(normalizedWorldMaps);
 
     const dbTileSets: TileSetConfig[] = (tileSetsData || [])
-      .filter((ts: any) => ts && ts.id && ts.base_url)
-      .map((ts: any) => ({
+      .filter((ts: Record<string, unknown>) => ts && ts.id && typeof ts.base_url === 'string')
+      .map((ts: Record<string, unknown>) => ({
         id: String(ts.id),
         name: typeof ts.name === 'string' && ts.name.trim() ? ts.name : String(ts.id),
-        base_url: ts.base_url,
-        attribution: ts.attribution ?? undefined,
-        min_zoom: Number.isFinite(ts.min_zoom) ? Number(ts.min_zoom) : undefined,
-        max_zoom: Number.isFinite(ts.max_zoom) ? Number(ts.max_zoom) : undefined,
-        tile_size: Number.isFinite(ts.tile_size) ? Number(ts.tile_size) : undefined,
-        wrapX: ts.wrapX ?? false,
+        base_url: String(ts.base_url),
+        attribution: typeof ts.attribution === 'string' ? ts.attribution : undefined,
+        min_zoom: typeof ts.min_zoom === 'number' && Number.isFinite(ts.min_zoom) ? ts.min_zoom : undefined,
+        max_zoom: typeof ts.max_zoom === 'number' && Number.isFinite(ts.max_zoom) ? ts.max_zoom : undefined,
+        tile_size: typeof ts.tile_size === 'number' && Number.isFinite(ts.tile_size) ? ts.tile_size : undefined,
+        wrapX: Boolean(ts.wrapX),
       }));
 
     setTileSets(dbTileSets);
@@ -1031,7 +1041,7 @@ export function OpenLayersMap() {
         : '';
       const response = await fetchJson<{
         type: string;
-        features: Array<{ geometry: { type: string; coordinates: number[] }; properties: Record<string, any> }>;
+        features: Array<{ geometry: { type: string; coordinates: number[] }; properties: Record<string, unknown> }>;
         metadata?: { radius?: number; viewerRole?: string };
       }>(
         `/api/campaigns/${campaignId}/players/visible${radiusQuery}`,
@@ -1053,28 +1063,29 @@ export function OpenLayersMap() {
         }
 
         const properties = feature.properties ?? {};
-        const playerId: string | undefined = properties.playerId ?? properties.player_id;
+        const str = (v: unknown): string | undefined => typeof v === 'string' && v.trim() ? v : undefined;
+        const playerId = str(properties.playerId) ?? str(properties.player_id);
         if (!playerId) return;
 
-        const characterId: string | undefined = properties.characterId ?? properties.character_id;
+        const characterId = str(properties.characterId) ?? str(properties.character_id);
         const rosterEntry = rosterByPlayerRef.current.get(playerId)
           ?? (characterId ? rosterByCharacterRef.current.get(characterId) : undefined)
           ?? null;
 
-        const name = rosterEntry?.name ?? properties.name ?? `Player ${playerId.slice(0, 6)}`;
-        const visibilityState = (properties.visibilityState ?? properties.visibility_state ?? rosterEntry?.visibilityState ?? 'visible') as PlayerToken['visibilityState'];
+        const name = rosterEntry?.name ?? str(properties.name) ?? `Player ${playerId.slice(0, 6)}`;
+        const visibilityState = (str(properties.visibilityState) ?? str(properties.visibility_state) ?? rosterEntry?.visibilityState ?? 'visible') as PlayerToken['visibilityState'];
         const token: PlayerToken = {
           playerId,
-          userId: rosterEntry?.userId ?? properties.userId ?? properties.user_id ?? '',
+          userId: rosterEntry?.userId ?? str(properties.userId) ?? str(properties.user_id) ?? '',
           characterId: characterId ?? rosterEntry?.characterId,
           coordinates: [Number(coords[0]), Number(coords[1])],
           name,
           initials: computeInitials(name),
-          avatarUrl: rosterEntry?.avatarUrl ?? properties.avatarUrl ?? properties.avatar_url ?? null,
+          avatarUrl: rosterEntry?.avatarUrl ?? str(properties.avatarUrl) ?? str(properties.avatar_url) ?? null,
           visibilityState,
-          role: properties.role ?? properties.playerRole ?? rosterEntry?.role ?? 'player',
+          role: str(properties.role) ?? str(properties.playerRole) ?? rosterEntry?.role ?? 'player',
           canViewHistory: Boolean(properties.canViewHistory ?? properties.can_view_history),
-          lastLocatedAt: properties.lastLocatedAt ?? properties.last_located_at ?? rosterEntry?.lastLocatedAt ?? null,
+          lastLocatedAt: str(properties.lastLocatedAt) ?? str(properties.last_located_at) ?? rosterEntry?.lastLocatedAt ?? null,
           hitPoints: rosterEntry?.hitPoints,
           conditions: rosterEntry?.conditions ?? [],
         };
@@ -1148,7 +1159,7 @@ export function OpenLayersMap() {
     trailSelections,
   ]);
 
-  const handleMapClick = useCallback((event: any) => {
+  const handleMapClick = useCallback((event: MapBrowserEvent) => {
     const map = mapInstanceRef.current;
     if (!map) return;
 
@@ -1156,8 +1167,7 @@ export function OpenLayersMap() {
 
     if (selectedTool === 'move') {
       const playerFeature = features.find((feature) => {
-        const data = feature.get('data') ?? feature.getProperties();
-        return getFeatureType(feature, data) === 'player';
+        return getFeatureTypeFromProperties(feature) === 'player';
       });
 
       if (playerFeature) {
@@ -1189,18 +1199,17 @@ export function OpenLayersMap() {
 
     if (features.length > 0) {
       const interactiveFeature = features.find((feature) => {
-        const data = feature.get('data') ?? feature.getProperties();
-        const type = getFeatureType(feature, data);
-        return INTERACTIVE_FEATURE_TYPES.has(type);
+        const featureType = getFeatureTypeFromProperties(feature);
+        return featureType !== null && INTERACTIVE_FEATURE_TYPES.has(featureType);
       });
 
       if (interactiveFeature) {
         const details = buildPopupDetails(interactiveFeature);
-        const featureId = interactiveFeature.get('id') ?? details.data?.id ?? null;
+        const featureId = interactiveFeature.get('id') ?? (details.data as Record<string, unknown> | null)?.id ?? null;
         hoveredFeatureIdRef.current = featureId;
         setPopupContent({
           ...details,
-          coordinates: event.coordinate
+          coordinates: event.coordinate as [number, number]
         });
         overlayRef.current?.setPosition(event.coordinate);
         return;
@@ -1210,11 +1219,11 @@ export function OpenLayersMap() {
     if (selectedTool === 'info' && features.length > 0) {
       const feature = features[0];
       const details = buildPopupDetails(feature);
-      const featureId = feature.get('id') ?? details.data?.id ?? null;
+      const featureId = feature.get('id') ?? (details.data as Record<string, unknown> | null)?.id ?? null;
       hoveredFeatureIdRef.current = featureId;
       setPopupContent({
         ...details,
-        coordinates: event.coordinate
+        coordinates: event.coordinate as [number, number]
       });
       overlayRef.current?.setPosition(event.coordinate);
     } else {
@@ -1222,7 +1231,7 @@ export function OpenLayersMap() {
       setPopupContent(null);
       hoveredFeatureIdRef.current = null;
     }
-  }, [buildPopupDetails, getFeatureType, playerTokens, selectPlayerForMovement, selectedTool]);
+  }, [buildPopupDetails, playerTokens, selectPlayerForMovement, selectedTool]);
 
   const handleZoomChange = useCallback(() => {
     const view = mapInstanceRef.current?.getView();
@@ -1239,22 +1248,25 @@ export function OpenLayersMap() {
       }
 
       // Auto-enable/disable cells layer based on zoom
-      if (zoom >= 10 && !layerVisibility.cells) {
+      const vis = layerVisibilityRef.current;
+      if (zoom >= 10 && !vis.cells) {
         toggleLayer('cells', true);
-      } else if (zoom < 8 && layerVisibility.cells) {
+      } else if (zoom < 8 && vis.cells) {
         toggleLayer('cells', false);
       }
 
       burgsLayerRef.current?.changed();
+      routesLayerRef.current?.changed();
+      markersLayerRef.current?.changed();
     }
-  }, [layerVisibility.cells, toggleLayer]);
+  }, [toggleLayer]);
 
   const handleZoomChangeRef = useRef(handleZoomChange);
   useEffect(() => {
     handleZoomChangeRef.current = handleZoomChange;
   }, [handleZoomChange]);
 
-  const handlePointerMove = useCallback((event: any) => {
+  const handlePointerMove = useCallback((event: MapBrowserEvent) => {
     const map = mapInstanceRef.current;
     if (!map) return;
 
@@ -1263,20 +1275,37 @@ export function OpenLayersMap() {
 
     const features = map.getFeaturesAtPixel(event.pixel) as Feature[];
     const hasInteractiveFeature = features.some((feature) => {
-      const data = feature.get('data') ?? feature.getProperties();
-      const type = getFeatureType(feature, data);
-      return INTERACTIVE_FEATURE_TYPES.has(type);
+      const featureType = getFeatureTypeFromProperties(feature);
+      return featureType !== null && INTERACTIVE_FEATURE_TYPES.has(featureType);
     });
 
-    const shouldShowPointer = hasInteractiveFeature || (selectedTool === 'info' && features.length > 0);
+    const hasAnyFeature = features.length > 0;
+    const shouldShowPointer = hasInteractiveFeature || (selectedTool === 'info' && hasAnyFeature);
     targetElement.style.cursor = shouldShowPointer ? 'pointer' : '';
 
+    // Always build hover tooltip for any feature under the cursor
+    if (hasAnyFeature) {
+      const feature = features[0];
+      const tooltip = buildHoverTooltipInfo(feature);
+
+      setHoverInfo({
+        title: tooltip.title,
+        subtitle: tooltip.subtitle,
+        details: tooltip.details,
+        screenX: event.pixel[0],
+        screenY: event.pixel[1],
+      });
+    } else {
+      setHoverInfo(null);
+    }
+
+    // Click-to-inspect popup logic (info tool only)
     if (selectedTool !== 'info') return;
 
-    if (features.length > 0) {
+    if (hasAnyFeature) {
       const feature = features[0];
       const details = buildPopupDetails(feature);
-      const featureId = feature.get('id') ?? details.data?.id ?? null;
+      const featureId = feature.get('id') ?? (details.data as Record<string, unknown> | null)?.id ?? null;
       if (hoveredFeatureIdRef.current === featureId) {
         overlayRef.current?.setPosition(event.coordinate);
         return;
@@ -1285,7 +1314,7 @@ export function OpenLayersMap() {
       hoveredFeatureIdRef.current = featureId;
       setPopupContent({
         ...details,
-        coordinates: event.coordinate
+        coordinates: event.coordinate as [number, number]
       });
       overlayRef.current?.setPosition(event.coordinate);
     } else if (hoveredFeatureIdRef.current !== null) {
@@ -1293,7 +1322,7 @@ export function OpenLayersMap() {
       overlayRef.current?.setPosition(undefined);
       setPopupContent(null);
     }
-  }, [buildPopupDetails, getFeatureType, selectedTool]);
+  }, [buildPopupDetails, selectedTool]);
 
   const handlePointerMoveRef = useRef(handlePointerMove);
   useEffect(() => {
@@ -1306,8 +1335,9 @@ export function OpenLayersMap() {
   }, [handleMapClick]);
 
   const loadWorldMapData = useCallback(async () => {
-    if (!selectedWorldMap || mapMode !== 'world') return;
+    if (!selectedWorldMap || mapModeRef.current !== 'world') return;
 
+    const vis = layerVisibilityRef.current;
     setLoading(true);
     try {
       const view = mapInstanceRef.current?.getView();
@@ -1322,19 +1352,19 @@ export function OpenLayersMap() {
       // Load real data from PostGIS
       const promises: Promise<Feature[]>[] = [];
 
-      if (dataTypes.includes('burgs') && layerVisibility.burgs) {
+      if (dataTypes.includes('burgs') && vis.burgs) {
         promises.push(mapDataLoader.loadBurgs(selectedWorldMap, bounds));
       }
-      if (dataTypes.includes('routes') && layerVisibility.routes) {
+      if (dataTypes.includes('routes') && vis.routes) {
         promises.push(mapDataLoader.loadRoutes(selectedWorldMap, bounds));
       }
-      if (dataTypes.includes('rivers') && layerVisibility.rivers) {
+      if (dataTypes.includes('rivers') && vis.rivers) {
         promises.push(mapDataLoader.loadRivers(selectedWorldMap, bounds));
       }
-      if (dataTypes.includes('cells') && layerVisibility.cells) {
+      if (dataTypes.includes('cells') && vis.cells) {
         promises.push(mapDataLoader.loadCells(selectedWorldMap, bounds));
       }
-      if (dataTypes.includes('markers') && layerVisibility.markers) {
+      if (dataTypes.includes('markers') && vis.markers) {
         promises.push(mapDataLoader.loadMarkers(selectedWorldMap, bounds));
       }
 
@@ -1342,23 +1372,23 @@ export function OpenLayersMap() {
 
       // Update layers with real data
       let index = 0;
-      if (dataTypes.includes('burgs') && layerVisibility.burgs) {
+      if (dataTypes.includes('burgs') && vis.burgs) {
         burgsLayerRef.current?.getSource()?.clear();
         burgsLayerRef.current?.getSource()?.addFeatures(results[index++] || []);
       }
-      if (dataTypes.includes('routes') && layerVisibility.routes) {
+      if (dataTypes.includes('routes') && vis.routes) {
         routesLayerRef.current?.getSource()?.clear();
         routesLayerRef.current?.getSource()?.addFeatures(results[index++] || []);
       }
-      if (dataTypes.includes('rivers') && layerVisibility.rivers) {
+      if (dataTypes.includes('rivers') && vis.rivers) {
         riversLayerRef.current?.getSource()?.clear();
         riversLayerRef.current?.getSource()?.addFeatures(results[index++] || []);
       }
-      if (dataTypes.includes('cells') && layerVisibility.cells) {
+      if (dataTypes.includes('cells') && vis.cells) {
         cellsLayerRef.current?.getSource()?.clear();
         cellsLayerRef.current?.getSource()?.addFeatures(results[index++] || []);
       }
-      if (dataTypes.includes('markers') && layerVisibility.markers) {
+      if (dataTypes.includes('markers') && vis.markers) {
         markersLayerRef.current?.getSource()?.clear();
         markersLayerRef.current?.getSource()?.addFeatures(results[index++] || []);
       }
@@ -1369,13 +1399,18 @@ export function OpenLayersMap() {
     } finally {
       setLoading(false);
     }
-  }, [selectedWorldMap, layerVisibility, mapMode]);
+  }, [selectedWorldMap]);
+
+  const loadWorldMapDataRef = useRef(loadWorldMapData);
+  useEffect(() => {
+    loadWorldMapDataRef.current = loadWorldMapData;
+  }, [loadWorldMapData]);
 
   const handleMapMoveEnd = useCallback(() => {
-    if (mapMode === 'world') {
-      loadWorldMapData();
+    if (mapModeRef.current === 'world') {
+      loadWorldMapDataRef.current();
     }
-  }, [loadWorldMapData, mapMode]);
+  }, []);
 
   const handleMapMoveEndRef = useRef(handleMapMoveEnd);
   useEffect(() => {
@@ -1517,7 +1552,7 @@ export function OpenLayersMap() {
 
     // Event handlers
     const view = map.getView();
-    const mapClickListener = (event: any) => {
+    const mapClickListener = (event: MapBrowserEvent) => {
       const handler = handleMapClickRef.current;
       if (handler) handler(event);
     };
@@ -1525,7 +1560,7 @@ export function OpenLayersMap() {
       const handler = handleMapMoveEndRef.current;
       if (handler) handler();
     };
-    const pointerMoveListener = (event: any) => {
+    const pointerMoveListener = (event: MapBrowserEvent) => {
       const handler = handlePointerMoveRef.current;
       if (handler) handler(event);
     };
@@ -1609,12 +1644,12 @@ export function OpenLayersMap() {
       }
       loadEncounterData();
     } else {
-      loadWorldMapData();
+      loadWorldMapDataRef.current();
       if (activeCampaignId) {
         void loadVisiblePlayers(activeCampaignId);
       }
     }
-  }, [activeCampaignId, loadVisiblePlayers, loadWorldMapData, mapMode]);
+  }, [activeCampaignId, loadVisiblePlayers, mapMode]);
 
   useEffect(() => {
     if (!activeCampaignId) {
@@ -1644,9 +1679,9 @@ export function OpenLayersMap() {
 
   useEffect(() => {
     if (mapMode === 'world') {
-      loadWorldMapData();
+      loadWorldMapDataRef.current();
     }
-  }, [layerVisibility, mapMode, loadWorldMapData]);
+  }, [layerVisibility, mapMode]);
 
   useEffect(() => {
     const handleResize = () => {
@@ -1910,7 +1945,7 @@ export function OpenLayersMap() {
                   key={tool.id}
                   variant={selectedTool === tool.id ? "default" : "outline"}
                   size="sm"
-                  onClick={() => setSelectedTool(tool.id as any)}
+                  onClick={() => setSelectedTool(tool.id)}
                   className="h-8 px-2"
                   title={tool.name}
                 >
@@ -1944,11 +1979,26 @@ export function OpenLayersMap() {
       </CardHeader>
 
       <CardContent className="p-0 relative">
-        <div
-          ref={mapRef}
-          className="w-full bg-blue-50"
-          style={{ height: 'calc(100vh - 200px)' }}
-        />
+        <div className="relative">
+          <div
+            ref={mapRef}
+            className="w-full bg-blue-50"
+            style={{ height: 'calc(100vh - 200px)' }}
+          />
+
+          {hoverInfo ? (
+            <div
+              className="pointer-events-none absolute z-40 rounded-md bg-slate-900/90 px-3 py-1 text-xs text-white shadow"
+              style={{ left: hoverInfo.screenX + 16, top: hoverInfo.screenY + 16 }}
+            >
+              <div className="font-medium">{hoverInfo.title}</div>
+              {hoverInfo.subtitle ? <div className="text-[10px] uppercase text-slate-300">{hoverInfo.subtitle}</div> : null}
+              {hoverInfo.details ? hoverInfo.details.map((line, i) => (
+                <div key={i} className="text-[10px] text-slate-300">{line}</div>
+              )) : null}
+            </div>
+          ) : null}
+        </div>
 
         {/* Popup */}
         <div ref={popupRef} className="ol-popup">

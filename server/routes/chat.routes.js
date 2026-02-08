@@ -59,7 +59,7 @@ router.post('/api/campaigns/:campaignId/messages', requireAuth, requireCampaignP
   }
 });
 
-router.get('/api/campaigns/:campaignId/messages', async (req, res) => {
+router.get('/api/campaigns/:campaignId/messages', requireAuth, requireCampaignParticipation, async (req, res) => {
   const { campaignId } = req.params;
   const { limit = 50, offset = 0 } = req.query;
 
@@ -73,7 +73,7 @@ router.get('/api/campaigns/:campaignId/messages', async (req, res) => {
 });
 
 // Get recent messages for a campaign (for polling)
-router.get('/api/campaigns/:campaignId/messages/recent', async (req, res) => {
+router.get('/api/campaigns/:campaignId/messages/recent', requireAuth, requireCampaignParticipation, async (req, res) => {
   const { campaignId } = req.params;
   const { since } = req.query; // ISO timestamp
 
@@ -87,7 +87,7 @@ router.get('/api/campaigns/:campaignId/messages/recent', async (req, res) => {
 });
 
 // Delete a chat message (only by sender or DM)
-router.delete('/api/campaigns/:campaignId/messages/:messageId', async (req, res) => {
+router.delete('/api/campaigns/:campaignId/messages/:messageId', requireAuth, requireCampaignParticipation, async (req, res) => {
   const { campaignId, messageId } = req.params;
   const { userId } = req.body;
 

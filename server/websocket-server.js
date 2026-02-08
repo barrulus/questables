@@ -4,6 +4,7 @@ import {
   logWarn,
   logError,
 } from './utils/logger.js';
+import { verifyToken } from './auth-middleware.js';
 
 export const REALTIME_EVENTS = {
   spawnUpdated: 'spawn-updated',
@@ -45,7 +46,7 @@ class WebSocketServer {
   }
 
   setupMiddleware() {
-    // Authentication middleware
+    // Authentication middleware - verify JWT token on handshake
     this.io.use((socket, next) => {
       try {
         const token = socket.handshake.auth.token;
@@ -54,10 +55,11 @@ class WebSocketServer {
           return next(new Error('Authentication token required'));
         }
 
-        // For development, we'll use a simple user ID validation
-        // In production, you would verify JWT tokens here
-        const user = { id: socket.handshake.auth.userId, username: socket.handshake.auth.username };
-        socket.user = user;
+        const decoded = verifyToken(token);
+        socket.user = {
+          id: decoded.userId,
+          username: decoded.username ?? socket.handshake.auth.username ?? 'unknown',
+        };
         next();
       } catch (err) {
         logWarn('WebSocket authentication failed', {
