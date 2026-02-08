@@ -20,6 +20,7 @@ import {
   updateCampaignRegion,
   deleteCampaignRegion,
 } from '../services/maps/service.js';
+import { getSettlementInfo, getSettlementTile } from '../services/maps/settlement-service.js';
 import { getViewerContextOrThrow, ensureDmControl } from '../services/campaigns/service.js';
 
 const router = Router();
@@ -169,6 +170,44 @@ router.get('/:worldId/cells', async (req, res) => {
     logError('World map cell listing failed', error, { worldId });
     const status = error.status || 500;
     return res.status(status).json({ error: error.code || 'maps_cells_failed', message: error.message });
+  }
+});
+
+router.get('/settlements/:burgId/info', async (req, res) => {
+  const { burgId } = req.params;
+
+  try {
+    const info = await getSettlementInfo(burgId);
+    return res.json(info);
+  } catch (error) {
+    logError('Settlement info fetch failed', error, { burgId });
+    const status = error.status || 500;
+    return res.status(status).json({ error: error.code || 'settlement_info_failed', message: error.message });
+  }
+});
+
+router.get('/settlements/:burgId/tiles/:z/:x/:y.png', async (req, res) => {
+  const { burgId } = req.params;
+  const z = parseInt(req.params.z, 10);
+  const x = parseInt(req.params.x, 10);
+  const y = parseInt(req.params.y, 10);
+
+  if (!Number.isInteger(z) || !Number.isInteger(x) || !Number.isInteger(y) || z < 0) {
+    return res.status(400).json({ error: 'invalid_tile_coords', message: 'z, x, y must be non-negative integers' });
+  }
+
+  try {
+    const png = await getSettlementTile(burgId, z, x, y);
+    if (!png) {
+      return res.status(204).send();
+    }
+    res.set('Content-Type', 'image/png');
+    res.set('Cache-Control', 'public, max-age=31536000, immutable');
+    return res.send(png);
+  } catch (error) {
+    logError('Settlement tile fetch failed', error, { burgId, z, x, y });
+    const status = error.status || 500;
+    return res.status(status).json({ error: error.code || 'settlement_tile_failed', message: error.message });
   }
 });
 

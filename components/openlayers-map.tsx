@@ -2,7 +2,7 @@ import { useEffect, useRef, useState, useCallback, useMemo } from "react";
 import type { ReactNode } from "react";
 import { Card, CardContent, CardHeader, CardTitle } from "./ui/card";
 import { Button } from "./ui/button";
-import { Tabs, TabsList, TabsTrigger } from "./ui/tabs";
+// Tabs removed — settlement mode is entered via burg popup, not a tab
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "./ui/select";
 import { Badge } from "./ui/badge";
 import { Popover, PopoverTrigger, PopoverContent } from "./ui/popover";
@@ -19,11 +19,12 @@ import {
   Users,
   Crown,
   Globe,
-  Crosshair,
   Layers,
   Navigation,
   Info,
-  Search
+  Search,
+  Building2,
+  ArrowLeft,
 } from "lucide-react";
 
 // OpenLayers imports
@@ -55,6 +56,7 @@ import {
   getCellStyle,
 } from './maps/questables-style-factory';
 import { createQuestablesTileSource, type TileSetConfig } from './maps/questables-tile-source';
+import { createSettlementTileSource } from './maps/settlement-tile-source';
 import { buildHoverTooltipInfo, getFeatureTypeFromProperties } from './maps/feature-tooltip';
 import { useGameSession } from "../contexts/GameSessionContext";
 import { useUser } from "../contexts/UserContext";
@@ -252,9 +254,16 @@ export function OpenLayersMap() {
   const currentWorldBoundsRef = useRef<WorldMapBounds | null>(null);
   const currentZoomRef = useRef<number>(0);
   const hoveredFeatureIdRef = useRef<string | null>(null);
+  const popupPinnedRef = useRef(false);
 
   // State
-  const [mapMode, setMapMode] = useState<'world' | 'encounter'>('world');
+  const [mapMode, setMapMode] = useState<'world' | 'settlement'>('world');
+  const [settlementInfo, setSettlementInfo] = useState<{
+    burgId: string;
+    name: string;
+    population: number;
+    maxZoom: number;
+  } | null>(null);
   const [selectedTool, setSelectedTool] = useState<'move' | 'measure' | 'info'>('info');
   const [selectedWorldMap, setSelectedWorldMap] = useState<string>('');
   const [tileSets, setTileSets] = useState<TileSetConfig[]>([]);
@@ -377,6 +386,7 @@ export function OpenLayersMap() {
     setSelectedPlayerId(token.playerId);
     overlayRef.current?.setPosition(undefined);
     setPopupContent(null);
+    popupPinnedRef.current = false;
     toast.info(`Selected ${token.name}. Click the map to choose a destination.`, {
       id: MOVE_PROMPT_TOAST_ID,
     });
@@ -586,7 +596,8 @@ export function OpenLayersMap() {
   const campaignLayerRef = useRef<GeometryLayer | null>(null);
   const playerLayerRef = useRef<GeometryLayer | null>(null);
   const playerTrailLayerRef = useRef<TrailLayer | null>(null);
-  const encounterLayerRef = useRef<GeometryLayer | null>(null);
+  const settlementLayerRef = useRef<TileLayer | null>(null);
+  const savedWorldViewRef = useRef<View | null>(null);
   const playerTrailCacheRef = useRef<Map<string, PlayerTrailMeta>>(new Map());
   const rosterByCharacterRef = useRef<Map<string, CampaignRosterEntry>>(new Map());
   const rosterByPlayerRef = useRef<Map<string, CampaignRosterEntry>>(new Map());
@@ -1207,6 +1218,7 @@ export function OpenLayersMap() {
         const details = buildPopupDetails(interactiveFeature);
         const featureId = interactiveFeature.get('id') ?? (details.data as Record<string, unknown> | null)?.id ?? null;
         hoveredFeatureIdRef.current = featureId;
+        popupPinnedRef.current = true;
         setPopupContent({
           ...details,
           coordinates: event.coordinate as [number, number]
@@ -1221,6 +1233,7 @@ export function OpenLayersMap() {
       const details = buildPopupDetails(feature);
       const featureId = feature.get('id') ?? (details.data as Record<string, unknown> | null)?.id ?? null;
       hoveredFeatureIdRef.current = featureId;
+      popupPinnedRef.current = true;
       setPopupContent({
         ...details,
         coordinates: event.coordinate as [number, number]
@@ -1230,6 +1243,7 @@ export function OpenLayersMap() {
       overlayRef.current?.setPosition(undefined);
       setPopupContent(null);
       hoveredFeatureIdRef.current = null;
+      popupPinnedRef.current = false;
     }
   }, [buildPopupDetails, playerTokens, selectPlayerForMovement, selectedTool]);
 
@@ -1299,30 +1313,9 @@ export function OpenLayersMap() {
       setHoverInfo(null);
     }
 
-    // Click-to-inspect popup logic (info tool only)
-    if (selectedTool !== 'info') return;
-
-    if (hasAnyFeature) {
-      const feature = features[0];
-      const details = buildPopupDetails(feature);
-      const featureId = feature.get('id') ?? (details.data as Record<string, unknown> | null)?.id ?? null;
-      if (hoveredFeatureIdRef.current === featureId) {
-        overlayRef.current?.setPosition(event.coordinate);
-        return;
-      }
-
-      hoveredFeatureIdRef.current = featureId;
-      setPopupContent({
-        ...details,
-        coordinates: event.coordinate as [number, number]
-      });
-      overlayRef.current?.setPosition(event.coordinate);
-    } else if (hoveredFeatureIdRef.current !== null) {
-      hoveredFeatureIdRef.current = null;
-      overlayRef.current?.setPosition(undefined);
-      setPopupContent(null);
-    }
-  }, [buildPopupDetails, selectedTool]);
+    // When popup is pinned by a click, pointer-move should not dismiss it
+    if (popupPinnedRef.current) return;
+  }, [selectedTool]);
 
   const handlePointerMoveRef = useRef(handlePointerMove);
   useEffect(() => {
@@ -1421,7 +1414,6 @@ export function OpenLayersMap() {
     if (!mapRef.current || mapInstanceRef.current) return;
 
     const initialVisibility = layerVisibilityRef.current;
-    const initialMode = mapModeRef.current;
 
     // Base tile layer; source assigned after database tile sets load
     const baseLayer = new TileLayer({
@@ -1486,13 +1478,6 @@ export function OpenLayersMap() {
     });
     playerLayerRef.current = playerLayer;
 
-    const encounterLayer = new VectorLayer<GeometrySource>({
-      source: new VectorSource<GeometryFeature>({ wrapX: false }),
-      style: getEncounterStyle,
-      visible: initialMode === 'encounter'
-    });
-    encounterLayerRef.current = encounterLayer;
-
     // Create popup overlay
     const overlay = new Overlay({
       element: popupRef.current!,
@@ -1517,7 +1502,6 @@ export function OpenLayersMap() {
         campaignLayer,
         playerTrailLayer,
         playerLayer,
-        encounterLayer,
       ],
       overlays: [overlay],
       view: new View({
@@ -1615,7 +1599,8 @@ export function OpenLayersMap() {
 
   // Handle map mode changes
   useEffect(() => {
-    if (!mapInstanceRef.current) return;
+    const map = mapInstanceRef.current;
+    if (!map) return;
 
     const worldLayers = [
       burgsLayerRef.current,
@@ -1626,30 +1611,89 @@ export function OpenLayersMap() {
       campaignLayerRef.current
     ];
 
-    const encounterLayer = encounterLayerRef.current;
+    const baseLayer = baseLayerRef.current;
 
-    worldLayers.forEach(layer => {
-      if (layer) layer.setVisible(mapMode === 'world');
-    });
+    if (mapMode === 'settlement' && settlementInfo) {
+      // Hide world layers + base tile layer
+      worldLayers.forEach(layer => { if (layer) layer.setVisible(false); });
+      playerTrailLayerRef.current?.setVisible(false);
+      playerLayerRef.current?.setVisible(false);
+      if (baseLayer) baseLayer.setVisible(false);
 
-    if (encounterLayer) {
-      encounterLayer.setVisible(mapMode === 'encounter');
-    }
+      // Save the current world view so we can restore it later
+      savedWorldViewRef.current = map.getView();
 
-    if (mapMode === 'encounter') {
-      const view = mapInstanceRef.current?.getView();
-      if (view) {
-        const maxZoom = view.getMaxZoom();
-        view.setZoom(Math.min(15, typeof maxZoom === 'number' ? maxZoom : 15));
+      // Remove any existing settlement layer
+      if (settlementLayerRef.current) {
+        map.removeLayer(settlementLayerRef.current);
+        settlementLayerRef.current = null;
       }
-      loadEncounterData();
+
+      // Create settlement tile layer
+      const tileSource = createSettlementTileSource(
+        settlementInfo.burgId,
+        settlementInfo.maxZoom,
+      );
+      const tileLayer = new TileLayer({ source: tileSource, preload: 2 });
+      settlementLayerRef.current = tileLayer;
+      map.addLayer(tileLayer);
+
+      // Create a new View scoped to the settlement extent.
+      // The resolutions must match the tile grid so zoom levels align with tiles.
+      const tileSize = 256;
+      const totalPixels = tileSize * Math.pow(2, settlementInfo.maxZoom);
+      const settlementExtent: [number, number, number, number] = [0, -totalPixels, totalPixels, 0];
+      const extentWidth = settlementExtent[2] - settlementExtent[0];
+      const settlementResolutions = Array.from(
+        { length: settlementInfo.maxZoom + 1 },
+        (_, z) => extentWidth / tileSize / Math.pow(2, z),
+      );
+      const settlementView = new View({
+        projection: questablesProjection,
+        extent: settlementExtent,
+        resolutions: settlementResolutions,
+        constrainOnlyCenter: true,
+        enableRotation: false,
+      });
+      map.setView(settlementView);
+      // Re-register zoom listener on the new view
+      const zoomHandler = () => { handleZoomChangeRef.current?.(); };
+      settlementView.on('change:resolution', zoomHandler);
+      settlementView.fit(settlementExtent, {
+        size: map.getSize(),
+        padding: [20, 20, 20, 20],
+      });
     } else {
+      // Switching back to world
+      if (settlementLayerRef.current) {
+        map.removeLayer(settlementLayerRef.current);
+        settlementLayerRef.current = null;
+      }
+
+      // Restore the saved world view
+      if (savedWorldViewRef.current) {
+        map.setView(savedWorldViewRef.current);
+        savedWorldViewRef.current = null;
+      }
+
+      // Show base layer + world layers
+      if (baseLayer) baseLayer.setVisible(true);
+      const vis = layerVisibilityRef.current;
+      burgsLayerRef.current?.setVisible(vis.burgs);
+      routesLayerRef.current?.setVisible(vis.routes);
+      riversLayerRef.current?.setVisible(vis.rivers);
+      cellsLayerRef.current?.setVisible(vis.cells);
+      markersLayerRef.current?.setVisible(vis.markers);
+      campaignLayerRef.current?.setVisible(vis.campaignLocations);
+      playerTrailLayerRef.current?.setVisible(vis.playerTrails);
+      playerLayerRef.current?.setVisible(vis.playerTokens);
+
       loadWorldMapDataRef.current();
       if (activeCampaignId) {
         void loadVisiblePlayers(activeCampaignId);
       }
     }
-  }, [activeCampaignId, loadVisiblePlayers, mapMode]);
+  }, [activeCampaignId, loadVisiblePlayers, mapMode, settlementInfo]);
 
   useEffect(() => {
     if (!activeCampaignId) {
@@ -1699,6 +1743,7 @@ export function OpenLayersMap() {
       overlayRef.current?.setPosition(undefined);
       setPopupContent(null);
       hoveredFeatureIdRef.current = null;
+      popupPinnedRef.current = false;
     }
   }, [selectedTool]);
 
@@ -1708,17 +1753,32 @@ export function OpenLayersMap() {
     }
   }, [clearMovementSelection, selectedTool]);
 
-  // Load encounter data
-  const loadEncounterData = useCallback(async () => {
-    if (!encounterLayerRef.current) return;
-
-    // For encounter mode, you would load tactical battle map data
-    // This is a placeholder - in real implementation, load from campaign encounter data
-    const source = encounterLayerRef.current.getSource();
-    if (source) {
-      source.clear();
-      // Add encounter-specific features here
+  const openSettlement = useCallback(async (burgId: string) => {
+    try {
+      const info = await fetchJson<{
+        burgId: string;
+        name: string;
+        population: number;
+        maxZoom: number;
+        tileSize: number;
+      }>(`/api/maps/settlements/${burgId}/info`);
+      if (!info) return;
+      setSettlementInfo({
+        burgId: info.burgId,
+        name: info.name,
+        population: info.population,
+        maxZoom: info.maxZoom,
+      });
+      setMapMode('settlement');
+    } catch (err) {
+      console.error('[OpenLayersMap] Failed to load settlement info', err);
+      toast.error('Failed to load settlement map.');
     }
+  }, []);
+
+  const closeSettlement = useCallback(() => {
+    setSettlementInfo(null);
+    setMapMode('world');
   }, []);
 
   // Update player layer with live tokens
@@ -1880,25 +1940,28 @@ export function OpenLayersMap() {
       <CardHeader className="pb-3">
         <div className="flex justify-between items-center">
           <CardTitle className="flex items-center gap-2">
-            {mapMode === 'world' ? <Globe className="w-5 h-5" /> : <Crosshair className="w-5 h-5" />}
-            {mapMode === 'world' ? 'World Map' : 'Encounter Map'}
+            {mapMode === 'world' ? <Globe className="w-5 h-5" /> : <Building2 className="w-5 h-5" />}
+            {mapMode === 'world' ? 'World Map' : settlementInfo?.name ?? 'Settlement'}
+            {mapMode === 'settlement' && settlementInfo && (
+              <Badge variant="secondary" className="ml-1 text-xs">
+                Pop. {settlementInfo.population.toLocaleString()}
+              </Badge>
+            )}
             {loading && <Badge variant="secondary" className="ml-2">Loading...</Badge>}
           </CardTitle>
 
           <div className="flex items-center gap-2">
-            {/* Map Mode Toggle */}
-            <Tabs value={mapMode} onValueChange={(value) => setMapMode(value as 'world' | 'encounter')}>
-              <TabsList className="h-8">
-                <TabsTrigger value="world" className="h-6 px-2 text-xs">
-                  <Globe className="w-3 h-3 mr-1" />
-                  World
-                </TabsTrigger>
-                <TabsTrigger value="encounter" className="h-6 px-2 text-xs">
-                  <Crosshair className="w-3 h-3 mr-1" />
-                  Encounter
-                </TabsTrigger>
-              </TabsList>
-            </Tabs>
+            {mapMode === 'settlement' && (
+              <Button
+                variant="outline"
+                size="sm"
+                className="h-8 px-3 text-xs"
+                onClick={closeSettlement}
+              >
+                <ArrowLeft className="w-3 h-3 mr-1" />
+                Back to World Map
+              </Button>
+            )}
 
             {/* World Map Selector */}
             {mapMode === 'world' && (
@@ -2015,6 +2078,7 @@ export function OpenLayersMap() {
                     onClick={() => {
                       overlayRef.current?.setPosition(undefined);
                       setPopupContent(null);
+                      popupPinnedRef.current = false;
                     }}
                     className="h-6 w-6 p-0"
                   >
@@ -2043,6 +2107,25 @@ export function OpenLayersMap() {
                       </pre>
                     </div>
                   ) : null}
+                  {popupContent.featureType === 'burg' && mapMode === 'world' && (
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      className="w-full mt-2 h-7 text-xs"
+                      onClick={() => {
+                        const burgId = (popupContent.data as Record<string, unknown> | null)?.id;
+                        if (typeof burgId === 'string') {
+                          overlayRef.current?.setPosition(undefined);
+                          setPopupContent(null);
+                          popupPinnedRef.current = false;
+                          void openSettlement(burgId);
+                        }
+                      }}
+                    >
+                      <Building2 className="w-3 h-3 mr-1" />
+                      View Settlement
+                    </Button>
+                  )}
                 </div>
               </CardContent>
             </Card>
@@ -2176,7 +2259,7 @@ export function OpenLayersMap() {
           <div className="flex items-center gap-4 text-xs text-muted-foreground">
             <span>Zoom: {currentZoom}</span>
             <span>Players: {playerTokens.length}</span>
-            <span>Mode: {mapMode === 'world' ? 'Exploration' : 'Tactical'}</span>
+            <span>Mode: {mapMode === 'world' ? 'Exploration' : 'Settlement'}</span>
           </div>
           <div className="flex gap-1">
             {mapMode === 'world' && (
@@ -2306,13 +2389,6 @@ export function OpenLayersMap() {
       </Dialog>
     </Card>
   );
-}
-
-function getEncounterStyle(): Style {
-  return new Style({
-    fill: new Fill({ color: 'rgba(128,128,128,0.7)' }),
-    stroke: new Stroke({ color: '#666', width: 2 })
-  });
 }
 
 function getPlayerTrailStyle(): Style {

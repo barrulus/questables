@@ -293,8 +293,8 @@ export const listWorldBurgs = async ({ worldId, bounds }) => {
            plaza,
            temple,
            shanty,
-           x_px,
-           y_px,
+           xpixel AS x_px,
+           ypixel AS y_px,
            cell,
            ST_AsGeoJSON(geom)::json AS geometry
       FROM maps_burgs
@@ -342,8 +342,8 @@ export const searchWorldBurgs = async ({ worldId, term, limit }) => {
              walls,
              plaza,
              temple,
-             x_px,
-             y_px,
+             xpixel AS x_px,
+             ypixel AS y_px,
              ST_AsGeoJSON(geom)::json AS geometry
         FROM maps_burgs
        WHERE world_id = $1
@@ -779,6 +779,17 @@ export const updateCampaignRegion = async (campaignId, regionId, payload, { acto
   );
 
   return rows[0] ? formatRegionRow(rows[0]) : null;
+};
+
+export const getBurgById = async (burgId) => {
+  const { rows } = await query(
+    `SELECT id, name, population, port, citadel, walls, plaza, temple, shanty,
+            capital, culture, elevation, temperature
+       FROM maps_burgs WHERE id = $1 LIMIT 1`,
+    [burgId],
+    { label: 'maps.burgs.fetchById' },
+  );
+  return rows[0] ?? null;
 };
 
 export const deleteCampaignRegion = async (campaignId, regionId) => {
