@@ -29,6 +29,7 @@ import { registerEncounterRoutes } from './routes/encounters.routes.js';
 import { registerNpcRoutes } from './routes/npcs.routes.js';
 import { registerUploadRoutes } from './routes/uploads.routes.js';
 import { registerUserRoutes } from './routes/users.routes.js';
+import { registerSrdRoutes } from './routes/srd.routes.js';
 import { ensureLLMService } from './llm/request-helpers.js';
 import {
   logInfo,
@@ -398,6 +399,7 @@ registerSessionRoutes(app);
 registerEncounterRoutes(app);
 registerNpcRoutes(app);
 registerUploadRoutes(app, { upload });
+registerSrdRoutes(app);
 
 const loadProviderConfigurations = async () => {
   try {

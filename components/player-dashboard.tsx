@@ -38,6 +38,7 @@ interface PlayerDashboardProps {
   user: { id: string; username: string; email: string; roles: string[]; role?: string };
   onEnterGame: () => void;
   onLogout: () => void;
+  onCreateCharacter?: () => void;
 }
 
 type HitPoints = {
@@ -399,7 +400,7 @@ const formatPercentage = (current: number, max: number) => {
   return Math.min(100, Math.max(0, Math.round(pct)));
 };
 
-export function PlayerDashboard({ user, onEnterGame, onLogout }: PlayerDashboardProps) {
+export function PlayerDashboard({ user, onEnterGame, onLogout, onCreateCharacter }: PlayerDashboardProps) {
   const [characters, setCharacters] = useState<PlayerCharacter[]>([]);
   const [playerCampaigns, setPlayerCampaigns] = useState<PlayerCampaign[]>([]);
   const [publicCampaigns, setPublicCampaigns] = useState<PlayerCampaign[]>([]);
@@ -573,9 +574,13 @@ export function PlayerDashboard({ user, onEnterGame, onLogout }: PlayerDashboard
   );
 
   const handleOpenCharacterCreator = useCallback(() => {
+    if (onCreateCharacter) {
+      onCreateCharacter();
+      return;
+    }
     setCharacterManagerCommand({ type: "create", token: Date.now() });
     setCharacterManagerOpen(true);
-  }, []);
+  }, [onCreateCharacter]);
 
   const handleEditCharacter = useCallback((characterId: string) => {
     setCharacterManagerCommand({ type: "edit", token: Date.now(), characterId });

@@ -148,6 +148,22 @@ export const characterSchema = z.object({
   spellcasting: spellcastingSchema.optional(),
   currency: currencySchema.optional(),
   notes: z.string().max(2000, 'Notes too long').optional(),
+  species_key: z.string().optional().nullable(),
+  class_key: z.string().optional().nullable(),
+  background_key: z.string().optional().nullable(),
+  subrace: z.string().max(100).optional().nullable(),
+  subclass: z.string().max(100).optional().nullable(),
+  experience_points: z.number().int().min(0).optional(),
+  inspiration: z.boolean().optional(),
+  death_saves: z.object({
+    successes: z.number().int().min(0).max(3),
+    failures: z.number().int().min(0).max(3),
+  }).optional(),
+  conditions: z.array(z.string()).optional(),
+  languages: z.array(z.string()).optional(),
+  proficiencies: z.record(z.string(), z.array(z.string())).optional(),
+  ability_score_method: z.string().max(30).optional().nullable(),
+  creation_state: z.record(z.string(), z.unknown()).optional().nullable(),
   created_at: z.string().datetime().optional(),
   updated_at: z.string().datetime().optional()
 });

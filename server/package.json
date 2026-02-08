@@ -7,7 +7,10 @@
   "scripts": {
     "start": "node database-server.js",
     "dev": "node node_modules/nodemon/bin/nodemon.js database-server.js",
-    "setup": "node setup-database.js"
+    "setup": "node setup-database.js",
+    "import-srd": "node scripts/import-srd-data.js",
+    "import-srd:2014": "node scripts/import-srd-data.js --documents srd-2014",
+    "import-srd:2024": "node scripts/import-srd-data.js --documents srd-2024"
   },
   "dependencies": {
     "@types/multer": "^2.0.0",

@@ -17,8 +17,9 @@ import { UserProvider, useUser } from "./contexts/UserContext";
 import { ErrorBoundary } from "./components/error-boundary";
 import { DatabaseProvider, DatabaseStatus, useDatabaseContext } from "./components/database-status";
 import { GameSessionProvider, useGameSession } from "./contexts/GameSessionContext";
+import { CharacterCreationWizard } from "./components/character-wizard/character-creation-wizard";
 
-type AppState = "landing" | "dashboard" | "game";
+type AppState = "landing" | "dashboard" | "game" | "character-create";
 type DashboardView = "player" | "dm" | "admin";
 
 interface DashboardNavItem {
@@ -174,6 +175,7 @@ function AppContent() {
           user={user}
           onEnterGame={handleEnterGame}
           onLogout={handleLogout}
+          onCreateCharacter={() => setAppState("character-create")}
         />
       );
     };
@@ -213,6 +215,17 @@ function AppContent() {
           {dashboardContent}
         </div>
       </div>
+    );
+  }
+
+  // Character creation wizard
+  if (appState === "character-create" && user) {
+    return (
+      <CharacterCreationWizard
+        user={user}
+        onBack={() => setAppState("dashboard")}
+        onCharacterCreated={() => setAppState("dashboard")}
+      />
     );
   }
 

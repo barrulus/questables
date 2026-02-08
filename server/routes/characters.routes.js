@@ -60,6 +60,20 @@ router.post('/', requireAuth, validateCharacter, handleValidationErrors, async (
     bonds,
     flaws,
     spellcasting,
+    species_key,
+    class_key,
+    background_key,
+    subrace,
+    subclass,
+    experience_points,
+    alignment,
+    inspiration,
+    death_saves,
+    conditions,
+    languages,
+    proficiencies,
+    ability_score_method,
+    creation_state,
   } = req.body;
 
   if (!user_id || !name || !character_class || !race || !background) {
@@ -76,9 +90,13 @@ router.post('/', requireAuth, validateCharacter, handleValidationErrors, async (
       INSERT INTO characters (
         user_id, name, class, level, race, background, hit_points, armor_class, speed,
         proficiency_bonus, abilities, saving_throws, skills, inventory, equipment,
-        avatar_url, backstory, personality, ideals, bonds, flaws, spellcasting
+        avatar_url, backstory, personality, ideals, bonds, flaws, spellcasting,
+        species_key, class_key, background_key, subrace, subclass,
+        experience_points, alignment, inspiration, death_saves, conditions,
+        languages, proficiencies, ability_score_method, creation_state
       )
-      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22)
+      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22,
+              $23, $24, $25, $26, $27, $28, $29, $30, $31::jsonb, $32::jsonb, $33::jsonb, $34::jsonb, $35, $36::jsonb)
       RETURNING *
     `,
       [
@@ -113,6 +131,20 @@ router.post('/', requireAuth, validateCharacter, handleValidationErrors, async (
         bonds,
         flaws,
         JSON.stringify(spellcasting),
+        species_key || null,
+        class_key || null,
+        background_key || null,
+        subrace || null,
+        subclass || null,
+        experience_points || 0,
+        alignment || null,
+        inspiration || false,
+        JSON.stringify(death_saves || { successes: 0, failures: 0 }),
+        JSON.stringify(conditions || []),
+        JSON.stringify(languages || ['Common']),
+        JSON.stringify(proficiencies || {}),
+        ability_score_method || null,
+        creation_state ? JSON.stringify(creation_state) : null,
       ],
     );
 
@@ -180,6 +212,11 @@ router.put(
             'inventory',
             'equipment',
             'spellcasting',
+            'death_saves',
+            'conditions',
+            'languages',
+            'proficiencies',
+            'creation_state',
           ].includes(field)
         ) {
           return `${field} = $${index + 1}::jsonb`;

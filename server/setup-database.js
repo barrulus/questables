@@ -61,6 +61,20 @@ async function setupDatabase() {
 
     console.log("✓ Database schema created");
 
+    // Execute SRD reference data schema if it exists
+    const srdSchemaPath = join(__dirname, "..", "database", "srd-schema.sql");
+    if (existsSync(srdSchemaPath)) {
+      console.log("Creating SRD reference data schema...");
+      try {
+        const srdSchema = readFileSync(srdSchemaPath, "utf8");
+        await client.query(srdSchema);
+        console.log("✓ SRD reference data schema created");
+      } catch (error) {
+        console.warn("Warning executing srd-schema.sql:", error.message);
+        throw error;
+      }
+    }
+
     // Create or update default admin user using the same bcrypt helper
     // as the HTTP auth layer so login works consistently.
     console.log("Creating default admin user...");

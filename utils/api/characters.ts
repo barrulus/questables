@@ -138,6 +138,21 @@ const mapCharacterFromServer = (payload: Record<string, unknown>): Character => 
 
   const campaigns = campaignsRaw ?? undefined;
 
+  // SRD references
+  const speciesKey = typeof payload.species_key === 'string' ? payload.species_key : null;
+  const classKeyVal = typeof payload.class_key === 'string' ? payload.class_key : null;
+  const backgroundKey = typeof payload.background_key === 'string' ? payload.background_key : null;
+
+  // Gameplay tracking
+  const deathSaves = parseJsonField<{ successes: number; failures: number }>(
+    payload.death_saves,
+    { successes: 0, failures: 0 },
+  );
+  const conditionsArr = parseJsonField<string[]>(payload.conditions, []);
+  const languagesArr = parseJsonField<string[]>(payload.languages, ['Common']);
+  const proficienciesObj = parseJsonField<Character['proficiencies']>(payload.proficiencies, {});
+  const creationState = parseOptionalJson<Record<string, unknown>>(payload.creation_state);
+
   const character: Character = {
     id,
     user_id: userId,
@@ -168,6 +183,20 @@ const mapCharacterFromServer = (payload: Record<string, unknown>): Character => 
     bonds: asOptionalString(payload.bonds),
     flaws: asOptionalString(payload.flaws),
     spellcasting: spellcasting ?? undefined,
+    species_key: speciesKey,
+    class_key: classKeyVal,
+    background_key: backgroundKey,
+    subrace: asOptionalString(payload.subrace) ?? null,
+    subclass: asOptionalString(payload.subclass) ?? null,
+    experience_points: coerceNumber(payload.experience_points, 0),
+    alignment: asOptionalString(payload.alignment) ?? null,
+    inspiration: payload.inspiration === true,
+    death_saves: deathSaves,
+    conditions: conditionsArr,
+    languages: languagesArr,
+    proficiencies: proficienciesObj,
+    ability_score_method: asOptionalString(payload.ability_score_method) ?? null,
+    creation_state: creationState,
     campaigns,
     created_at: createdAt ?? '',
     updated_at: updatedAt ?? '',
@@ -204,6 +233,20 @@ export interface CharacterCreateRequest {
   flaws?: string | null;
   spellcasting?: SpellcastingInfo | null;
   campaigns?: string[] | null;
+  speciesKey?: string | null;
+  classKey?: string | null;
+  backgroundKey?: string | null;
+  subrace?: string | null;
+  subclass?: string | null;
+  experiencePoints?: number;
+  alignment?: string | null;
+  inspiration?: boolean;
+  deathSaves?: { successes: number; failures: number };
+  conditions?: string[];
+  languages?: string[];
+  proficiencies?: Record<string, string[]>;
+  abilityScoreMethod?: string | null;
+  creationState?: Record<string, unknown> | null;
 }
 
 export type CharacterUpdateRequest = Partial<CharacterCreateRequest> & {
@@ -328,6 +371,50 @@ const buildCharacterRequestBody = (
 
   if ('campaigns' in payload) {
     body.campaigns = payload.campaigns ?? null;
+  }
+
+  // SRD-linked fields
+  if ('speciesKey' in payload) {
+    body.species_key = payload.speciesKey ?? null;
+  }
+  if ('classKey' in payload) {
+    body.class_key = payload.classKey ?? null;
+  }
+  if ('backgroundKey' in payload) {
+    body.background_key = payload.backgroundKey ?? null;
+  }
+  if ('subrace' in payload) {
+    body.subrace = payload.subrace ?? null;
+  }
+  if ('subclass' in payload) {
+    body.subclass = payload.subclass ?? null;
+  }
+  if ('experiencePoints' in payload && payload.experiencePoints !== undefined) {
+    body.experience_points = payload.experiencePoints;
+  }
+  if ('alignment' in payload) {
+    body.alignment = payload.alignment ?? null;
+  }
+  if ('inspiration' in payload && payload.inspiration !== undefined) {
+    body.inspiration = payload.inspiration;
+  }
+  if ('deathSaves' in payload) {
+    body.death_saves = payload.deathSaves ?? { successes: 0, failures: 0 };
+  }
+  if ('conditions' in payload) {
+    body.conditions = payload.conditions ?? [];
+  }
+  if ('languages' in payload) {
+    body.languages = payload.languages ?? ['Common'];
+  }
+  if ('proficiencies' in payload) {
+    body.proficiencies = payload.proficiencies ?? {};
+  }
+  if ('abilityScoreMethod' in payload) {
+    body.ability_score_method = payload.abilityScoreMethod ?? null;
+  }
+  if ('creationState' in payload) {
+    body.creation_state = payload.creationState ?? null;
   }
 
   return body;

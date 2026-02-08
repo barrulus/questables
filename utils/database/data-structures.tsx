@@ -103,7 +103,33 @@ export interface Character {
   
   // Spellcasting (if applicable)
   spellcasting?: SpellcastingInfo;
-  
+
+  // SRD references (nullable for backwards compatibility)
+  species_key?: string | null;
+  class_key?: string | null;
+  background_key?: string | null;
+  subrace?: string | null;
+  subclass?: string | null;
+
+  // Gameplay tracking
+  experience_points?: number;
+  alignment?: string | null;
+  inspiration?: boolean;
+  death_saves?: { successes: number; failures: number };
+  conditions?: string[];
+  languages?: string[];
+  proficiencies?: {
+    armor?: string[];
+    weapons?: string[];
+    tools?: string[];
+    savingThrows?: string[];
+    skills?: string[];
+  };
+  ability_score_method?: string | null;
+
+  // Wizard draft state (NULL once character is finalized)
+  creation_state?: Record<string, unknown> | null;
+
   // Related campaign membership (denormalised for quick lookup)
   campaigns?: string[];
   
