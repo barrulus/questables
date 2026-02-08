@@ -4,15 +4,10 @@ import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "./ui/t
 import {
   User,
   Package,
-  Dice6,
   BookOpen,
-  Sword,
-  Compass,
   Sparkles,
   Settings,
   ScrollText,
-  Book,
-  Library,
   Crown,
 } from "lucide-react";
 import { useGameSession } from "../contexts/GameSessionContext";
@@ -53,39 +48,14 @@ export function IconSidebar({ activePanel, onPanelChange }: IconSidebarProps) {
         label: "Spells",
       },
       {
-        id: "dice",
-        icon: <Dice6 className="w-5 h-5" />,
-        label: "Dice Roller",
-      },
-      {
-        id: "combat",
-        icon: <Sword className="w-5 h-5" />,
-        label: "Combat",
-      },
-      {
-        id: "exploration",
-        icon: <Compass className="w-5 h-5" />,
-        label: "Exploration",
-      },
-      {
         id: "narratives",
         icon: <Sparkles className="w-5 h-5" />,
         label: "Narratives",
       },
       {
-        id: "rulebooks",
-        icon: <Book className="w-5 h-5" />,
-        label: "Rule Books",
-      },
-      {
         id: "journals",
         icon: <ScrollText className="w-5 h-5" />,
         label: "Session Notes",
-      },
-      {
-        id: "compendium",
-        icon: <Library className="w-5 h-5" />,
-        label: "Compendium",
       },
     ];
 
@@ -121,7 +91,7 @@ export function IconSidebar({ activePanel, onPanelChange }: IconSidebarProps) {
       </div>
 
       {/* Tool Icons */}
-      <div className="flex-1 py-4">
+      <div className="flex-1 py-4 overflow-y-auto">
         <TooltipProvider>
           <div className="space-y-2">
             {tools.map((tool) => (

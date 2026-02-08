@@ -11,8 +11,6 @@ interface SocketEnvelope<T = unknown> {
 interface OutgoingChatMessagePayload {
   content: string;
   messageId: string;
-  senderId: string;
-  senderName: string;
   characterId?: string | null;
   characterName?: string | null | undefined;
   messageType?: string;

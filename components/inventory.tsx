@@ -170,17 +170,15 @@ export function Inventory({ characterId, onInventoryChange }: InventoryProps) {
     if (!equipment) return;
 
     try {
+      // Determine the current equipped state before any mutation
+      const wasEquipped = isItemEquipped(item);
       const updatedEquipment = { ...equipment };
-      
+
       // Handle different equipment types
       if (item.type === 'weapon') {
         if (!updatedEquipment.weapons) updatedEquipment.weapons = {};
-        
-        // Check if item is already equipped
-        const isEquipped = updatedEquipment.weapons.mainHand?.id === item.id || 
-                          updatedEquipment.weapons.offHand?.id === item.id;
-        
-        if (isEquipped) {
+
+        if (wasEquipped) {
           // Unequip
           if (updatedEquipment.weapons.mainHand?.id === item.id) {
             delete updatedEquipment.weapons.mainHand;
@@ -212,10 +210,11 @@ export function Inventory({ characterId, onInventoryChange }: InventoryProps) {
           updatedEquipment.armor = item;
         }
       }
-      
-      setEquipment(updatedEquipment);
+
+      // Persist to server first — only update local state on success
       await updateCharacterData({ equipment: updatedEquipment });
-      toast.success(isItemEquipped(item) ? 'Item unequipped' : 'Item equipped');
+      setEquipment(updatedEquipment);
+      toast.success(wasEquipped ? 'Item unequipped' : 'Item equipped');
     } catch (error) {
       console.error('Failed to toggle equip item:', error);
       toast.error('Failed to update equipment');

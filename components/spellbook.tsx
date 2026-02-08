@@ -123,14 +123,9 @@ export function Spellbook({ characterId, onSpellcastingChange }: SpellbookProps)
     toast.success(`Restored one level ${spellLevel} spell slot`);
   };
 
-  const restoreSpellSlots = async (restType: "short" | "long") => {
+  const restoreSpellSlots = async () => {
     if (!spellcasting?.spellSlots) {
       toast.error("No spell slots configured for this character");
-      return;
-    }
-
-    if (restType === "short") {
-      toast.info("Short rest slot recovery varies by class; no automatic changes applied");
       return;
     }
 
@@ -228,7 +223,7 @@ export function Spellbook({ characterId, onSpellcastingChange }: SpellbookProps)
               <Button
                 variant="outline"
                 size="sm"
-                onClick={() => restoreSpellSlots("long")}
+                onClick={() => restoreSpellSlots()}
                 disabled={updating}
               >
                 <RefreshCw className="w-4 h-4 mr-2" />

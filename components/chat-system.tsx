@@ -4,7 +4,7 @@ import { Input } from "./ui/input";
 import { Badge } from "./ui/badge";
 import { ScrollArea } from "./ui/scroll-area";
 import { Avatar, AvatarFallback } from "./ui/avatar";
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "./ui/select";
+import { Switch } from "./ui/switch";
 import { toast } from "sonner";
 import { Send, Users, Crown, Dice6, Loader2, Trash2, AlertCircle, Wifi, WifiOff } from "lucide-react";
 import { useUser } from "../contexts/UserContext";
@@ -34,7 +34,7 @@ interface ChatMessage {
   created_at: string;
 }
 
-interface CharacterOption {
+interface CampaignCharacter {
   id: string;
   name: string;
 }
@@ -58,13 +58,13 @@ interface ApiChatMessage {
   created_at: string;
 }
 
-interface ApiCharacterSummary {
+interface ApiCampaignCharacter {
   id: string;
   name: string;
+  user_id: string;
 }
 
 const MAX_RECONNECT_ATTEMPTS = 5;
-const OUT_OF_CHARACTER_VALUE = "__out_of_character__";
 
 function parseDiceRoll(rawValue: unknown): DiceRollResult | undefined {
   if (!rawValue) {
@@ -115,8 +115,8 @@ export function ChatSystem({ campaignId, campaignName }: ChatSystemProps) {
   const { user } = useUser();
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [newMessage, setNewMessage] = useState("");
-  const [selectedCharacter, setSelectedCharacter] = useState<string>(OUT_OF_CHARACTER_VALUE);
-  const [userCharacters, setUserCharacters] = useState<CharacterOption[]>([]);
+  const [campaignCharacter, setCampaignCharacter] = useState<CampaignCharacter | null>(null);
+  const [speakingInCharacter, setSpeakingInCharacter] = useState(true);
   const [loading, setLoading] = useState(true);
   const [sending, setSending] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -139,47 +139,33 @@ export function ChatSystem({ campaignId, campaignName }: ChatSystemProps) {
 
   const hasMessages = messages.length > 0;
 
-  const loadUserCharacters = useCallback(async (signal?: AbortSignal) => {
-    if (!user) {
+  const loadCampaignCharacter = useCallback(async (signal?: AbortSignal) => {
+    if (!user || !campaignId) {
       return;
     }
 
     try {
       setCharactersError(null);
-      const response = await apiFetch(`/api/users/${user.id}/characters`, { signal });
+      const response = await apiFetch(`/api/campaigns/${campaignId}/characters`, { signal });
       if (!response.ok) {
-        throw new Error(await readErrorMessage(response, "Failed to load characters"));
+        throw new Error(await readErrorMessage(response, "Failed to load campaign characters"));
       }
 
-      const payload = await readJsonBody<{ characters?: unknown }>(response);
+      const payload = await readJsonBody<ApiCampaignCharacter[]>(response);
+      const characters = Array.isArray(payload) ? payload : [];
+      const mine = characters.find((c) => c.user_id === user.id);
 
-      if (payload && payload.characters !== undefined && !Array.isArray(payload.characters)) {
-        throw new Error("Unexpected characters payload format");
-      }
-
-      const options = (payload?.characters as ApiCharacterSummary[] | undefined)
-        ?.filter((character) => typeof character.id === "string" && character.id.trim().length > 0)
-        .map((character) => ({
-          id: character.id,
-          name: character.name,
-        })) ?? [];
-
-      setUserCharacters(options);
-      setSelectedCharacter((prev) => {
-        if (prev !== OUT_OF_CHARACTER_VALUE) {
-          return prev;
-        }
-        return options[0]?.id ?? OUT_OF_CHARACTER_VALUE;
-      });
+      setCampaignCharacter(mine ? { id: mine.id, name: mine.name } : null);
+      setSpeakingInCharacter(mine != null);
     } catch (loadError) {
       if (loadError instanceof DOMException && loadError.name === "AbortError") {
         return;
       }
       const errorMessage = handleAsyncError(loadError);
       setCharactersError(errorMessage);
-      console.error("Failed to load user characters:", loadError);
+      console.error("Failed to load campaign character:", loadError);
     }
-  }, [user]);
+  }, [campaignId, user]);
 
   const loadMessages = useCallback(
     async ({ signal, showSpinner = true }: { signal?: AbortSignal; showSpinner?: boolean } = {}) => {
@@ -225,15 +211,15 @@ export function ChatSystem({ campaignId, campaignName }: ChatSystemProps) {
 
   useEffect(() => {
     if (!user) {
-      setUserCharacters([]);
-      setSelectedCharacter("");
+      setCampaignCharacter(null);
+      setSpeakingInCharacter(false);
       return;
     }
 
     const controller = new AbortController();
-    loadUserCharacters(controller.signal);
+    loadCampaignCharacter(controller.signal);
     return () => controller.abort();
-  }, [loadUserCharacters, user]);
+  }, [loadCampaignCharacter, user]);
 
   useEffect(() => {
     const controller = new AbortController();
@@ -306,18 +292,18 @@ export function ChatSystem({ campaignId, campaignName }: ChatSystemProps) {
       try {
         setSending(true);
 
+        const characterId = speakingInCharacter && campaignCharacter ? campaignCharacter.id : null;
+
         const response = await apiFetch(`/api/campaigns/${campaignId}/messages`, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
             content: trimmed,
-          type: messageType,
-          sender_id: user.id,
-          sender_name: user.username || user.email,
-          character_id: selectedCharacter === OUT_OF_CHARACTER_VALUE ? null : selectedCharacter,
-          dice_roll: diceRoll ?? null,
-        }),
-      });
+            type: messageType,
+            character_id: characterId,
+            dice_roll: diceRoll ?? null,
+          }),
+        });
 
         if (!response.ok) {
           throw new Error(await readErrorMessage(response, "Failed to send message"));
@@ -333,17 +319,15 @@ export function ChatSystem({ campaignId, campaignName }: ChatSystemProps) {
         });
 
         if (connected) {
-        sendChatMessage({
-          content: persisted.content,
-          messageId: persisted.id,
-          senderId: persisted.sender_id,
-          senderName: persisted.sender_name,
-          characterId: persisted.character_id ?? null,
-          characterName: persisted.character_name ?? undefined,
-          messageType: persisted.message_type,
-          diceRoll: persisted.dice_roll,
-          createdAt: persisted.created_at,
-        });
+          sendChatMessage({
+            content: persisted.content,
+            messageId: persisted.id,
+            characterId: persisted.character_id ?? null,
+            characterName: persisted.character_name ?? undefined,
+            messageType: persisted.message_type,
+            diceRoll: persisted.dice_roll,
+            createdAt: persisted.created_at,
+          });
         }
 
         setNewMessage("");
@@ -356,7 +340,7 @@ export function ChatSystem({ campaignId, campaignName }: ChatSystemProps) {
         setSending(false);
       }
     },
-    [campaignId, connected, selectedCharacter, sendChatMessage, stopTyping, user]
+    [campaignCharacter, campaignId, connected, sendChatMessage, speakingInCharacter, stopTyping, user]
   );
 
   const evaluateDiceExpression = (expression: string): DiceRollResult => {
@@ -394,14 +378,14 @@ export function ChatSystem({ campaignId, campaignName }: ChatSystemProps) {
       }
 
       const rollResult = evaluateDiceExpression(trimmed);
-      const speaker = selectedCharacter === OUT_OF_CHARACTER_VALUE
-        ? user?.username || "You"
-        : userCharacters.find((character) => character.id === selectedCharacter)?.name || user?.username || "You";
+      const speaker = speakingInCharacter && campaignCharacter
+        ? campaignCharacter.name
+        : user?.username || "You";
       const content = `${speaker} rolled ${trimmed}: ${rollResult.total}`;
 
       await sendStructuredMessage({ content, messageType: "dice_roll", diceRoll: rollResult });
     },
-    [selectedCharacter, sendStructuredMessage, user?.username, userCharacters]
+    [campaignCharacter, sendStructuredMessage, speakingInCharacter, user?.username]
   );
 
   const deleteMessage = useCallback(
@@ -413,8 +397,6 @@ export function ChatSystem({ campaignId, campaignName }: ChatSystemProps) {
       try {
         const response = await apiFetch(`/api/campaigns/${campaignId}/messages/${messageId}`, {
           method: "DELETE",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ userId: user.id }),
         });
 
         if (!response.ok) {
@@ -549,24 +531,25 @@ export function ChatSystem({ campaignId, campaignName }: ChatSystemProps) {
       </div>
 
       <div className="flex flex-col gap-3 border-b px-4 py-3">
-        {userCharacters.length > 0 && (
-          <div className="flex flex-wrap items-center gap-2 text-sm">
-            <span>Speaking as:</span>
-            <Select value={selectedCharacter} onValueChange={setSelectedCharacter}>
-              <SelectTrigger className="w-48">
-                <SelectValue placeholder="Out of Character" />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value={OUT_OF_CHARACTER_VALUE}>Out of Character</SelectItem>
-                {userCharacters.map((character) => (
-                  <SelectItem key={character.id} value={character.id}>
-                    {character.name}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-          </div>
-        )}
+        <div className="flex flex-wrap items-center gap-2 text-sm">
+          {campaignCharacter ? (
+            <>
+              <span className="text-muted-foreground">Speaking as:</span>
+              <span className="font-medium">
+                {speakingInCharacter ? campaignCharacter.name : `${user.username} (OOC)`}
+              </span>
+              <div className="flex items-center gap-1.5 ml-auto">
+                <span className="text-xs text-muted-foreground">IC</span>
+                <Switch
+                  checked={speakingInCharacter}
+                  onCheckedChange={setSpeakingInCharacter}
+                />
+              </div>
+            </>
+          ) : (
+            <span className="text-muted-foreground">Speaking as: {user.username} (OOC)</span>
+          )}
+        </div>
         {charactersError && (
           <p className="text-xs text-red-500">{charactersError}</p>
         )}
@@ -672,18 +655,18 @@ export function ChatSystem({ campaignId, campaignName }: ChatSystemProps) {
             variant="outline"
             size="sm"
             onClick={() => {
-          setNewMessage("[OOC] ");
-          typingActiveRef.current = true;
-          startTyping();
-          setTimeout(() => {
-            messageInputRef.current?.focus();
-            messageInputRef.current?.setSelectionRange(6, 6);
-          }, 0);
-          setSelectedCharacter(OUT_OF_CHARACTER_VALUE);
-        }}
-      >
-        OOC
-      </Button>
+              setNewMessage("[OOC] ");
+              typingActiveRef.current = true;
+              startTyping();
+              setTimeout(() => {
+                messageInputRef.current?.focus();
+                messageInputRef.current?.setSelectionRange(6, 6);
+              }, 0);
+              setSpeakingInCharacter(false);
+            }}
+          >
+            OOC
+          </Button>
     </div>
       </div>
 

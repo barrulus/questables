@@ -3,14 +3,12 @@ import { Button } from "./ui/button";
 import { ScrollArea } from "./ui/scroll-area";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "./ui/select";
 
-import { RuleBooks } from "./rule-books";
 import Journals from "./journals";
-import { Compendium } from "./compendium";
 import { Settings } from "./settings";
+import { FeatureUnavailable } from "./feature-unavailable";
 import { CharacterSheet } from "./character-sheet";
 import { Inventory } from "./inventory";
 import { Spellbook } from "./spellbook";
-import { FeatureUnavailable } from "./feature-unavailable";
 import { useUser } from "../contexts/UserContext";
 import { useGameSession } from "../contexts/GameSessionContext";
 import type { Character } from '../utils/database/data-structures';
@@ -19,18 +17,13 @@ import { createAsyncHandler } from '../utils/error-handling';
 import { OfflineModeWrapper } from './database-status';
 import { NarrativeConsole } from "./narrative-console";
 import { DMSidebar } from "./dm-sidebar";
-import { 
-  User, 
-  Package, 
-  Dice6, 
-  BookOpen, 
-  Sword,
-  Compass,
+import {
+  User,
+  Package,
+  BookOpen,
   Sparkles,
   X,
   ScrollText,
-  Book,
-  Library,
   Cog,
   Crown
 } from "lucide-react";
@@ -109,38 +102,10 @@ export function ExpandablePanel({ activePanel, onClose }: ExpandablePanelProps) 
             <Spellbook characterId={selectedCharacter} onSpellcastingChange={refreshCharacter} />
           </OfflineModeWrapper>
         );
-      case "dice":
-        return (
-          <FeatureUnavailable
-            feature="Dice roller"
-            reason="Standalone dice rolling relied on client-side randomness. Dice results must flow through the chat system so they persist server-side."
-            remediation="Use the chat drawer to execute `/roll` commands until a dedicated dice API exists."
-          />
-        );
-      case "combat":
-        return (
-          <FeatureUnavailable
-            feature="Combat tracker"
-            reason="This panel previously displayed fabricated initiative order for the Fellowship. Live combat support depends on backend encounter endpoints that are not available yet."
-            remediation="Wire this view to the combat tracker APIs once they ship to restore real-time initiative tracking."
-          />
-        );
-      case "exploration":
-        return (
-          <FeatureUnavailable
-            feature="Exploration tools"
-            reason="Travel planning, weather, and survival checks were scripted demos. No real campaign exploration API exists to power this panel."
-            remediation="Integrate with campaign travel endpoints when they are delivered to re-enable this tooling."
-          />
-        );
       case "narratives":
         return <NarrativeConsole />;
-      case "rulebooks":
-        return <RuleBooks />;
       case "journals":
         return <Journals />;
-      case "compendium":
-        return <Compendium />;
       case "settings":
         return <Settings />;
       case "dm-sidebar":
@@ -164,13 +129,8 @@ export function ExpandablePanel({ activePanel, onClose }: ExpandablePanelProps) 
       case "character": return "Active Character";
       case "inventory": return "Inventory";
       case "spells": return "Spellbook";
-      case "dice": return "Dice Roller";
-      case "combat": return "Combat Tracker";
-      case "exploration": return "Exploration Tools";
       case "narratives": return "Narrative Console";
-      case "rulebooks": return "Rule Books";
       case "journals": return "Session Notes";
-      case "compendium": return "Compendium";
       case "settings": return "Settings";
       case "dm-sidebar": return "DM Sidebar";
       default: return "";
@@ -182,13 +142,8 @@ export function ExpandablePanel({ activePanel, onClose }: ExpandablePanelProps) 
       case "character": return <User className="w-5 h-5" />;
       case "inventory": return <Package className="w-5 h-5" />;
       case "spells": return <BookOpen className="w-5 h-5" />;
-      case "dice": return <Dice6 className="w-5 h-5" />;
-      case "combat": return <Sword className="w-5 h-5" />;
-      case "exploration": return <Compass className="w-5 h-5" />;
       case "narratives": return <Sparkles className="w-5 h-5" />;
-      case "rulebooks": return <Book className="w-5 h-5" />;
       case "journals": return <ScrollText className="w-5 h-5" />;
-      case "compendium": return <Library className="w-5 h-5" />;
       case "settings": return <Cog className="w-5 h-5" />;
       case "dm-sidebar": return <Crown className="w-5 h-5" />;
       default: return null;
@@ -196,7 +151,7 @@ export function ExpandablePanel({ activePanel, onClose }: ExpandablePanelProps) 
   };
 
   return (
-    <div className="w-96 border-r bg-card flex flex-col">
+    <div className="w-72 lg:w-96 border-r bg-card flex flex-col">
       <div className="border-b p-4">
         <div className="flex items-center justify-between mb-3">
           <div className="flex items-center gap-2">
@@ -247,11 +202,17 @@ export function ExpandablePanel({ activePanel, onClose }: ExpandablePanelProps) 
         )}
       </div>
       
-      <ScrollArea className="flex-1">
-        <div className="p-4">
+      {activePanel === "dm-sidebar" ? (
+        <div className="flex-1 min-h-0">
           {renderPanelContent()}
         </div>
-      </ScrollArea>
+      ) : (
+        <ScrollArea className="flex-1">
+          <div className="p-4">
+            {renderPanelContent()}
+          </div>
+        </ScrollArea>
+      )}
     </div>
   );
 }

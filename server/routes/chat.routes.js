@@ -14,22 +14,40 @@ import {
   listRecentChatMessages,
   deleteChatMessage,
 } from '../services/chat/service.js';
+import { getClient } from '../db/pool.js';
 
 const router = Router();
 
 router.post('/api/campaigns/:campaignId/messages', requireAuth, requireCampaignParticipation, validateUUID('campaignId'), validateChatMessage, handleValidationErrors, async (req, res) => {
   const { campaignId } = req.params;
-  const { content, type, sender_id, sender_name, character_id, dice_roll } = req.body;
+  const { content, type, character_id, dice_roll } = req.body;
 
-  if (!content || !sender_id || !sender_name) {
-    return res.status(400).json({ error: 'Content, sender ID, and sender name are required' });
+  // Derive sender identity from authenticated user — never trust the client
+  const senderId = req.user.id;
+  const senderName = req.user.username;
+
+  if (!content) {
+    return res.status(400).json({ error: 'Content is required' });
+  }
+
+  // If a character_id is provided, verify the authenticated user owns it
+  if (character_id) {
+    const client = await getClient({ label: 'chat-character-ownership' });
+    try {
+      const { rows } = await client.query('SELECT user_id FROM characters WHERE id = $1', [character_id]);
+      if (rows.length === 0 || rows[0].user_id !== senderId) {
+        return res.status(403).json({ error: 'You do not own this character' });
+      }
+    } finally {
+      client.release();
+    }
   }
 
   try {
     // Sanitize user inputs to prevent XSS
     const sanitizedContent = sanitizeChatMessage(content);
-    const sanitizedSenderName = sanitizeUserInput(sender_name, 50);
-    
+    const sanitizedSenderName = sanitizeUserInput(senderName, 50);
+
     if (!sanitizedContent.trim()) {
       return res.status(400).json({ error: 'Message content cannot be empty after sanitization' });
     }
@@ -38,7 +56,7 @@ router.post('/api/campaigns/:campaignId/messages', requireAuth, requireCampaignP
       campaignId,
       content: sanitizedContent,
       type,
-      senderId: sender_id,
+      senderId,
       senderName: sanitizedSenderName,
       characterId: character_id,
       diceRoll: dice_roll,
@@ -49,7 +67,7 @@ router.post('/api/campaigns/:campaignId/messages', requireAuth, requireCampaignP
       telemetryEvent: 'chat.message_created',
       campaignId,
       messageId: message?.id,
-      senderId: sender_id,
+      senderId,
     });
 
     res.json({ message });
@@ -89,11 +107,7 @@ router.get('/api/campaigns/:campaignId/messages/recent', requireAuth, requireCam
 // Delete a chat message (only by sender or DM)
 router.delete('/api/campaigns/:campaignId/messages/:messageId', requireAuth, requireCampaignParticipation, async (req, res) => {
   const { campaignId, messageId } = req.params;
-  const { userId } = req.body;
-
-  if (!userId) {
-    return res.status(400).json({ error: 'User ID is required' });
-  }
+  const userId = req.user.id;
 
   try {
     const result = await deleteChatMessage({ campaignId, messageId, userId });
