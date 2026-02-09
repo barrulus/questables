@@ -56,6 +56,23 @@ export interface LevelRangeInputState {
   max: NumericInputValue;
 }
 
+export function parseIntegerInput(value: NumericInputValue): number | null {
+  if (value === '') return null;
+  const parsed = typeof value === 'number' ? value : Number.parseInt(value, 10);
+  if (!Number.isFinite(parsed)) return null;
+  return parsed;
+}
+
+export function buildLevelRange(range: LevelRangeInputState): CampaignLevelRange | null {
+  if (range.min === '' || range.max === '') return null;
+  const minValue = Number(range.min);
+  const maxValue = Number(range.max);
+  if (!Number.isFinite(minValue) || !Number.isFinite(maxValue)) return null;
+  const min = clampLevelValue(minValue);
+  const max = clampLevelValue(maxValue);
+  return { min, max };
+}
+
 export interface CreateCampaignFormState {
   name: string;
   description: string;
@@ -486,6 +503,48 @@ export type EditCampaignFormAction =
   | { type: 'setMaxPlayers'; value: string | number | '' }
   | { type: 'setLevel'; field: 'min' | 'max'; value: string }
   | { type: 'reset'; payload: CampaignEditFormState };
+
+// ── Shared utility: JSON field parsing ────────────────────────────────
+// Handles values that may arrive as a raw object/array (already parsed
+// by the DB driver) OR as a JSON-encoded string from an older API path.
+export function parseJsonField<T>(value: unknown, fallback: T): T {
+  if (value === null || value === undefined) return fallback;
+  if (Array.isArray(value) || typeof value === "object") return value as T;
+  if (typeof value === "string") {
+    try {
+      return JSON.parse(value) as T;
+    } catch {
+      return fallback;
+    }
+  }
+  return fallback;
+}
+
+// ── Shared utility: campaign status colours ───────────────────────────
+export type StatusColorKey = CampaignStatus | "full";
+
+const STATUS_COLOR_MAP: Record<StatusColorKey, string> = {
+  recruiting: "bg-blue-500",
+  active: "bg-green-500",
+  paused: "bg-orange-500",
+  completed: "bg-gray-500",
+  full: "bg-purple-500",
+};
+
+export function getStatusColor(status: string): string {
+  return STATUS_COLOR_MAP[status as StatusColorKey] ?? "bg-gray-500";
+}
+
+export function getStatusBadgeVariant(status: string): "default" | "secondary" | "outline" {
+  switch (status) {
+    case "active":
+      return "default";
+    case "recruiting":
+      return "secondary";
+    default:
+      return "outline";
+  }
+}
 
 export function editCampaignFormReducer(
   state: CampaignEditFormState,
