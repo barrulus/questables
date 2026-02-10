@@ -5,18 +5,28 @@ import { logError } from '../utils/logger.js';
 
 const router = Router();
 
+/** Default source fallback: try requested source, then srd-2024, then any. */
+function sourceWithFallback(source) {
+  return source || 'srd-2024';
+}
+
 // GET /api/srd/species
 router.get('/species', async (req, res) => {
   try {
     const { source } = req.query;
-    let sql = 'SELECT * FROM srd_species';
+    const conditions = [];
     const params = [];
+    let paramIdx = 1;
 
     if (source) {
-      sql += ' WHERE source_key = $1';
+      conditions.push(`document_source = $${paramIdx++}`);
       params.push(source);
     }
 
+    let sql = 'SELECT * FROM srd_species';
+    if (conditions.length > 0) {
+      sql += ' WHERE ' + conditions.join(' AND ');
+    }
     sql += ' ORDER BY is_subspecies ASC, name ASC';
 
     const result = await dbQuery(sql, params, { label: 'srd.species.list' });
@@ -30,16 +40,28 @@ router.get('/species', async (req, res) => {
 // GET /api/srd/species/:key
 router.get('/species/:key', async (req, res) => {
   try {
+    const source = sourceWithFallback(req.query.source);
     const result = await dbQuery(
       `SELECT s.*,
-        (SELECT json_agg(sub.*) FROM srd_species sub WHERE sub.subspecies_of_key = s.key) AS subspecies
-       FROM srd_species s WHERE s.key = $1`,
-      [req.params.key],
+        (SELECT json_agg(sub.*) FROM srd_species sub WHERE sub.subspecies_of_key = s.key AND sub.document_source = s.document_source) AS subspecies
+       FROM srd_species s WHERE s.key = $1 AND s.document_source = $2`,
+      [req.params.key, source],
       { label: 'srd.species.get' },
     );
 
+    // Fallback: try any source if not found
     if (result.rows.length === 0) {
-      return res.status(404).json({ error: 'Species not found' });
+      const fallback = await dbQuery(
+        `SELECT s.*,
+          (SELECT json_agg(sub.*) FROM srd_species sub WHERE sub.subspecies_of_key = s.key AND sub.document_source = s.document_source) AS subspecies
+         FROM srd_species s WHERE s.key = $1 ORDER BY CASE WHEN s.document_source = 'srd-2024' THEN 0 WHEN s.document_source = 'srd-2014' THEN 1 ELSE 2 END LIMIT 1`,
+        [req.params.key],
+        { label: 'srd.species.get.fallback' },
+      );
+      if (fallback.rows.length === 0) {
+        return res.status(404).json({ error: 'Species not found' });
+      }
+      return res.json({ species: fallback.rows[0] });
     }
 
     res.json({ species: result.rows[0] });
@@ -53,14 +75,19 @@ router.get('/species/:key', async (req, res) => {
 router.get('/classes', async (req, res) => {
   try {
     const { source } = req.query;
-    let sql = 'SELECT * FROM srd_classes';
+    const conditions = [];
     const params = [];
+    let paramIdx = 1;
 
     if (source) {
-      sql += ' WHERE source_key = $1';
+      conditions.push(`document_source = $${paramIdx++}`);
       params.push(source);
     }
 
+    let sql = 'SELECT * FROM srd_classes';
+    if (conditions.length > 0) {
+      sql += ' WHERE ' + conditions.join(' AND ');
+    }
     sql += ' ORDER BY subclass_of_key NULLS FIRST, name ASC';
 
     const result = await dbQuery(sql, params, { label: 'srd.classes.list' });
@@ -74,18 +101,31 @@ router.get('/classes', async (req, res) => {
 // GET /api/srd/classes/:key
 router.get('/classes/:key', async (req, res) => {
   try {
+    const source = sourceWithFallback(req.query.source);
     const result = await dbQuery(
       `SELECT c.*,
-        (SELECT json_agg(row_to_json(st)) FROM srd_class_saving_throws st WHERE st.class_key = c.key) AS saving_throws_list,
-        (SELECT json_agg(row_to_json(pa)) FROM srd_class_primary_abilities pa WHERE pa.class_key = c.key) AS primary_abilities_list,
-        (SELECT json_agg(sub.*) FROM srd_classes sub WHERE sub.subclass_of_key = c.key) AS subclasses
-       FROM srd_classes c WHERE c.key = $1`,
-      [req.params.key],
+        (SELECT json_agg(row_to_json(st)) FROM srd_class_saving_throws st WHERE st.class_key = c.key AND st.document_source = c.document_source) AS saving_throws_list,
+        (SELECT json_agg(row_to_json(pa)) FROM srd_class_primary_abilities pa WHERE pa.class_key = c.key AND pa.document_source = c.document_source) AS primary_abilities_list,
+        (SELECT json_agg(sub.*) FROM srd_classes sub WHERE sub.subclass_of_key = c.key AND sub.document_source = c.document_source) AS subclasses
+       FROM srd_classes c WHERE c.key = $1 AND c.document_source = $2`,
+      [req.params.key, source],
       { label: 'srd.classes.get' },
     );
 
     if (result.rows.length === 0) {
-      return res.status(404).json({ error: 'Class not found' });
+      const fallback = await dbQuery(
+        `SELECT c.*,
+          (SELECT json_agg(row_to_json(st)) FROM srd_class_saving_throws st WHERE st.class_key = c.key AND st.document_source = c.document_source) AS saving_throws_list,
+          (SELECT json_agg(row_to_json(pa)) FROM srd_class_primary_abilities pa WHERE pa.class_key = c.key AND pa.document_source = c.document_source) AS primary_abilities_list,
+          (SELECT json_agg(sub.*) FROM srd_classes sub WHERE sub.subclass_of_key = c.key AND sub.document_source = c.document_source) AS subclasses
+         FROM srd_classes c WHERE c.key = $1 ORDER BY CASE WHEN c.document_source = 'srd-2024' THEN 0 WHEN c.document_source = 'srd-2014' THEN 1 ELSE 2 END LIMIT 1`,
+        [req.params.key],
+        { label: 'srd.classes.get.fallback' },
+      );
+      if (fallback.rows.length === 0) {
+        return res.status(404).json({ error: 'Class not found' });
+      }
+      return res.json({ class: fallback.rows[0] });
     }
 
     res.json({ class: result.rows[0] });
@@ -99,14 +139,19 @@ router.get('/classes/:key', async (req, res) => {
 router.get('/backgrounds', async (req, res) => {
   try {
     const { source } = req.query;
-    let sql = 'SELECT * FROM srd_backgrounds';
+    const conditions = [];
     const params = [];
+    let paramIdx = 1;
 
     if (source) {
-      sql += ' WHERE source_key = $1';
+      conditions.push(`document_source = $${paramIdx++}`);
       params.push(source);
     }
 
+    let sql = 'SELECT * FROM srd_backgrounds';
+    if (conditions.length > 0) {
+      sql += ' WHERE ' + conditions.join(' AND ');
+    }
     sql += ' ORDER BY name ASC';
 
     const result = await dbQuery(sql, params, { label: 'srd.backgrounds.list' });
@@ -120,14 +165,23 @@ router.get('/backgrounds', async (req, res) => {
 // GET /api/srd/backgrounds/:key
 router.get('/backgrounds/:key', async (req, res) => {
   try {
+    const source = sourceWithFallback(req.query.source);
     const result = await dbQuery(
-      'SELECT * FROM srd_backgrounds WHERE key = $1',
-      [req.params.key],
+      'SELECT * FROM srd_backgrounds WHERE key = $1 AND document_source = $2',
+      [req.params.key, source],
       { label: 'srd.backgrounds.get' },
     );
 
     if (result.rows.length === 0) {
-      return res.status(404).json({ error: 'Background not found' });
+      const fallback = await dbQuery(
+        `SELECT * FROM srd_backgrounds WHERE key = $1 ORDER BY CASE WHEN document_source = 'srd-2024' THEN 0 WHEN document_source = 'srd-2014' THEN 1 ELSE 2 END LIMIT 1`,
+        [req.params.key],
+        { label: 'srd.backgrounds.get.fallback' },
+      );
+      if (fallback.rows.length === 0) {
+        return res.status(404).json({ error: 'Background not found' });
+      }
+      return res.json({ background: fallback.rows[0] });
     }
 
     res.json({ background: result.rows[0] });
@@ -140,14 +194,14 @@ router.get('/backgrounds/:key', async (req, res) => {
 // GET /api/srd/spells
 router.get('/spells', async (req, res) => {
   try {
-    const { source, level, ritual } = req.query;
+    const { level, ritual, source } = req.query;
     const classFilter = req.query.class;
     const conditions = [];
     const params = [];
     let paramIdx = 1;
 
     if (source) {
-      conditions.push(`s.source_key = $${paramIdx++}`);
+      conditions.push(`s.document_source = $${paramIdx++}`);
       params.push(source);
     }
 
@@ -162,7 +216,8 @@ router.get('/spells', async (req, res) => {
     }
 
     if (classFilter) {
-      conditions.push(`EXISTS (SELECT 1 FROM srd_spell_classes sc WHERE sc.spell_key = s.key AND sc.class_key = $${paramIdx++})`);
+      conditions.push(`EXISTS (SELECT 1 FROM srd_spell_classes sc WHERE sc.spell_key = s.key AND sc.class_key = $${paramIdx} AND sc.document_source = s.document_source)`);
+      paramIdx++;
       params.push(classFilter);
     }
 
@@ -183,16 +238,27 @@ router.get('/spells', async (req, res) => {
 // GET /api/srd/spells/:key
 router.get('/spells/:key', async (req, res) => {
   try {
+    const source = sourceWithFallback(req.query.source);
     const result = await dbQuery(
       `SELECT s.*,
-        (SELECT json_agg(sc.class_key) FROM srd_spell_classes sc WHERE sc.spell_key = s.key) AS class_keys
-       FROM srd_spells s WHERE s.key = $1`,
-      [req.params.key],
+        (SELECT json_agg(sc.class_key) FROM srd_spell_classes sc WHERE sc.spell_key = s.key AND sc.document_source = s.document_source) AS class_keys
+       FROM srd_spells s WHERE s.key = $1 AND s.document_source = $2`,
+      [req.params.key, source],
       { label: 'srd.spells.get' },
     );
 
     if (result.rows.length === 0) {
-      return res.status(404).json({ error: 'Spell not found' });
+      const fallback = await dbQuery(
+        `SELECT s.*,
+          (SELECT json_agg(sc.class_key) FROM srd_spell_classes sc WHERE sc.spell_key = s.key AND sc.document_source = s.document_source) AS class_keys
+         FROM srd_spells s WHERE s.key = $1 ORDER BY CASE WHEN s.document_source = 'srd-2024' THEN 0 WHEN s.document_source = 'srd-2014' THEN 1 ELSE 2 END LIMIT 1`,
+        [req.params.key],
+        { label: 'srd.spells.get.fallback' },
+      );
+      if (fallback.rows.length === 0) {
+        return res.status(404).json({ error: 'Spell not found' });
+      }
+      return res.json({ spell: fallback.rows[0] });
     }
 
     res.json({ spell: result.rows[0] });
@@ -205,13 +271,13 @@ router.get('/spells/:key', async (req, res) => {
 // GET /api/srd/items
 router.get('/items', async (req, res) => {
   try {
-    const { source, category } = req.query;
+    const { category, source } = req.query;
     const conditions = [];
     const params = [];
     let paramIdx = 1;
 
     if (source) {
-      conditions.push(`source_key = $${paramIdx++}`);
+      conditions.push(`document_source = $${paramIdx++}`);
       params.push(source);
     }
 
@@ -237,13 +303,13 @@ router.get('/items', async (req, res) => {
 // GET /api/srd/feats
 router.get('/feats', async (req, res) => {
   try {
-    const { source, type } = req.query;
+    const { type, source } = req.query;
     const conditions = [];
     const params = [];
     let paramIdx = 1;
 
     if (source) {
-      conditions.push(`source_key = $${paramIdx++}`);
+      conditions.push(`document_source = $${paramIdx++}`);
       params.push(source);
     }
 
@@ -283,8 +349,10 @@ router.post('/compute-stats', async (req, res) => {
     const {
       speciesKey, classKey, backgroundKey,
       level, baseAbilities, abilityScoreMethod,
-      chosenSkills, chosenLanguages,
+      chosenSkills, chosenLanguages, documentSource,
     } = req.body;
+
+    const source = documentSource || 'srd-2024';
 
     if (!baseAbilities || !level) {
       return res.status(400).json({ error: 'baseAbilities and level are required' });
@@ -298,17 +366,27 @@ router.post('/compute-stats', async (req, res) => {
     if (classKey) {
       const classResult = await dbQuery(
         `SELECT c.hit_dice, c.caster_type,
-          (SELECT array_agg(st.ability_key) FROM srd_class_saving_throws st WHERE st.class_key = c.key) AS save_profs
-         FROM srd_classes c WHERE c.key = $1`,
-        [classKey],
+          (SELECT array_agg(st.ability_key) FROM srd_class_saving_throws st WHERE st.class_key = c.key AND st.document_source = c.document_source) AS save_profs
+         FROM srd_classes c WHERE c.key = $1 AND c.document_source = $2`,
+        [classKey, source],
         { label: 'srd.compute.class' },
       );
 
-      if (classResult.rows.length > 0) {
-        const cls = classResult.rows[0];
-        hitDice = cls.hit_dice || 'd8';
-        casterType = cls.caster_type || 'NONE';
-        savingThrowProficiencies = cls.save_profs || [];
+      // Fallback to any source
+      const row = classResult.rows.length > 0
+        ? classResult.rows[0]
+        : (await dbQuery(
+            `SELECT c.hit_dice, c.caster_type,
+              (SELECT array_agg(st.ability_key) FROM srd_class_saving_throws st WHERE st.class_key = c.key AND st.document_source = c.document_source) AS save_profs
+             FROM srd_classes c WHERE c.key = $1 ORDER BY CASE WHEN c.document_source = 'srd-2024' THEN 0 WHEN c.document_source = 'srd-2014' THEN 1 ELSE 2 END LIMIT 1`,
+            [classKey],
+            { label: 'srd.compute.class.fallback' },
+          )).rows[0];
+
+      if (row) {
+        hitDice = row.hit_dice || 'd8';
+        casterType = row.caster_type || 'NONE';
+        savingThrowProficiencies = row.save_profs || [];
       }
     }
 
@@ -316,14 +394,21 @@ router.post('/compute-stats', async (req, res) => {
     let racialBonuses = {};
     if (speciesKey) {
       const speciesResult = await dbQuery(
-        'SELECT traits FROM srd_species WHERE key = $1',
-        [speciesKey],
+        'SELECT traits FROM srd_species WHERE key = $1 AND document_source = $2',
+        [speciesKey, source],
         { label: 'srd.compute.species' },
       );
 
-      if (speciesResult.rows.length > 0) {
-        const traits = speciesResult.rows[0].traits || [];
-        // Parse ability score bonuses from trait descriptions
+      const row = speciesResult.rows.length > 0
+        ? speciesResult.rows[0]
+        : (await dbQuery(
+            `SELECT traits FROM srd_species WHERE key = $1 ORDER BY CASE WHEN document_source = 'srd-2024' THEN 0 WHEN document_source = 'srd-2014' THEN 1 ELSE 2 END LIMIT 1`,
+            [speciesKey],
+            { label: 'srd.compute.species.fallback' },
+          )).rows[0];
+
+      if (row) {
+        const traits = row.traits || [];
         for (const trait of traits) {
           if (!trait.desc) continue;
           const abilityMatches = trait.desc.match(/\+(\d+)\s+(Strength|Dexterity|Constitution|Intelligence|Wisdom|Charisma)/gi);

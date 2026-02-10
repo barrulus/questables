@@ -17,7 +17,9 @@ export type WizardStepKey = typeof WIZARD_STEPS[number]['key'];
 
 export interface WizardState {
   currentStep: number;
-  sourceKey: string;
+
+  // SRD document source
+  documentSource: string;
 
   // Step 1: Species
   speciesKey: string | null;
@@ -60,7 +62,7 @@ const DEFAULT_ABILITIES: Record<AbilityName, number> = {
 
 export const initialWizardState: WizardState = {
   currentStep: 0,
-  sourceKey: 'srd-2024',
+  documentSource: 'srd-2024',
   speciesKey: null,
   subraceKey: null,
   classKey: null,
@@ -84,7 +86,7 @@ export const initialWizardState: WizardState = {
 
 export type WizardAction =
   | { type: 'SET_STEP'; step: number }
-  | { type: 'SET_SOURCE'; sourceKey: string }
+  | { type: 'SET_DOCUMENT_SOURCE'; documentSource: string }
   | { type: 'SET_SPECIES'; speciesKey: string | null; subraceKey?: string | null }
   | { type: 'SET_SUBRACE'; subraceKey: string | null }
   | { type: 'SET_CLASS'; classKey: string | null }
@@ -106,19 +108,18 @@ function wizardReducer(state: WizardState, action: WizardAction): WizardState {
     case 'SET_STEP':
       return { ...state, currentStep: action.step };
 
-    case 'SET_SOURCE':
+    case 'SET_DOCUMENT_SOURCE':
       return {
-        ...state,
-        sourceKey: action.sourceKey,
-        // Reset selections that depend on source
-        speciesKey: null,
-        subraceKey: null,
-        classKey: null,
-        backgroundKey: null,
-        chosenEquipment: [],
-        chosenCantrips: [],
-        chosenSpells: [],
-        computedStats: null,
+        ...initialWizardState,
+        currentStep: state.currentStep,
+        documentSource: action.documentSource,
+        name: state.name,
+        alignment: state.alignment,
+        personality: state.personality,
+        ideals: state.ideals,
+        bonds: state.bonds,
+        flaws: state.flaws,
+        backstory: state.backstory,
       };
 
     case 'SET_SPECIES':

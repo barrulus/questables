@@ -4,6 +4,13 @@ import type { AbilityName } from '../../../utils/srd/types';
 import { Badge } from '../../ui/badge';
 import { Separator } from '../../ui/separator';
 
+function deslugify(slug: string): string {
+  return slug
+    .split('-')
+    .map(w => w.charAt(0).toUpperCase() + w.slice(1))
+    .join(' ');
+}
+
 export function CharacterPreview() {
   const { state } = useWizard();
   const { computedStats } = state;
@@ -13,6 +20,10 @@ export function CharacterPreview() {
     return mod >= 0 ? `+${mod}` : `${mod}`;
   };
 
+  const speciesDisplay = state.speciesKey ? deslugify(state.speciesKey) : null;
+  const classDisplay = state.classKey ? deslugify(state.classKey) : null;
+  const subraceDisplay = state.subraceKey ? deslugify(state.subraceKey) : null;
+
   return (
     <div className="space-y-4">
       {/* Header */}
@@ -21,8 +32,8 @@ export function CharacterPreview() {
           {state.name || 'Unnamed Character'}
         </h4>
         <p className="text-sm text-muted-foreground">
-          {[state.speciesKey, state.classKey].filter(Boolean).join(' ') || 'No selections yet'}
-          {state.subraceKey && ` (${state.subraceKey})`}
+          {[speciesDisplay, classDisplay].filter(Boolean).join(' ') || 'No selections yet'}
+          {subraceDisplay && ` (${subraceDisplay})`}
         </p>
         {state.alignment && (
           <p className="text-xs text-muted-foreground">{state.alignment}</p>
@@ -190,7 +201,7 @@ export function CharacterPreview() {
                 <div className="text-xs text-muted-foreground mb-1">Cantrips</div>
                 <div className="flex flex-wrap gap-1">
                   {state.chosenCantrips.map((s) => (
-                    <Badge key={s} variant="outline" className="text-xs">{s}</Badge>
+                    <Badge key={s} variant="outline" className="text-xs">{deslugify(s)}</Badge>
                   ))}
                 </div>
               </div>
@@ -200,7 +211,7 @@ export function CharacterPreview() {
                 <div className="text-xs text-muted-foreground mb-1">1st Level</div>
                 <div className="flex flex-wrap gap-1">
                   {state.chosenSpells.map((s) => (
-                    <Badge key={s} variant="outline" className="text-xs">{s}</Badge>
+                    <Badge key={s} variant="outline" className="text-xs">{deslugify(s)}</Badge>
                   ))}
                 </div>
               </div>

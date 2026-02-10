@@ -3,18 +3,19 @@ import { useWizard } from '../wizard-context';
 import { useSrdData } from '../use-srd-data';
 import { fetchClasses } from '../../../utils/api/srd';
 import type { SrdClass } from '../../../utils/srd/types';
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '../../ui/card';
-import { Badge } from '../../ui/badge';
-import { ScrollArea } from '../../ui/scroll-area';
-import { MarkdownText } from '../markdown-text';
+import { SrdEntityCard } from '../srd-entity-card';
+import { SrdDetailModal } from '../srd-detail-modal';
 
 export function StepClass() {
   const { state, dispatch } = useWizard();
+  const source = state.documentSource;
   const { data: classesList, loading } = useSrdData(
-    (opts) => fetchClasses(state.sourceKey, opts),
-    [state.sourceKey],
+    (opts) => fetchClasses({ source }, opts),
+    [source],
   );
   const [selectedClass, setSelectedClass] = useState<SrdClass | null>(null);
+  const [detailEntity, setDetailEntity] = useState<SrdClass | null>(null);
+  const [detailOpen, setDetailOpen] = useState(false);
 
   const baseClasses = (classesList ?? []).filter((c: SrdClass) => !c.subclass_of_key);
 
@@ -37,6 +38,13 @@ export function StepClass() {
     );
   }
 
+  const getSummary = (c: SrdClass) => {
+    const parts: string[] = [];
+    if (c.hit_dice) parts.push(c.hit_dice);
+    if (c.caster_type && c.caster_type !== 'NONE') parts.push(`${c.caster_type} Caster`);
+    return parts.join(' — ');
+  };
+
   return (
     <div className="space-y-6">
       <div>
@@ -46,83 +54,26 @@ export function StepClass() {
         </p>
       </div>
 
-      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+      <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-3">
         {baseClasses.map((c: SrdClass) => (
-          <Card
+          <SrdEntityCard
             key={c.key}
-            className={`cursor-pointer transition-all hover:shadow-lg ${
-              selectedClass?.key === c.key ? 'ring-2 ring-primary' : ''
-            }`}
-            onClick={() => handleSelectClass(c)}
-          >
-            <CardHeader>
-              <CardTitle>{c.name}</CardTitle>
-              <CardDescription>
-                {c.hit_dice && `Hit Die: ${c.hit_dice}`}
-              </CardDescription>
-            </CardHeader>
-            <CardContent>
-              <div className="space-y-2">
-                {c.caster_type && c.caster_type !== 'NONE' && (
-                  <Badge variant="secondary">{c.caster_type} Caster</Badge>
-                )}
-                {c.saving_throws_list && c.saving_throws_list.length > 0 && (
-                  <div>
-                    <div className="text-sm font-medium mb-1">Saving Throws:</div>
-                    <div className="flex flex-wrap gap-1">
-                      {c.saving_throws_list.map((save) => (
-                        <Badge key={save.ability_key} variant="outline">
-                          {save.ability_key}
-                        </Badge>
-                      ))}
-                    </div>
-                  </div>
-                )}
-              </div>
-            </CardContent>
-          </Card>
+            name={c.name}
+            summary={getSummary(c)}
+            documentSource={c.document_source}
+            isSelected={selectedClass?.key === c.key}
+            onSelect={() => handleSelectClass(c)}
+            onInfoClick={() => { setDetailEntity(c); setDetailOpen(true); }}
+          />
         ))}
       </div>
 
-      {selectedClass && (
-        <Card>
-          <CardHeader>
-            <CardTitle>{selectedClass.name} Details</CardTitle>
-          </CardHeader>
-          <CardContent>
-            <ScrollArea className="h-96">
-              <div className="space-y-4 pr-4">
-                {selectedClass.desc_text && (
-                  <MarkdownText text={selectedClass.desc_text} className="text-sm text-muted-foreground" />
-                )}
-
-                {selectedClass.hit_dice && (
-                  <div>
-                    <h4 className="font-semibold mb-1">Hit Points</h4>
-                    <p className="text-sm text-muted-foreground">
-                      Hit Die: 1{selectedClass.hit_dice} per level
-                    </p>
-                  </div>
-                )}
-
-                {selectedClass.features.length > 0 && (
-                  <div>
-                    <h4 className="font-semibold mb-2">Class Features</h4>
-                    {selectedClass.features
-                      .filter((f) => f.gained_at?.some((g) => g.level === 1))
-                      .map((feature, idx) => (
-                        <div key={idx} className="mb-3">
-                          <h5 className="font-medium text-sm">{feature.name}</h5>
-                          <MarkdownText text={feature.desc} className="text-sm text-muted-foreground" />
-                        </div>
-                      ))}
-                  </div>
-                )}
-              </div>
-            </ScrollArea>
-          </CardContent>
-        </Card>
-      )}
+      <SrdDetailModal
+        open={detailOpen}
+        onOpenChange={setDetailOpen}
+        entityType="class"
+        entity={detailEntity}
+      />
     </div>
   );
 }

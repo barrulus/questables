@@ -1,3 +1,4 @@
+import { useState, useEffect } from 'react';
 import { useWizard } from '../wizard-context';
 import { ABILITY_ABBREVIATIONS } from '../../../utils/srd/constants';
 import type { AbilityName } from '../../../utils/srd/types';
@@ -6,9 +7,46 @@ import { Badge } from '../../ui/badge';
 import { ScrollArea } from '../../ui/scroll-area';
 import { AlertCircle, CheckCircle2 } from 'lucide-react';
 import { Alert, AlertDescription, AlertTitle } from '../../ui/alert';
+import { SOURCE_DISPLAY_NAMES } from '../../../utils/srd/field-mappings';
+import { fetchSpeciesByKey, fetchClassByKey, fetchBackgroundByKey } from '../../../utils/api/srd';
+
+function deslugify(slug: string): string {
+  return slug
+    .split('-')
+    .map(w => w.charAt(0).toUpperCase() + w.slice(1))
+    .join(' ');
+}
 
 export function StepReview() {
   const { state } = useWizard();
+
+  // Resolve display names from keys
+  const [speciesName, setSpeciesName] = useState<string | null>(null);
+  const [className, setClassName] = useState<string | null>(null);
+  const [backgroundName, setBackgroundName] = useState<string | null>(null);
+
+  useEffect(() => {
+    const controller = new AbortController();
+    const source = state.documentSource;
+
+    if (state.speciesKey) {
+      fetchSpeciesByKey(state.speciesKey, { signal: controller.signal, source })
+        .then(s => { if (s && !controller.signal.aborted) setSpeciesName(s.name); })
+        .catch(() => {});
+    }
+    if (state.classKey) {
+      fetchClassByKey(state.classKey, { signal: controller.signal, source })
+        .then(c => { if (c && !controller.signal.aborted) setClassName(c.name); })
+        .catch(() => {});
+    }
+    if (state.backgroundKey) {
+      fetchBackgroundByKey(state.backgroundKey, { signal: controller.signal, source })
+        .then(b => { if (b && !controller.signal.aborted) setBackgroundName(b.name); })
+        .catch(() => {});
+    }
+
+    return () => controller.abort();
+  }, [state.speciesKey, state.classKey, state.backgroundKey, state.documentSource]);
 
   const validations = {
     hasSpecies: !!state.speciesKey,
@@ -31,6 +69,11 @@ export function StepReview() {
     const mod = Math.floor((score - 10) / 2);
     return mod >= 0 ? `+${mod}` : `${mod}`;
   };
+
+  const displaySpecies = speciesName || (state.speciesKey ? deslugify(state.speciesKey) : 'Not selected');
+  const displayClass = className || (state.classKey ? deslugify(state.classKey) : 'Not selected');
+  const displayBackground = backgroundName || (state.backgroundKey ? deslugify(state.backgroundKey) : 'Not selected');
+  const displaySubrace = state.subraceKey ? deslugify(state.subraceKey) : null;
 
   return (
     <div className="space-y-6">
@@ -81,20 +124,20 @@ export function StepReview() {
                 <div>
                   <span className="font-medium">Species:</span>{' '}
                   <span className="text-muted-foreground">
-                    {state.speciesKey || 'Not selected'}
-                    {state.subraceKey && ` (${state.subraceKey})`}
+                    {displaySpecies}
+                    {displaySubrace && ` (${displaySubrace})`}
                   </span>
                 </div>
                 <div>
                   <span className="font-medium">Class:</span>{' '}
                   <span className="text-muted-foreground">
-                    {state.classKey || 'Not selected'}
+                    {displayClass}
                   </span>
                 </div>
                 <div>
                   <span className="font-medium">Background:</span>{' '}
                   <span className="text-muted-foreground">
-                    {state.backgroundKey || 'Not selected'}
+                    {displayBackground}
                   </span>
                 </div>
                 <div>
@@ -102,6 +145,12 @@ export function StepReview() {
                   <span className="text-muted-foreground">
                     {state.alignment || 'Not set'}
                   </span>
+                </div>
+                <div>
+                  <span className="font-medium">Edition:</span>{' '}
+                  <Badge variant="outline" className="text-xs">
+                    {SOURCE_DISPLAY_NAMES[state.documentSource] ?? state.documentSource}
+                  </Badge>
                 </div>
               </div>
             </CardContent>
@@ -175,7 +224,7 @@ export function StepReview() {
                       <h4 className="text-sm font-semibold mb-2">Cantrips</h4>
                       <div className="flex flex-wrap gap-2">
                         {state.chosenCantrips.map((cantrip) => (
-                          <Badge key={cantrip} variant="outline">{cantrip}</Badge>
+                          <Badge key={cantrip} variant="outline">{deslugify(cantrip)}</Badge>
                         ))}
                       </div>
                     </div>
@@ -185,7 +234,7 @@ export function StepReview() {
                       <h4 className="text-sm font-semibold mb-2">1st Level Spells</h4>
                       <div className="flex flex-wrap gap-2">
                         {state.chosenSpells.map((spell) => (
-                          <Badge key={spell} variant="outline">{spell}</Badge>
+                          <Badge key={spell} variant="outline">{deslugify(spell)}</Badge>
                         ))}
                       </div>
                     </div>

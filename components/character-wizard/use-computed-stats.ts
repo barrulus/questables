@@ -11,7 +11,7 @@ export function useComputedStats() {
   const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const abortRef = useRef<AbortController | null>(null);
 
-  const { speciesKey, classKey, baseAbilities, chosenSkills, chosenLanguages } = state;
+  const { speciesKey, classKey, baseAbilities, chosenSkills, chosenLanguages, documentSource } = state;
 
   useEffect(() => {
     // Need at least abilities and a class to compute meaningful stats
@@ -37,6 +37,7 @@ export function useComputedStats() {
             baseAbilities,
             chosenSkills,
             chosenLanguages,
+            documentSource,
           },
           { signal: controller.signal },
         );
@@ -55,5 +56,5 @@ export function useComputedStats() {
       if (timerRef.current) clearTimeout(timerRef.current);
       if (abortRef.current) abortRef.current.abort();
     };
-  }, [speciesKey, classKey, baseAbilities, chosenSkills, chosenLanguages, dispatch]);
+  }, [speciesKey, classKey, baseAbilities, chosenSkills, chosenLanguages, documentSource, dispatch]);
 }

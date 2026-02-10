@@ -246,6 +246,7 @@ export interface CharacterCreateRequest {
   languages?: string[];
   proficiencies?: Record<string, string[]>;
   abilityScoreMethod?: string | null;
+  srdDocumentSource?: string | null;
   creationState?: Record<string, unknown> | null;
 }
 

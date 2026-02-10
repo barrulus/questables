@@ -4,6 +4,7 @@ export interface SrdSpeciesTrait {
   name: string;
   desc: string;
   type?: string | null;
+  order?: number | null;
 }
 
 export interface SrdSpecies {
@@ -14,8 +15,8 @@ export interface SrdSpecies {
   is_subspecies: boolean;
   subspecies_of_key: string | null;
   traits: SrdSpeciesTrait[];
-  source_key: string | null;
   subspecies?: SrdSpecies[] | null;
+  document_source: string;
 }
 
 export interface SrdClassFeature {
@@ -35,7 +36,7 @@ export interface SrdClass {
   caster_type: 'FULL' | 'HALF' | 'THIRD' | 'NONE' | null;
   subclass_of_key: string | null;
   features: SrdClassFeature[];
-  source_key: string | null;
+  document_source: string;
   // Populated by detail endpoint
   saving_throws_list?: Array<{ class_key: string; ability_key: string }> | null;
   primary_abilities_list?: Array<{ class_key: string; ability_key: string }> | null;
@@ -54,7 +55,7 @@ export interface SrdBackground {
   name: string;
   desc_text: string | null;
   benefits: SrdBackgroundBenefit[];
-  source_key: string | null;
+  document_source: string;
 }
 
 export interface SrdSpell {
@@ -78,8 +79,8 @@ export interface SrdSpell {
   damage_types: string[];
   saving_throw_ability: string | null;
   attack_roll: boolean;
-  source_key: string | null;
   class_keys?: string[] | null;
+  document_source: string;
 }
 
 export interface SrdItem {
@@ -93,7 +94,7 @@ export interface SrdItem {
   weight: number | null;
   weight_unit: string | null;
   requires_attunement: boolean;
-  source_key: string | null;
+  document_source: string;
 }
 
 export interface SrdFeat {
@@ -104,7 +105,7 @@ export interface SrdFeat {
   feat_type: string | null;
   prerequisite: string | null;
   benefits: Record<string, unknown> | Array<{ desc: string }>;
-  source_key: string | null;
+  document_source: string;
 }
 
 export interface SrdCondition {
@@ -112,7 +113,7 @@ export interface SrdCondition {
   key: string;
   name: string;
   descriptions: string | string[];
-  source_key: string | null;
+  document_source?: string;
 }
 
 export type AbilityName = 'strength' | 'dexterity' | 'constitution' | 'intelligence' | 'wisdom' | 'charisma';
@@ -126,6 +127,7 @@ export interface ComputeStatsRequest {
   abilityScoreMethod?: string;
   chosenSkills?: string[];
   chosenLanguages?: string[];
+  documentSource?: string;
 }
 
 export interface SavingThrowInfo {

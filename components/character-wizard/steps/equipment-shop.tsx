@@ -5,7 +5,7 @@ import { ScrollArea } from '../../ui/scroll-area';
 import { Button } from '../../ui/button';
 import { Badge } from '../../ui/badge';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '../../ui/select';
-import { Minus, Plus, ShoppingCart, X } from 'lucide-react';
+import { Info, Minus, Plus, ShoppingCart, X } from 'lucide-react';
 
 /** Categories available for purchase during character creation. */
 const SHOP_CATEGORIES = [
@@ -38,23 +38,23 @@ export interface CartEntry {
 }
 
 interface EquipmentShopProps {
-  sourceKey: string;
   budget: number;
   cartEntries: CartEntry[];
   onAdd: (item: SrdItem) => void;
   onRemove: (key: string) => void;
   onClear: (key: string) => void;
   totalSpent: number;
+  onInfoClick?: (item: SrdItem) => void;
 }
 
 export function EquipmentShop({
-  sourceKey,
   budget,
   cartEntries,
   onAdd,
   onRemove,
   onClear,
   totalSpent,
+  onInfoClick,
 }: EquipmentShopProps) {
   const [items, setItems] = useState<SrdItem[]>([]);
   const [loading, setLoading] = useState(false);
@@ -63,7 +63,7 @@ export function EquipmentShop({
   useEffect(() => {
     const controller = new AbortController();
     setLoading(true);
-    fetchItems({ source: sourceKey, category }, { signal: controller.signal })
+    fetchItems({ category }, { signal: controller.signal })
       .then((data) => {
         if (!controller.signal.aborted) setItems(data);
       })
@@ -72,7 +72,7 @@ export function EquipmentShop({
       })
       .finally(() => { if (!controller.signal.aborted) setLoading(false); });
     return () => controller.abort();
-  }, [sourceKey, category]);
+  }, [category]);
 
   // Only show items with a real cost > 0
   const purchasableItems = useMemo(
@@ -131,6 +131,11 @@ export function EquipmentShop({
                     )}
                   </div>
                   <div className="flex items-center gap-1 ml-2">
+                    {onInfoClick && (
+                      <Button variant="ghost" size="icon" className="h-6 w-6" onClick={() => onInfoClick(item)}>
+                        <Info className="h-3 w-3" />
+                      </Button>
+                    )}
                     {qty > 0 && (
                       <>
                         <Button variant="ghost" size="icon" className="h-6 w-6" onClick={() => onRemove(item.key)}>

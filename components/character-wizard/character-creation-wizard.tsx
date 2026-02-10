@@ -2,7 +2,6 @@ import { useState } from 'react';
 import { ArrowLeft } from 'lucide-react';
 import { toast } from 'sonner';
 import { Button } from '../ui/button';
-import { Badge } from '../ui/badge';
 import { WizardProvider, useWizard, WIZARD_STEPS } from './wizard-context';
 import { useComputedStats } from './use-computed-stats';
 import { WizardLayout } from './wizard-layout';
@@ -16,6 +15,7 @@ import { StepEquipmentSpells } from './steps/step-equipment-spells';
 import { StepIdentity } from './steps/step-identity';
 import { StepReview } from './steps/step-review';
 import { createCharacter } from '../../utils/api/characters';
+import { resolveEquipmentToInventory } from '../../utils/srd/resolve-equipment';
 
 interface CharacterCreationWizardProps {
   user: {
@@ -31,19 +31,19 @@ function WizardContent({
   onBack,
   onCharacterCreated,
 }: CharacterCreationWizardProps) {
-  const { state, dispatch } = useWizard();
+  const { state } = useWizard();
   const [isCreating, setIsCreating] = useState(false);
 
   useComputedStats();
-
-  const handleSourceChange = (sourceKey: string) => {
-    dispatch({ type: 'SET_SOURCE', sourceKey });
-  };
 
   const handleCreateCharacter = async () => {
     setIsCreating(true);
     try {
       const stats = state.computedStats;
+      const { inventory, equipment } = await resolveEquipmentToInventory(
+        state.chosenEquipment,
+        state.classKey,
+      );
       await createCharacter({
         userId: user.id,
         name: state.name || 'Unnamed Character',
@@ -66,11 +66,12 @@ function WizardContent({
               Object.entries(stats.skills).map(([k, v]) => [k, v.modifier])
             )
           : {},
-        inventory: [],
-        equipment: { weapons: {}, accessories: {} },
+        inventory,
+        equipment,
         speciesKey: state.speciesKey,
         classKey: state.classKey,
         backgroundKey: state.backgroundKey,
+        srdDocumentSource: state.documentSource,
         subrace: state.subraceKey,
         alignment: state.alignment,
         languages: state.chosenLanguages,
@@ -125,45 +126,21 @@ function WizardContent({
     }
   };
 
-  const sourceKey = state.sourceKey;
-
   return (
     <div className="h-screen flex flex-col bg-background">
       <div className="border-b bg-card">
-        <div className="px-6 py-4 flex items-center justify-between">
-          <div className="flex items-center gap-4">
-            <Button
-              variant="ghost"
-              size="sm"
-              onClick={onBack}
-              className="gap-2"
-            >
-              <ArrowLeft className="h-4 w-4" />
-              Back to Dashboard
-            </Button>
-            <div className="h-6 w-px bg-border" />
-            <h1 className="text-2xl font-bold">Create New Character</h1>
-          </div>
-
-          <div className="flex items-center gap-2">
-            <span className="text-sm text-muted-foreground">Source:</span>
-            <div className="flex gap-1">
-              <Badge
-                variant={sourceKey === 'srd-2014' ? 'default' : 'outline'}
-                className="cursor-pointer"
-                onClick={() => handleSourceChange('srd-2014')}
-              >
-                5e 2014
-              </Badge>
-              <Badge
-                variant={sourceKey === 'srd-2024' ? 'default' : 'outline'}
-                className="cursor-pointer"
-                onClick={() => handleSourceChange('srd-2024')}
-              >
-                5e 2024
-              </Badge>
-            </div>
-          </div>
+        <div className="px-6 py-4 flex items-center gap-4">
+          <Button
+            variant="ghost"
+            size="sm"
+            onClick={onBack}
+            className="gap-2"
+          >
+            <ArrowLeft className="h-4 w-4" />
+            Back to Dashboard
+          </Button>
+          <div className="h-6 w-px bg-border" />
+          <h1 className="text-2xl font-bold">Create New Character</h1>
         </div>
       </div>
 

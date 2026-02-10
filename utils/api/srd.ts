@@ -6,13 +6,20 @@ import type {
 } from '../srd/types';
 
 // Species
+export interface SpeciesFilters {
+  source?: string;
+}
+
 export async function fetchSpecies(
-  source?: string,
+  filters: SpeciesFilters = {},
   options: ApiRequestOptions = {},
 ): Promise<SrdSpecies[]> {
-  const params = source ? `?source=${encodeURIComponent(source)}` : '';
+  const params = new URLSearchParams();
+  if (filters.source) params.set('source', filters.source);
+
+  const qs = params.toString();
   const data = await fetchJson<{ species: SrdSpecies[] }>(
-    `/api/srd/species${params}`,
+    `/api/srd/species${qs ? `?${qs}` : ''}`,
     { method: 'GET', signal: options.signal },
     'Failed to fetch species',
   );
@@ -21,10 +28,14 @@ export async function fetchSpecies(
 
 export async function fetchSpeciesByKey(
   key: string,
-  options: ApiRequestOptions = {},
+  options: ApiRequestOptions & { source?: string } = {},
 ): Promise<SrdSpecies | null> {
+  const params = new URLSearchParams();
+  if (options.source) params.set('source', options.source);
+
+  const qs = params.toString();
   const data = await fetchJson<{ species: SrdSpecies }>(
-    `/api/srd/species/${encodeURIComponent(key)}`,
+    `/api/srd/species/${encodeURIComponent(key)}${qs ? `?${qs}` : ''}`,
     { method: 'GET', signal: options.signal },
     'Failed to fetch species',
   );
@@ -32,13 +43,20 @@ export async function fetchSpeciesByKey(
 }
 
 // Classes
+export interface ClassFilters {
+  source?: string;
+}
+
 export async function fetchClasses(
-  source?: string,
+  filters: ClassFilters = {},
   options: ApiRequestOptions = {},
 ): Promise<SrdClass[]> {
-  const params = source ? `?source=${encodeURIComponent(source)}` : '';
+  const params = new URLSearchParams();
+  if (filters.source) params.set('source', filters.source);
+
+  const qs = params.toString();
   const data = await fetchJson<{ classes: SrdClass[] }>(
-    `/api/srd/classes${params}`,
+    `/api/srd/classes${qs ? `?${qs}` : ''}`,
     { method: 'GET', signal: options.signal },
     'Failed to fetch classes',
   );
@@ -47,10 +65,14 @@ export async function fetchClasses(
 
 export async function fetchClassByKey(
   key: string,
-  options: ApiRequestOptions = {},
+  options: ApiRequestOptions & { source?: string } = {},
 ): Promise<SrdClass | null> {
+  const params = new URLSearchParams();
+  if (options.source) params.set('source', options.source);
+
+  const qs = params.toString();
   const data = await fetchJson<{ class: SrdClass }>(
-    `/api/srd/classes/${encodeURIComponent(key)}`,
+    `/api/srd/classes/${encodeURIComponent(key)}${qs ? `?${qs}` : ''}`,
     { method: 'GET', signal: options.signal },
     'Failed to fetch class',
   );
@@ -58,13 +80,20 @@ export async function fetchClassByKey(
 }
 
 // Backgrounds
+export interface BackgroundFilters {
+  source?: string;
+}
+
 export async function fetchBackgrounds(
-  source?: string,
+  filters: BackgroundFilters = {},
   options: ApiRequestOptions = {},
 ): Promise<SrdBackground[]> {
-  const params = source ? `?source=${encodeURIComponent(source)}` : '';
+  const params = new URLSearchParams();
+  if (filters.source) params.set('source', filters.source);
+
+  const qs = params.toString();
   const data = await fetchJson<{ backgrounds: SrdBackground[] }>(
-    `/api/srd/backgrounds${params}`,
+    `/api/srd/backgrounds${qs ? `?${qs}` : ''}`,
     { method: 'GET', signal: options.signal },
     'Failed to fetch backgrounds',
   );
@@ -73,10 +102,14 @@ export async function fetchBackgrounds(
 
 export async function fetchBackgroundByKey(
   key: string,
-  options: ApiRequestOptions = {},
+  options: ApiRequestOptions & { source?: string } = {},
 ): Promise<SrdBackground | null> {
+  const params = new URLSearchParams();
+  if (options.source) params.set('source', options.source);
+
+  const qs = params.toString();
   const data = await fetchJson<{ background: SrdBackground }>(
-    `/api/srd/backgrounds/${encodeURIComponent(key)}`,
+    `/api/srd/backgrounds/${encodeURIComponent(key)}${qs ? `?${qs}` : ''}`,
     { method: 'GET', signal: options.signal },
     'Failed to fetch background',
   );
@@ -85,10 +118,10 @@ export async function fetchBackgroundByKey(
 
 // Spells
 export interface SpellFilters {
-  source?: string;
   class?: string;
   level?: number;
   ritual?: boolean;
+  source?: string;
 }
 
 export async function fetchSpells(
@@ -111,8 +144,13 @@ export async function fetchSpells(
 }
 
 // Items
+export interface ItemFilters {
+  category?: string;
+  source?: string;
+}
+
 export async function fetchItems(
-  filters: { source?: string; category?: string } = {},
+  filters: ItemFilters = {},
   options: ApiRequestOptions = {},
 ): Promise<SrdItem[]> {
   const params = new URLSearchParams();
@@ -129,8 +167,13 @@ export async function fetchItems(
 }
 
 // Feats
+export interface FeatFilters {
+  type?: string;
+  source?: string;
+}
+
 export async function fetchFeats(
-  filters: { source?: string; type?: string } = {},
+  filters: FeatFilters = {},
   options: ApiRequestOptions = {},
 ): Promise<SrdFeat[]> {
   const params = new URLSearchParams();

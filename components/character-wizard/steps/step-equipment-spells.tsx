@@ -9,14 +9,16 @@ import { Label } from '../../ui/label';
 import { Button } from '../../ui/button';
 import { RadioGroup, RadioGroupItem } from '../../ui/radio-group';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '../../ui/tabs';
+import { Info } from 'lucide-react';
 import { MarkdownText } from '../markdown-text';
+import { SrdDetailModal } from '../srd-detail-modal';
 import { EquipmentShop, parseCostGP } from './equipment-shop';
 import type { CartEntry } from './equipment-shop';
 
 const DESC_PREVIEW_LENGTH = 120;
 
 /** Extract equipment options from "Core * Traits" table's Starting Equipment row. */
-function parseEquipmentOptions(coreTraitsDesc: string): { label: string; items: string }[] | null {
+export function parseEquipmentOptions(coreTraitsDesc: string): { label: string; items: string }[] | null {
   // Find the Starting Equipment row in the pipe table
   const lines = coreTraitsDesc.split('\n');
   const equipLine = lines.find((l) => l.includes('Starting Equipment'));
@@ -81,6 +83,10 @@ export function StepEquipmentSpells() {
   const [cantripsKnown, setCantripsKnown] = useState(0);
   const [spellsKnown, setSpellsKnown] = useState(0);
   const [classData, setClassData] = useState<SrdClass | null>(null);
+  const [detailSpell, setDetailSpell] = useState<SrdSpell | null>(null);
+  const [detailItem, setDetailItem] = useState<SrdItem | null>(null);
+  const [detailOpen, setDetailOpen] = useState(false);
+  const [detailType, setDetailType] = useState<'spell' | 'item'>('spell');
 
   // Restore equipment choice and cart from wizard context
   // Format: ['pack-A'] for equipment pack, ['gold-B', 'itemkey:qty', ...] for gold option
@@ -118,7 +124,7 @@ export function StepEquipmentSpells() {
       setShopCart([]);
     }
     const controller = new AbortController();
-    fetchClassByKey(state.classKey, { signal: controller.signal })
+    fetchClassByKey(state.classKey, { signal: controller.signal, source: state.documentSource })
       .then((data) => {
         if (!controller.signal.aborted) {
           setClassData(data);
@@ -134,7 +140,7 @@ export function StepEquipmentSpells() {
     if (unresolved.length === 0) return;
     const controller = new AbortController();
     // Fetch all items without category filter to resolve any cart item
-    fetchItems({ source: state.sourceKey }, { signal: controller.signal })
+    fetchItems({}, { signal: controller.signal })
       .then((allItems) => {
         if (controller.signal.aborted) return;
         setShopCart((prev) =>
@@ -162,7 +168,7 @@ export function StepEquipmentSpells() {
     const controller = new AbortController();
     setLoading(true);
 
-    fetchSpells({ source: state.sourceKey, class: state.classKey }, { signal: controller.signal })
+    fetchSpells({ class: state.classKey, source: state.documentSource }, { signal: controller.signal })
       .then((data) => {
         if (!controller.signal.aborted) {
           setSpells(data);
@@ -170,8 +176,6 @@ export function StepEquipmentSpells() {
           const key = state.classKey?.toLowerCase() ?? '';
           if (key.includes('wizard')) {
             setCantripsKnown(3); setSpellsKnown(6);
-          } else if (key.includes('cleric') || key.includes('druid')) {
-            setCantripsKnown(3); setSpellsKnown(999);
           } else if (key.includes('bard') || key.includes('sorcerer')) {
             setCantripsKnown(4); setSpellsKnown(2);
           } else if (key.includes('warlock')) {
@@ -188,7 +192,16 @@ export function StepEquipmentSpells() {
       .finally(() => setLoading(false));
 
     return () => controller.abort();
-  }, [state.sourceKey, state.classKey]);
+  }, [state.classKey]);
+
+  // Prepared casters (cleric/druid): spells prepared = WIS modifier + level (min 1)
+  useEffect(() => {
+    const key = state.classKey?.toLowerCase() ?? '';
+    if (key.includes('cleric') || key.includes('druid')) {
+      const wisMod = Math.floor((state.baseAbilities.wisdom - 10) / 2);
+      setSpellsKnown(Math.max(1, wisMod + 1));
+    }
+  }, [state.classKey, state.baseAbilities.wisdom]);
 
   const shopTotalSpent = useMemo(
     () => shopCart.reduce((sum, e) => sum + e.cost * e.qty, 0),
@@ -282,7 +295,7 @@ export function StepEquipmentSpells() {
                 {classData && (() => {
                   const coreTraits = classData.features.find((f) =>
                     f.name.startsWith('Core ') && f.name.endsWith(' Traits'),
-                  );
+                  ) ?? classData.features.find((f) => f.desc.includes('Starting Equipment'));
                   const options = coreTraits ? parseEquipmentOptions(coreTraits.desc) : null;
 
                   if (options) {
@@ -323,13 +336,13 @@ export function StepEquipmentSpells() {
                           const goldBudget = parseFloat(goldText) || 0;
                           return (
                             <EquipmentShop
-                              sourceKey={state.sourceKey}
                               budget={goldBudget}
                               cartEntries={shopCart}
                               onAdd={handleShopAdd}
                               onRemove={handleShopRemove}
                               onClear={handleShopClear}
                               totalSpent={shopTotalSpent}
+                              onInfoClick={(item) => { setDetailItem(item); setDetailType('item'); setDetailOpen(true); }}
                             />
                           );
                         })()}
@@ -394,9 +407,19 @@ export function StepEquipmentSpells() {
                                 }
                               />
                               <div className="flex-1">
-                                <Label htmlFor={`cantrip-${spell.key}`} className="text-sm font-medium cursor-pointer">
-                                  {spell.name}
-                                </Label>
+                                <div className="flex items-center gap-1">
+                                  <Label htmlFor={`cantrip-${spell.key}`} className="text-sm font-medium cursor-pointer">
+                                    {spell.name}
+                                  </Label>
+                                  <button
+                                    type="button"
+                                    className="p-0.5 rounded hover:bg-muted-foreground/10 text-muted-foreground hover:text-foreground"
+                                    onClick={(e) => { e.preventDefault(); setDetailSpell(spell); setDetailType('spell'); setDetailOpen(true); }}
+                                    aria-label={`Details for ${spell.name}`}
+                                  >
+                                    <Info className="h-3.5 w-3.5" />
+                                  </button>
+                                </div>
                                 {spell.school_key && (
                                   <p className="text-xs text-muted-foreground">{spell.school_key}</p>
                                 )}
@@ -412,13 +435,11 @@ export function StepEquipmentSpells() {
                   {level1Spells.length > 0 && (
                     <div>
                       <h4 className="font-semibold mb-2">
-                        1st Level Spells {spellsKnown < 999 && `(Choose ${spellsKnown})`}
+                        1st Level Spells (Choose {spellsKnown})
                       </h4>
-                      {spellsKnown < 999 && (
-                        <p className="text-xs text-muted-foreground mb-3">
-                          Selected: {state.chosenSpells.length} / {spellsKnown}
-                        </p>
-                      )}
+                      <p className="text-xs text-muted-foreground mb-3">
+                        Selected: {state.chosenSpells.length} / {spellsKnown}
+                      </p>
                       <ScrollArea className="h-64">
                         <div className="space-y-2 pr-4">
                           {level1Spells.map((spell) => (
@@ -431,14 +452,23 @@ export function StepEquipmentSpells() {
                                 }
                                 disabled={
                                   !state.chosenSpells.includes(spell.key) &&
-                                  state.chosenSpells.length >= spellsKnown &&
-                                  spellsKnown < 999
+                                  state.chosenSpells.length >= spellsKnown
                                 }
                               />
                               <div className="flex-1">
-                                <Label htmlFor={`spell-${spell.key}`} className="text-sm font-medium cursor-pointer">
-                                  {spell.name}
-                                </Label>
+                                <div className="flex items-center gap-1">
+                                  <Label htmlFor={`spell-${spell.key}`} className="text-sm font-medium cursor-pointer">
+                                    {spell.name}
+                                  </Label>
+                                  <button
+                                    type="button"
+                                    className="p-0.5 rounded hover:bg-muted-foreground/10 text-muted-foreground hover:text-foreground"
+                                    onClick={(e) => { e.preventDefault(); setDetailSpell(spell); setDetailType('spell'); setDetailOpen(true); }}
+                                    aria-label={`Details for ${spell.name}`}
+                                  >
+                                    <Info className="h-3.5 w-3.5" />
+                                  </button>
+                                </div>
                                 {spell.school_key && (
                                   <p className="text-xs text-muted-foreground">{spell.school_key}</p>
                                 )}
@@ -456,6 +486,13 @@ export function StepEquipmentSpells() {
           </TabsContent>
         )}
       </Tabs>
+
+      <SrdDetailModal
+        open={detailOpen}
+        onOpenChange={setDetailOpen}
+        entityType={detailType}
+        entity={detailType === 'spell' ? detailSpell : detailItem}
+      />
     </div>
   );
 }

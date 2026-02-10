@@ -1,8 +1,10 @@
 /**
- * Open5e SRD Data Import Script
+ * Open5e SRD Data Import Script — Per-Source Storage
  *
- * Imports D&D 5e SRD reference data from the Open5e v2 API into PostgreSQL.
- * Usage: node server/scripts/import-srd-data.js [--api-url URL] [--documents srd-2014,srd-2024]
+ * Fetches D&D 5e SRD reference data from the v2 Open5e API and stores
+ * each source document as separate rows (no merging across sources).
+ *
+ * Usage: node server/scripts/import-srd-data.js [--api-url URL]
  */
 
 import { dirname, join } from 'path';
@@ -33,7 +35,7 @@ const getArg = (flag) => {
 };
 
 const API_BASE = getArg('--api-url') || 'https://api.open5e.com';
-const DOCUMENTS = (getArg('--documents') || 'srd-2014,srd-2024').split(',').map(d => d.trim());
+const V2_DOCUMENTS = ['srd-2014', 'srd-2024', 'a5e-ag'];
 const PAGE_SIZE = 50;
 const RETRY_DELAY = 200;
 const MAX_RETRIES = 3;
@@ -48,6 +50,25 @@ const pool = new Pool({
 });
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+
+// =============================================================================
+// Helpers
+// =============================================================================
+
+function slugify(name) {
+  return name.toLowerCase().trim()
+    .replace(/['']/g, '')
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-+|-+$/g, '');
+}
+
+function docKey(item) {
+  return item.document?.key || item.document_slug || null;
+}
+
+// =============================================================================
+// API Fetching
+// =============================================================================
 
 async function fetchPage(url, retries = MAX_RETRIES) {
   for (let attempt = 1; attempt <= retries; attempt++) {
@@ -70,40 +91,31 @@ async function fetchPage(url, retries = MAX_RETRIES) {
   }
 }
 
-async function fetchAllPages(endpoint, params = {}) {
+async function fetchAllV2(endpoint, params = {}) {
   const all = [];
-  const qs = new URLSearchParams({ format: 'json', limit: String(PAGE_SIZE), ...params });
+  const qs = new URLSearchParams({
+    format: 'json',
+    limit: String(PAGE_SIZE),
+    document__key__in: V2_DOCUMENTS.join(','),
+    ...params,
+  });
   let url = `${API_BASE}/v2/${endpoint}/?${qs}`;
 
   while (url) {
     const data = await fetchPage(url);
-    if (data.results) {
-      all.push(...data.results);
-    }
+    if (data.results) all.push(...data.results);
     url = data.next || null;
     if (url) await sleep(RETRY_DELAY);
   }
-
   return all;
 }
 
-function filterByDocuments(items) {
-  return items.filter(item => {
-    const docKey = item.document?.key;
-    return docKey && DOCUMENTS.includes(docKey);
-  });
-}
-
-function getSourceKey(item) {
-  return item.document?.key || null;
-}
-
 // =============================================================================
-// PHASE 0: Lookup tables
+// PHASE 1 — Lookup tables (deduplicated by name, no document_source)
 // =============================================================================
 
-async function importAbilities(client) {
-  // Seed the 6 standard abilities - these are used as FK targets
+async function importLookups(client, v2Data) {
+  // Abilities — seed standard 6 plus any from API
   const abilities = [
     { key: 'str', name: 'Strength', desc: 'Strength measures physical power.' },
     { key: 'dex', name: 'Dexterity', desc: 'Dexterity measures agility.' },
@@ -112,501 +124,615 @@ async function importAbilities(client) {
     { key: 'wis', name: 'Wisdom', desc: 'Wisdom measures perception and insight.' },
     { key: 'cha', name: 'Charisma', desc: 'Charisma measures force of personality.' },
   ];
-
-  // Also try from API
-  try {
-    const apiAbilities = await fetchAllPages('abilities');
-    const filtered = filterByDocuments(apiAbilities);
-    for (const a of filtered) {
-      const existing = abilities.find(ab => ab.name.toLowerCase() === a.name.toLowerCase());
-      if (!existing) {
-        abilities.push({ key: a.key, name: a.name, desc: a.desc || '', source_key: getSourceKey(a) });
-      }
+  for (const a of v2Data.abilities) {
+    if (!abilities.find(ab => ab.name.toLowerCase() === a.name.toLowerCase())) {
+      abilities.push({ key: a.key, name: a.name, desc: a.desc || '' });
     }
-  } catch (e) {
-    console.warn('  Could not fetch abilities from API, using defaults');
   }
-
   for (const a of abilities) {
     await client.query(
-      `INSERT INTO srd_abilities (key, name, desc_text, source_key)
-       VALUES ($1, $2, $3, $4)
+      `INSERT INTO srd_abilities (key, name, desc_text)
+       VALUES ($1, $2, $3)
        ON CONFLICT (key) DO UPDATE SET name = EXCLUDED.name, desc_text = EXCLUDED.desc_text`,
-      [a.key, a.name, a.desc || '', a.source_key || null],
+      [a.key, a.name, a.desc || ''],
     );
   }
   console.log(`  Abilities: ${abilities.length}`);
-}
 
-async function importDamageTypes(client) {
-  const items = filterByDocuments(await fetchAllPages('damagetypes'));
-  for (const item of items) {
+  // Damage types — deduplicate by name
+  const dtSeen = new Set();
+  for (const item of v2Data.damageTypes) {
+    const key = slugify(item.name);
+    if (dtSeen.has(key)) continue;
+    dtSeen.add(key);
     await client.query(
-      `INSERT INTO srd_damage_types (key, name, desc_text, source_key)
-       VALUES ($1, $2, $3, $4)
+      `INSERT INTO srd_damage_types (key, name, desc_text)
+       VALUES ($1, $2, $3)
        ON CONFLICT (key) DO UPDATE SET name = EXCLUDED.name, desc_text = EXCLUDED.desc_text`,
-      [item.key, item.name, item.desc || '', getSourceKey(item)],
+      [key, item.name, item.desc || ''],
     );
   }
-  console.log(`  Damage types: ${items.length}`);
-}
+  console.log(`  Damage types: ${dtSeen.size}`);
 
-async function importSpellSchools(client) {
-  const items = filterByDocuments(await fetchAllPages('spellschools'));
-  for (const item of items) {
+  // Spell schools
+  const ssSeen = new Set();
+  for (const item of v2Data.spellSchools) {
+    const key = slugify(item.name);
+    if (ssSeen.has(key)) continue;
+    ssSeen.add(key);
     await client.query(
-      `INSERT INTO srd_spell_schools (key, name, desc_text, source_key)
-       VALUES ($1, $2, $3, $4)
+      `INSERT INTO srd_spell_schools (key, name, desc_text)
+       VALUES ($1, $2, $3)
        ON CONFLICT (key) DO UPDATE SET name = EXCLUDED.name, desc_text = EXCLUDED.desc_text`,
-      [item.key, item.name, item.desc || '', getSourceKey(item)],
+      [key, item.name, item.desc || ''],
     );
   }
-  console.log(`  Spell schools: ${items.length}`);
-}
+  console.log(`  Spell schools: ${ssSeen.size}`);
 
-async function importConditions(client) {
-  const items = filterByDocuments(await fetchAllPages('conditions'));
-  for (const item of items) {
+  // Conditions
+  const condSeen = new Set();
+  for (const item of v2Data.conditions) {
+    const key = slugify(item.name);
+    if (condSeen.has(key)) continue;
+    condSeen.add(key);
     await client.query(
-      `INSERT INTO srd_conditions (key, name, descriptions, source_key)
-       VALUES ($1, $2, $3::jsonb, $4)
+      `INSERT INTO srd_conditions (key, name, descriptions)
+       VALUES ($1, $2, $3::jsonb)
        ON CONFLICT (key) DO UPDATE SET name = EXCLUDED.name, descriptions = EXCLUDED.descriptions`,
-      [item.key, item.name, JSON.stringify(item.desc || ''), getSourceKey(item)],
+      [key, item.name, JSON.stringify(item.desc || '')],
     );
   }
-  console.log(`  Conditions: ${items.length}`);
-}
+  console.log(`  Conditions: ${condSeen.size}`);
 
-async function importSizes(client) {
-  const items = filterByDocuments(await fetchAllPages('sizes'));
+  // Sizes
   const sizeRanks = { tiny: 1, small: 2, medium: 3, large: 4, huge: 5, gargantuan: 6 };
   const spaceDiameters = { tiny: 2.5, small: 5, medium: 5, large: 10, huge: 15, gargantuan: 20 };
-  for (const item of items) {
+  const sizeSeen = new Set();
+  for (const item of v2Data.sizes) {
+    const key = slugify(item.name);
+    if (sizeSeen.has(key)) continue;
+    sizeSeen.add(key);
     const nameLower = item.name.toLowerCase();
     await client.query(
-      `INSERT INTO srd_sizes (key, name, rank, space_diameter, source_key)
-       VALUES ($1, $2, $3, $4, $5)
+      `INSERT INTO srd_sizes (key, name, rank, space_diameter)
+       VALUES ($1, $2, $3, $4)
        ON CONFLICT (key) DO UPDATE SET name = EXCLUDED.name, rank = EXCLUDED.rank, space_diameter = EXCLUDED.space_diameter`,
-      [item.key, item.name, sizeRanks[nameLower] || 0, spaceDiameters[nameLower] || 5, getSourceKey(item)],
+      [key, item.name, sizeRanks[nameLower] || 0, spaceDiameters[nameLower] || 5],
     );
   }
-  console.log(`  Sizes: ${items.length}`);
-}
+  console.log(`  Sizes: ${sizeSeen.size}`);
 
-async function importLanguages(client) {
-  const items = filterByDocuments(await fetchAllPages('languages'));
+  // Languages
   const exoticLanguages = new Set([
     'abyssal', 'celestial', 'deep speech', 'draconic', 'infernal',
     'primordial', 'sylvan', 'undercommon',
   ]);
-  for (const item of items) {
+  const langSeen = new Set();
+  for (const item of v2Data.languages) {
+    const key = slugify(item.name);
+    if (langSeen.has(key)) continue;
+    langSeen.add(key);
     await client.query(
-      `INSERT INTO srd_languages (key, name, is_exotic, source_key)
-       VALUES ($1, $2, $3, $4)
+      `INSERT INTO srd_languages (key, name, is_exotic)
+       VALUES ($1, $2, $3)
        ON CONFLICT (key) DO UPDATE SET name = EXCLUDED.name, is_exotic = EXCLUDED.is_exotic`,
-      [item.key, item.name, exoticLanguages.has(item.name.toLowerCase()), getSourceKey(item)],
+      [key, item.name, exoticLanguages.has(item.name.toLowerCase())],
     );
   }
-  console.log(`  Languages: ${items.length}`);
-}
+  console.log(`  Languages: ${langSeen.size}`);
 
-async function importAlignments(client) {
-  const items = filterByDocuments(await fetchAllPages('alignments'));
-  for (const item of items) {
+  // Alignments
+  const alignSeen = new Set();
+  for (const item of v2Data.alignments) {
+    const key = slugify(item.name);
+    if (alignSeen.has(key)) continue;
+    alignSeen.add(key);
     await client.query(
-      `INSERT INTO srd_alignments (key, name, source_key)
-       VALUES ($1, $2, $3)
+      `INSERT INTO srd_alignments (key, name)
+       VALUES ($1, $2)
        ON CONFLICT (key) DO UPDATE SET name = EXCLUDED.name`,
-      [item.key, item.name, getSourceKey(item)],
+      [key, item.name],
     );
   }
-  console.log(`  Alignments: ${items.length}`);
-}
+  console.log(`  Alignments: ${alignSeen.size}`);
 
-async function importItemCategories(client) {
-  const items = filterByDocuments(await fetchAllPages('itemcategories'));
-  for (const item of items) {
+  // Item categories
+  const catSeen = new Set();
+  for (const item of v2Data.itemCategories) {
+    const key = slugify(item.name);
+    if (catSeen.has(key)) continue;
+    catSeen.add(key);
     await client.query(
-      `INSERT INTO srd_item_categories (key, name, source_key)
-       VALUES ($1, $2, $3)
+      `INSERT INTO srd_item_categories (key, name)
+       VALUES ($1, $2)
        ON CONFLICT (key) DO UPDATE SET name = EXCLUDED.name`,
-      [item.key, item.name, getSourceKey(item)],
+      [key, item.name],
     );
   }
-  console.log(`  Item categories: ${items.length}`);
-}
+  console.log(`  Item categories: ${catSeen.size}`);
 
-async function importItemRarities(client) {
-  const items = filterByDocuments(await fetchAllPages('itemrarities'));
+  // Item rarities
   const rarityRanks = { common: 1, uncommon: 2, rare: 3, 'very rare': 4, legendary: 5, artifact: 6 };
-  for (const item of items) {
+  const rarSeen = new Set();
+  for (const item of v2Data.itemRarities) {
+    const key = slugify(item.name);
+    if (rarSeen.has(key)) continue;
+    rarSeen.add(key);
     await client.query(
-      `INSERT INTO srd_item_rarities (key, name, rank, source_key)
-       VALUES ($1, $2, $3, $4)
+      `INSERT INTO srd_item_rarities (key, name, rank)
+       VALUES ($1, $2, $3)
        ON CONFLICT (key) DO UPDATE SET name = EXCLUDED.name, rank = EXCLUDED.rank`,
-      [item.key, item.name, rarityRanks[item.name.toLowerCase()] || 0, getSourceKey(item)],
+      [key, item.name, rarityRanks[item.name.toLowerCase()] || 0],
     );
   }
-  console.log(`  Item rarities: ${items.length}`);
-}
+  console.log(`  Item rarities: ${rarSeen.size}`);
 
-async function importWeaponProperties(client) {
-  const items = filterByDocuments(await fetchAllPages('weaponproperties'));
-  for (const item of items) {
+  // Weapon properties
+  const wpSeen = new Set();
+  for (const item of v2Data.weaponProperties) {
+    const key = slugify(item.name);
+    if (wpSeen.has(key)) continue;
+    wpSeen.add(key);
     await client.query(
-      `INSERT INTO srd_weapon_properties (key, name, desc_text, source_key)
-       VALUES ($1, $2, $3, $4)
+      `INSERT INTO srd_weapon_properties (key, name, desc_text)
+       VALUES ($1, $2, $3)
        ON CONFLICT (key) DO UPDATE SET name = EXCLUDED.name, desc_text = EXCLUDED.desc_text`,
-      [item.key, item.name, item.desc || '', getSourceKey(item)],
+      [key, item.name, item.desc || ''],
     );
   }
-  console.log(`  Weapon properties: ${items.length}`);
+  console.log(`  Weapon properties: ${wpSeen.size}`);
 }
 
 // =============================================================================
-// PHASE 1: Entity tables
+// PHASE 2 — Entity tables (per-source, no merging)
 // =============================================================================
 
-async function importClasses(client) {
-  const items = filterByDocuments(await fetchAllPages('classes'));
-  for (const item of items) {
-    const subclassOfKey = item.subclass_of?.key || null;
-    const features = Array.isArray(item.features) ? item.features.map(f => ({
-      key: f.key,
-      name: f.name,
-      desc: f.desc,
-      feature_type: f.feature_type,
-      gained_at: f.gained_at,
-    })) : [];
+async function importSpecies(client, v2Species) {
+  await client.query('DELETE FROM srd_species WHERE document_source != \'merged\'');
 
-    await client.query(
-      `INSERT INTO srd_classes (key, name, desc_text, hit_dice, caster_type, subclass_of_key, features, source_key)
-       VALUES ($1, $2, $3, $4, $5, $6, $7::jsonb, $8)
-       ON CONFLICT (key) DO UPDATE SET
-         name = EXCLUDED.name, desc_text = EXCLUDED.desc_text, hit_dice = EXCLUDED.hit_dice,
-         caster_type = EXCLUDED.caster_type, subclass_of_key = EXCLUDED.subclass_of_key,
-         features = EXCLUDED.features, source_key = EXCLUDED.source_key`,
-      [
-        item.key, item.name, item.desc || '', item.hit_dice || null,
-        (item.caster_type || 'NONE').toUpperCase(),
-        subclassOfKey,
-        JSON.stringify(features),
-        getSourceKey(item),
-      ],
-    );
-  }
-  console.log(`  Classes: ${items.length}`);
-  return items;
-}
+  // Insert parents first, then children
+  const parents = v2Species.filter(s => !s.is_subspecies);
+  const children = v2Species.filter(s => s.is_subspecies);
+  let count = 0;
 
-async function importSpecies(client) {
-  const items = filterByDocuments(await fetchAllPages('species'));
-  for (const item of items) {
-    const subspeciesOfKey = item.subspecies_of
-      ? (typeof item.subspecies_of === 'string'
-          ? item.subspecies_of.split('/').filter(Boolean).pop() || null
-          : item.subspecies_of.key || null)
+  for (const item of [...parents, ...children]) {
+    const source = docKey(item);
+    if (!source) continue;
+    const key = slugify(item.name);
+
+    const rawSubOf = item.subspecies_of;
+    const subspeciesOfKey = rawSubOf
+      ? (typeof rawSubOf === 'string'
+          ? slugify(rawSubOf.split('/').filter(Boolean).pop() || '')
+          : slugify(rawSubOf.name || rawSubOf.key || ''))
       : null;
 
+    // Preserve all source-specific fields in traits
     const traits = Array.isArray(item.traits) ? item.traits.map(t => ({
       name: t.name,
       desc: t.desc,
       type: t.type || null,
+      order: t.order ?? null,
     })) : [];
 
     await client.query(
-      `INSERT INTO srd_species (key, name, desc_text, is_subspecies, subspecies_of_key, traits, source_key)
+      `INSERT INTO srd_species (key, name, desc_text, is_subspecies, subspecies_of_key, traits, document_source)
        VALUES ($1, $2, $3, $4, $5, $6::jsonb, $7)
-       ON CONFLICT (key) DO UPDATE SET
+       ON CONFLICT (key, document_source) DO UPDATE SET
          name = EXCLUDED.name, desc_text = EXCLUDED.desc_text, is_subspecies = EXCLUDED.is_subspecies,
-         subspecies_of_key = EXCLUDED.subspecies_of_key, traits = EXCLUDED.traits, source_key = EXCLUDED.source_key`,
-      [
-        item.key, item.name, item.desc || '', item.is_subspecies || false,
-        subspeciesOfKey, JSON.stringify(traits), getSourceKey(item),
-      ],
+         subspecies_of_key = EXCLUDED.subspecies_of_key, traits = EXCLUDED.traits`,
+      [key, item.name, item.desc || '', item.is_subspecies || false, subspeciesOfKey, JSON.stringify(traits), source],
     );
+    count++;
   }
-  console.log(`  Species: ${items.length}`);
+  console.log(`  Species: ${count}`);
 }
 
-// Backgrounds are imported from additional open-source documents beyond the
-// global DOCUMENTS filter, because the SRD only includes a handful of
-// backgrounds while A5E provides the familiar PHB set under an open licence.
-const BACKGROUND_DOCUMENTS = [...new Set([...DOCUMENTS, 'a5e-ag'])];
+async function importClasses(client, v2Classes) {
+  await client.query('DELETE FROM srd_spell_classes WHERE document_source != \'merged\'');
+  await client.query('DELETE FROM srd_class_saving_throws WHERE document_source != \'merged\'');
+  await client.query('DELETE FROM srd_class_primary_abilities WHERE document_source != \'merged\'');
+  await client.query('DELETE FROM srd_classes WHERE document_source != \'merged\'');
 
-async function importBackgrounds(client) {
-  const allBackgrounds = await fetchAllPages('backgrounds');
-  const items = allBackgrounds.filter(item => {
-    const docKey = item.document?.key;
-    return docKey && BACKGROUND_DOCUMENTS.includes(docKey);
-  });
-  for (const item of items) {
-    const benefits = Array.isArray(item.benefits) ? item.benefits.map(b => ({
-      name: b.name,
-      desc: b.desc,
-      type: b.type || null,
-    })) : [];
+  const parentClasses = v2Classes.filter(c => !c.subclass_of);
+  const subclasses = v2Classes.filter(c => c.subclass_of);
+  let count = 0;
 
-    await client.query(
-      `INSERT INTO srd_backgrounds (key, name, desc_text, benefits, source_key)
-       VALUES ($1, $2, $3, $4::jsonb, $5)
-       ON CONFLICT (key) DO UPDATE SET
-         name = EXCLUDED.name, desc_text = EXCLUDED.desc_text, benefits = EXCLUDED.benefits, source_key = EXCLUDED.source_key`,
-      [item.key, item.name, item.desc || '', JSON.stringify(benefits), getSourceKey(item)],
-    );
-  }
-  console.log(`  Backgrounds: ${items.length}`);
-}
-
-async function importFeats(client) {
-  const items = filterByDocuments(await fetchAllPages('feats'));
-  for (const item of items) {
-    const benefits = Array.isArray(item.benefits) ? item.benefits : [];
-    await client.query(
-      `INSERT INTO srd_feats (key, name, desc_text, feat_type, prerequisite, benefits, source_key)
-       VALUES ($1, $2, $3, $4, $5, $6::jsonb, $7)
-       ON CONFLICT (key) DO UPDATE SET
-         name = EXCLUDED.name, desc_text = EXCLUDED.desc_text, feat_type = EXCLUDED.feat_type,
-         prerequisite = EXCLUDED.prerequisite, benefits = EXCLUDED.benefits, source_key = EXCLUDED.source_key`,
-      [
-        item.key, item.name, item.desc || '', item.type || null,
-        item.prerequisite || null, JSON.stringify(benefits), getSourceKey(item),
-      ],
-    );
-  }
-  console.log(`  Feats: ${items.length}`);
-}
-
-// =============================================================================
-// PHASE 2: Items, Spells + junction tables
-// =============================================================================
-
-async function importItems(client) {
-  const items = filterByDocuments(await fetchAllPages('items'));
-  for (const item of items) {
-    // Ensure category exists
-    if (item.category?.key) {
-      await client.query(
-        `INSERT INTO srd_item_categories (key, name)
-         VALUES ($1, $2)
-         ON CONFLICT (key) DO NOTHING`,
-        [item.category.key, item.category.name || item.category.key],
-      );
-    }
-    // Ensure rarity exists
-    if (item.rarity?.key) {
-      await client.query(
-        `INSERT INTO srd_item_rarities (key, name)
-         VALUES ($1, $2)
-         ON CONFLICT (key) DO NOTHING`,
-        [item.rarity.key, item.rarity.name || item.rarity.key],
-      );
-    }
-
-    await client.query(
-      `INSERT INTO srd_items (key, name, desc_text, category_key, rarity_key, cost, weight, weight_unit, requires_attunement, source_key)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
-       ON CONFLICT (key) DO UPDATE SET
-         name = EXCLUDED.name, desc_text = EXCLUDED.desc_text, category_key = EXCLUDED.category_key,
-         rarity_key = EXCLUDED.rarity_key, cost = EXCLUDED.cost, weight = EXCLUDED.weight,
-         weight_unit = EXCLUDED.weight_unit, requires_attunement = EXCLUDED.requires_attunement, source_key = EXCLUDED.source_key`,
-      [
-        item.key, item.name, item.desc || '',
-        item.category?.key || null, item.rarity?.key || null,
-        item.cost || null, item.weight || null, item.weight_unit || 'lb',
-        item.requires_attunement || false, getSourceKey(item),
-      ],
-    );
-  }
-  console.log(`  Items: ${items.length}`);
-}
-
-async function importSpells(client) {
-  const items = filterByDocuments(await fetchAllPages('spells'));
-  for (const item of items) {
-    // Ensure school exists
-    if (item.school?.key) {
-      await client.query(
-        `INSERT INTO srd_spell_schools (key, name)
-         VALUES ($1, $2)
-         ON CONFLICT (key) DO NOTHING`,
-        [item.school.key, item.school.name || item.school.key],
-      );
-    }
-
-    const damageTypes = Array.isArray(item.damage_types) ? item.damage_types.map(dt => dt.key || dt.name || dt) : [];
-
-    await client.query(
-      `INSERT INTO srd_spells (key, name, desc_text, level, school_key, casting_time, range_text, range, duration,
-        concentration, ritual, verbal, somatic, material, material_specified, damage_roll, damage_types,
-        saving_throw_ability, attack_roll, source_key)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17::jsonb,$18,$19,$20)
-       ON CONFLICT (key) DO UPDATE SET
-         name=EXCLUDED.name, desc_text=EXCLUDED.desc_text, level=EXCLUDED.level, school_key=EXCLUDED.school_key,
-         casting_time=EXCLUDED.casting_time, range_text=EXCLUDED.range_text, range=EXCLUDED.range,
-         duration=EXCLUDED.duration, concentration=EXCLUDED.concentration, ritual=EXCLUDED.ritual,
-         verbal=EXCLUDED.verbal, somatic=EXCLUDED.somatic, material=EXCLUDED.material,
-         material_specified=EXCLUDED.material_specified, damage_roll=EXCLUDED.damage_roll,
-         damage_types=EXCLUDED.damage_types, saving_throw_ability=EXCLUDED.saving_throw_ability,
-         attack_roll=EXCLUDED.attack_roll, source_key=EXCLUDED.source_key`,
-      [
-        item.key, item.name, item.desc || '', item.level ?? 0,
-        item.school?.key || null, item.casting_time || null, item.range_text || null,
-        item.range || null, item.duration || null,
-        item.concentration || false, item.ritual || false,
-        item.verbal || false, item.somatic || false, item.material || false,
-        item.material_specified || null, item.damage_roll || null,
-        JSON.stringify(damageTypes),
-        item.saving_throw_ability || null, item.attack_roll || false,
-        getSourceKey(item),
-      ],
-    );
-  }
-  console.log(`  Spells: ${items.length}`);
-  return items;
-}
-
-async function importClassJunctions(client, classes) {
-  let savingThrowCount = 0;
-  let primaryAbilityCount = 0;
-
-  // Map ability names to keys
   const abilityNameToKey = {
     strength: 'str', dexterity: 'dex', constitution: 'con',
     intelligence: 'int', wisdom: 'wis', charisma: 'cha',
     str: 'str', dex: 'dex', con: 'con', int: 'int', wis: 'wis', cha: 'cha',
   };
 
-  for (const cls of classes) {
-    // Saving throws
-    if (Array.isArray(cls.saving_throws)) {
-      await client.query('DELETE FROM srd_class_saving_throws WHERE class_key = $1', [cls.key]);
-      for (const st of cls.saving_throws) {
-        const abilityKey = typeof st === 'string'
+  for (const item of [...parentClasses, ...subclasses]) {
+    const source = docKey(item);
+    if (!source) continue;
+    const key = slugify(item.name);
+
+    // Preserve all source-specific fields in features
+    const features = Array.isArray(item.features) ? item.features.map(f => ({
+      key: f.key,
+      name: f.name,
+      desc: f.desc,
+      feature_type: f.feature_type || null,
+      gained_at: f.gained_at || null,
+    })) : [];
+
+    const subclassOfKey = item.subclass_of?.key
+      ? slugify(item.subclass_of.name || item.subclass_of.key)
+      : null;
+
+    const casterType = (item.caster_type || 'NONE').toUpperCase();
+
+    await client.query(
+      `INSERT INTO srd_classes (key, name, desc_text, hit_dice, caster_type, subclass_of_key, features, document_source)
+       VALUES ($1, $2, $3, $4, $5, $6, $7::jsonb, $8)
+       ON CONFLICT (key, document_source) DO UPDATE SET
+         name = EXCLUDED.name, desc_text = EXCLUDED.desc_text, hit_dice = EXCLUDED.hit_dice,
+         caster_type = EXCLUDED.caster_type, subclass_of_key = EXCLUDED.subclass_of_key,
+         features = EXCLUDED.features`,
+      [key, item.name, item.desc || '', item.hit_dice, casterType, subclassOfKey, JSON.stringify(features), source],
+    );
+    count++;
+
+    // Junction: saving throws
+    if (Array.isArray(item.saving_throws)) {
+      for (const st of item.saving_throws) {
+        const ak = typeof st === 'string'
           ? abilityNameToKey[st.toLowerCase()]
           : abilityNameToKey[(st.key || st.name || '').toLowerCase()];
-        if (abilityKey) {
+        if (ak) {
           await client.query(
-            `INSERT INTO srd_class_saving_throws (class_key, ability_key) VALUES ($1, $2) ON CONFLICT DO NOTHING`,
-            [cls.key, abilityKey],
+            `INSERT INTO srd_class_saving_throws (class_key, ability_key, document_source)
+             VALUES ($1, $2, $3) ON CONFLICT DO NOTHING`,
+            [key, ak, source],
           );
-          savingThrowCount++;
         }
       }
     }
 
-    // Primary abilities
-    if (Array.isArray(cls.primary_abilities)) {
-      await client.query('DELETE FROM srd_class_primary_abilities WHERE class_key = $1', [cls.key]);
-      for (const pa of cls.primary_abilities) {
-        const abilityKey = typeof pa === 'string'
+    // Junction: primary abilities
+    if (Array.isArray(item.primary_abilities)) {
+      for (const pa of item.primary_abilities) {
+        const ak = typeof pa === 'string'
           ? abilityNameToKey[pa.toLowerCase()]
           : abilityNameToKey[(pa.key || pa.name || '').toLowerCase()];
-        if (abilityKey) {
+        if (ak) {
           await client.query(
-            `INSERT INTO srd_class_primary_abilities (class_key, ability_key) VALUES ($1, $2) ON CONFLICT DO NOTHING`,
-            [cls.key, abilityKey],
+            `INSERT INTO srd_class_primary_abilities (class_key, ability_key, document_source)
+             VALUES ($1, $2, $3) ON CONFLICT DO NOTHING`,
+            [key, ak, source],
           );
-          primaryAbilityCount++;
         }
       }
     }
   }
-  console.log(`  Class saving throws: ${savingThrowCount}, primary abilities: ${primaryAbilityCount}`);
+  console.log(`  Classes: ${count}`);
 }
 
-// =============================================================================
-// PHASE 3: Weapons, Armor, Spell-class junctions
-// =============================================================================
+async function importBackgrounds(client, v2Backgrounds) {
+  await client.query('DELETE FROM srd_backgrounds WHERE document_source != \'merged\'');
 
-async function importWeapons(client) {
-  const items = filterByDocuments(await fetchAllPages('weapons'));
-  for (const item of items) {
-    // Ensure damage type exists
-    if (item.damage_type?.key) {
+  let count = 0;
+  for (const item of v2Backgrounds) {
+    const source = docKey(item);
+    if (!source) continue;
+    const key = slugify(item.name);
+
+    const benefits = Array.isArray(item.benefits) ? item.benefits.map(b => ({
+      name: b.name,
+      desc: b.desc,
+      type: b.type || null,
+    })) : [];
+
+    // Synthesize desc from benefits if missing
+    let desc = item.desc || '';
+    if (!desc && benefits.length > 0) {
+      desc = benefits
+        .filter(b => b.desc)
+        .map(b => `**${b.name}.** ${b.desc}`)
+        .join('\n\n');
+    }
+
+    await client.query(
+      `INSERT INTO srd_backgrounds (key, name, desc_text, benefits, document_source)
+       VALUES ($1, $2, $3, $4::jsonb, $5)
+       ON CONFLICT (key, document_source) DO UPDATE SET
+         name = EXCLUDED.name, desc_text = EXCLUDED.desc_text, benefits = EXCLUDED.benefits`,
+      [key, item.name, desc, JSON.stringify(benefits), source],
+    );
+    count++;
+  }
+  console.log(`  Backgrounds: ${count}`);
+}
+
+async function importFeats(client, v2Feats) {
+  await client.query('DELETE FROM srd_feats WHERE document_source != \'merged\'');
+
+  let count = 0;
+  for (const item of v2Feats) {
+    const source = docKey(item);
+    if (!source) continue;
+    const key = slugify(item.name);
+
+    const benefits = Array.isArray(item.benefits) ? item.benefits : [];
+
+    await client.query(
+      `INSERT INTO srd_feats (key, name, desc_text, feat_type, prerequisite, benefits, document_source)
+       VALUES ($1, $2, $3, $4, $5, $6::jsonb, $7)
+       ON CONFLICT (key, document_source) DO UPDATE SET
+         name = EXCLUDED.name, desc_text = EXCLUDED.desc_text, feat_type = EXCLUDED.feat_type,
+         prerequisite = EXCLUDED.prerequisite, benefits = EXCLUDED.benefits`,
+      [key, item.name, item.desc || '', item.type || null, item.prerequisite || null, JSON.stringify(benefits), source],
+    );
+    count++;
+  }
+  console.log(`  Feats: ${count}`);
+}
+
+async function importSpells(client, v2Spells) {
+  await client.query('DELETE FROM srd_spell_classes WHERE document_source != \'merged\'');
+  await client.query('DELETE FROM srd_spells WHERE document_source != \'merged\'');
+
+  let count = 0;
+  let scCount = 0;
+
+  for (const item of v2Spells) {
+    const source = docKey(item);
+    if (!source) continue;
+    const key = slugify(item.name);
+
+    // Ensure school exists
+    const schoolKey = item.school?.key ? slugify(item.school.name || item.school.key) : null;
+    if (schoolKey) {
       await client.query(
-        `INSERT INTO srd_damage_types (key, name)
-         VALUES ($1, $2)
-         ON CONFLICT (key) DO NOTHING`,
-        [item.damage_type.key, item.damage_type.name || item.damage_type.key],
+        `INSERT INTO srd_spell_schools (key, name) VALUES ($1, $2) ON CONFLICT (key) DO NOTHING`,
+        [schoolKey, item.school.name || schoolKey],
       );
     }
 
+    const damageTypes = Array.isArray(item.damage_types)
+      ? item.damage_types.map(dt => dt.key || dt.name || dt)
+      : [];
+
+    await client.query(
+      `INSERT INTO srd_spells (key, name, desc_text, level, school_key, casting_time, range_text, range, duration,
+        concentration, ritual, verbal, somatic, material, material_specified, damage_roll, damage_types,
+        saving_throw_ability, attack_roll, document_source)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17::jsonb,$18,$19,$20)
+       ON CONFLICT (key, document_source) DO UPDATE SET
+         name=EXCLUDED.name, desc_text=EXCLUDED.desc_text, level=EXCLUDED.level, school_key=EXCLUDED.school_key,
+         casting_time=EXCLUDED.casting_time, range_text=EXCLUDED.range_text, range=EXCLUDED.range,
+         duration=EXCLUDED.duration, concentration=EXCLUDED.concentration, ritual=EXCLUDED.ritual,
+         verbal=EXCLUDED.verbal, somatic=EXCLUDED.somatic, material=EXCLUDED.material,
+         material_specified=EXCLUDED.material_specified, damage_roll=EXCLUDED.damage_roll,
+         damage_types=EXCLUDED.damage_types, saving_throw_ability=EXCLUDED.saving_throw_ability,
+         attack_roll=EXCLUDED.attack_roll`,
+      [
+        key, item.name, item.desc || '', item.level ?? 0,
+        schoolKey, item.casting_time || null, item.range_text || null,
+        item.range || null, item.duration || null,
+        item.concentration || false, item.ritual || false,
+        item.verbal || false, item.somatic || false, item.material || false,
+        item.material_specified || null, item.damage_roll || null,
+        JSON.stringify(damageTypes),
+        item.saving_throw_ability || null, item.attack_roll || false,
+        source,
+      ],
+    );
+    count++;
+
+    // Spell-class junctions
+    if (Array.isArray(item.classes)) {
+      for (const cls of item.classes) {
+        const ck = typeof cls === 'string' ? slugify(cls) : slugify(cls.name || cls.key || '');
+        if (!ck) continue;
+        // Only insert if the class exists for this source
+        const exists = await client.query(
+          'SELECT 1 FROM srd_classes WHERE key = $1 AND document_source = $2',
+          [ck, source],
+        );
+        if (exists.rows.length > 0) {
+          await client.query(
+            `INSERT INTO srd_spell_classes (spell_key, class_key, document_source)
+             VALUES ($1, $2, $3) ON CONFLICT DO NOTHING`,
+            [key, ck, source],
+          );
+          scCount++;
+        }
+      }
+    }
+  }
+  console.log(`  Spells: ${count}, spell-class junctions: ${scCount}`);
+}
+
+async function importItems(client, v2Items) {
+  await client.query('DELETE FROM srd_weapons WHERE document_source != \'merged\'');
+  await client.query('DELETE FROM srd_armor WHERE document_source != \'merged\'');
+  await client.query('DELETE FROM srd_items WHERE document_source != \'merged\'');
+
+  let count = 0;
+  for (const item of v2Items) {
+    const source = docKey(item);
+    if (!source) continue;
+    const key = slugify(item.name);
+
+    const catKey = item.category?.key ? slugify(item.category.name || item.category.key) : null;
+    const rarKey = item.rarity?.key ? slugify(item.rarity.name || item.rarity.key) : null;
+
+    // Ensure category and rarity exist
+    if (catKey) {
+      await client.query(
+        `INSERT INTO srd_item_categories (key, name) VALUES ($1, $2) ON CONFLICT (key) DO NOTHING`,
+        [catKey, item.category.name || catKey],
+      );
+    }
+    if (rarKey) {
+      await client.query(
+        `INSERT INTO srd_item_rarities (key, name) VALUES ($1, $2) ON CONFLICT (key) DO NOTHING`,
+        [rarKey, item.rarity.name || rarKey],
+      );
+    }
+
+    await client.query(
+      `INSERT INTO srd_items (key, name, desc_text, category_key, rarity_key, cost, weight, weight_unit, requires_attunement, document_source)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+       ON CONFLICT (key, document_source) DO UPDATE SET
+         name = EXCLUDED.name, desc_text = EXCLUDED.desc_text, category_key = EXCLUDED.category_key,
+         rarity_key = EXCLUDED.rarity_key, cost = EXCLUDED.cost, weight = EXCLUDED.weight,
+         weight_unit = EXCLUDED.weight_unit, requires_attunement = EXCLUDED.requires_attunement`,
+      [
+        key, item.name, item.desc || '',
+        catKey, rarKey,
+        item.cost || null, item.weight || null, item.weight_unit || 'lb',
+        item.requires_attunement || false,
+        source,
+      ],
+    );
+    count++;
+  }
+  console.log(`  Items: ${count}`);
+}
+
+async function importWeapons(client, v2Weapons, v2Items) {
+  // Build per-source item key lookup
+  const itemKeys = new Set();
+  for (const item of v2Items) {
+    const source = docKey(item);
+    if (source) itemKeys.add(`${slugify(item.name)}:${source}`);
+  }
+
+  let count = 0;
+  for (const item of v2Weapons) {
+    const source = docKey(item);
+    if (!source) continue;
+    const key = slugify(item.name);
+
+    const dtKey = item.damage_type?.key ? slugify(item.damage_type.name || item.damage_type.key) : null;
+    if (dtKey) {
+      await client.query(
+        `INSERT INTO srd_damage_types (key, name) VALUES ($1, $2) ON CONFLICT (key) DO NOTHING`,
+        [dtKey, item.damage_type.name || dtKey],
+      );
+    }
+
+    const itemKey = itemKeys.has(`${key}:${source}`) ? key : null;
     const properties = Array.isArray(item.properties) ? item.properties.map(p => ({
       key: p.property?.key || p.key,
       name: p.property?.name || p.name,
       detail: p.detail || null,
     })) : [];
 
-    // Try to find matching item key
-    const itemKey = item.key ? item.key.replace(/_weapon$/, '') : null;
-
     await client.query(
-      `INSERT INTO srd_weapons (key, name, item_key, damage_dice, damage_type_key, range, long_range, is_simple, properties, source_key)
+      `INSERT INTO srd_weapons (key, name, item_key, damage_dice, damage_type_key, range, long_range, is_simple, properties, document_source)
        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9::jsonb, $10)
-       ON CONFLICT (key) DO UPDATE SET
+       ON CONFLICT (key, document_source) DO UPDATE SET
          name=EXCLUDED.name, item_key=EXCLUDED.item_key, damage_dice=EXCLUDED.damage_dice,
          damage_type_key=EXCLUDED.damage_type_key, range=EXCLUDED.range, long_range=EXCLUDED.long_range,
-         is_simple=EXCLUDED.is_simple, properties=EXCLUDED.properties, source_key=EXCLUDED.source_key`,
+         is_simple=EXCLUDED.is_simple, properties=EXCLUDED.properties`,
       [
-        item.key, item.name, null,
-        item.damage_dice || null, item.damage_type?.key || null,
+        key, item.name, itemKey,
+        item.damage_dice || null, dtKey,
         item.range ? parseInt(item.range) || null : null,
         item.long_range ? parseInt(item.long_range) || null : null,
         item.is_simple ?? true,
         JSON.stringify(properties),
-        getSourceKey(item),
+        source,
       ],
     );
+    count++;
   }
-  console.log(`  Weapons: ${items.length}`);
+  console.log(`  Weapons: ${count}`);
 }
 
-async function importArmor(client) {
-  const items = filterByDocuments(await fetchAllPages('armor'));
-  for (const item of items) {
+async function importArmor(client, v2Armor, v2Items) {
+  const itemKeys = new Set();
+  for (const item of v2Items) {
+    const source = docKey(item);
+    if (source) itemKeys.add(`${slugify(item.name)}:${source}`);
+  }
+
+  let count = 0;
+  for (const item of v2Armor) {
+    const source = docKey(item);
+    if (!source) continue;
+    const key = slugify(item.name);
+    const itemKey = itemKeys.has(`${key}:${source}`) ? key : null;
+
     await client.query(
-      `INSERT INTO srd_armor (key, name, item_key, ac_base, ac_add_dexmod, ac_cap_dexmod, category, grants_stealth_disadvantage, strength_score_required, source_key)
+      `INSERT INTO srd_armor (key, name, item_key, ac_base, ac_add_dexmod, ac_cap_dexmod, category, grants_stealth_disadvantage, strength_score_required, document_source)
        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
-       ON CONFLICT (key) DO UPDATE SET
+       ON CONFLICT (key, document_source) DO UPDATE SET
          name=EXCLUDED.name, item_key=EXCLUDED.item_key, ac_base=EXCLUDED.ac_base,
          ac_add_dexmod=EXCLUDED.ac_add_dexmod, ac_cap_dexmod=EXCLUDED.ac_cap_dexmod,
          category=EXCLUDED.category, grants_stealth_disadvantage=EXCLUDED.grants_stealth_disadvantage,
-         strength_score_required=EXCLUDED.strength_score_required, source_key=EXCLUDED.source_key`,
+         strength_score_required=EXCLUDED.strength_score_required`,
       [
-        item.key, item.name, null,
+        key, item.name, itemKey,
         item.ac_base || null, item.ac_add_dexmod || false, item.ac_cap_dexmod || null,
         item.category || null, item.grants_stealth_disadvantage || false,
-        item.strength_score_required || null, getSourceKey(item),
+        item.strength_score_required || null,
+        source,
       ],
     );
+    count++;
   }
-  console.log(`  Armor: ${items.length}`);
+  console.log(`  Armor: ${count}`);
 }
 
-async function importSpellClassJunctions(client, spells) {
-  let count = 0;
-  for (const spell of spells) {
-    if (!Array.isArray(spell.classes)) continue;
+// =============================================================================
+// PHASE 3 — Data migration for existing characters
+// =============================================================================
 
-    await client.query('DELETE FROM srd_spell_classes WHERE spell_key = $1', [spell.key]);
-
-    for (const cls of spell.classes) {
-      const classKey = typeof cls === 'string' ? cls : cls.key;
-      if (!classKey) continue;
-
-      // Only insert if the class exists
-      const classExists = await client.query('SELECT 1 FROM srd_classes WHERE key = $1', [classKey]);
-      if (classExists.rows.length > 0) {
-        await client.query(
-          `INSERT INTO srd_spell_classes (spell_key, class_key) VALUES ($1, $2) ON CONFLICT DO NOTHING`,
-          [spell.key, classKey],
-        );
-        count++;
-      }
-    }
+async function migrateExistingData(client) {
+  // Set srd_document_source for existing characters that don't have it
+  const { rowCount } = await client.query(
+    `UPDATE characters SET srd_document_source = 'srd-2024' WHERE srd_document_source IS NULL`,
+  );
+  if (rowCount > 0) {
+    console.log(`  Set srd_document_source for ${rowCount} existing characters`);
   }
-  console.log(`  Spell-class junctions: ${count}`);
+
+  // Null out any character FKs pointing to keys that don't exist in any source
+  const orphanSpecies = await client.query(
+    `UPDATE characters SET species_key = NULL
+     WHERE species_key IS NOT NULL AND species_key NOT IN (SELECT DISTINCT key FROM srd_species)
+     RETURNING id`,
+  );
+  const orphanClass = await client.query(
+    `UPDATE characters SET class_key = NULL
+     WHERE class_key IS NOT NULL AND class_key NOT IN (SELECT DISTINCT key FROM srd_classes)
+     RETURNING id`,
+  );
+  const orphanBg = await client.query(
+    `UPDATE characters SET background_key = NULL
+     WHERE background_key IS NOT NULL AND background_key NOT IN (SELECT DISTINCT key FROM srd_backgrounds)
+     RETURNING id`,
+  );
+  const orphanTotal = orphanSpecies.rowCount + orphanClass.rowCount + orphanBg.rowCount;
+  if (orphanTotal > 0) {
+    console.log(`  Cleared ${orphanTotal} orphaned character FK references`);
+  }
+
+  // Clean up old merged data now that per-source data exists
+  // Check if per-source data was actually imported before deleting merged
+  const { rows: sourceCheck } = await client.query(
+    `SELECT COUNT(*) as cnt FROM srd_species WHERE document_source != 'merged'`,
+  );
+  if (parseInt(sourceCheck[0].cnt) > 0) {
+    const tables = ['srd_spell_classes', 'srd_class_saving_throws', 'srd_class_primary_abilities'];
+    for (const t of tables) {
+      await client.query(`DELETE FROM ${t} WHERE document_source = 'merged'`);
+    }
+    const entityTables = [
+      'srd_weapons', 'srd_armor', 'srd_items', 'srd_spells',
+      'srd_feats', 'srd_backgrounds', 'srd_classes', 'srd_species',
+    ];
+    for (const t of entityTables) {
+      await client.query(`DELETE FROM ${t} WHERE document_source = 'merged'`);
+    }
+    console.log(`  Cleaned up merged (legacy) data`);
+  }
 }
 
 // =============================================================================
@@ -614,57 +740,84 @@ async function importSpellClassJunctions(client, spells) {
 // =============================================================================
 
 async function main() {
-  console.log('=== Open5e SRD Data Import ===');
+  console.log('=== Open5e SRD Data Import (Per-Source Storage) ===');
   console.log(`API: ${API_BASE}`);
-  console.log(`Documents: ${DOCUMENTS.join(', ')}`);
+  console.log(`v2 documents: ${V2_DOCUMENTS.join(', ')}`);
   console.log('');
+
+  // --- Fetch all data ---
+  console.log('Fetching all data from Open5e v2...');
+
+  const [
+    v2Abilities, v2DamageTypes, v2SpellSchools, v2Conditions, v2Sizes,
+    v2Languages, v2Alignments, v2ItemCategories, v2ItemRarities, v2WeaponProperties,
+    v2Species, v2Classes, v2Backgrounds, v2Feats, v2Spells, v2Items,
+    v2Weapons, v2Armor,
+  ] = await Promise.all([
+    fetchAllV2('abilities'),
+    fetchAllV2('damagetypes'),
+    fetchAllV2('spellschools'),
+    fetchAllV2('conditions'),
+    fetchAllV2('sizes'),
+    fetchAllV2('languages'),
+    fetchAllV2('alignments'),
+    fetchAllV2('itemcategories'),
+    fetchAllV2('itemrarities'),
+    fetchAllV2('weaponproperties'),
+    fetchAllV2('species'),
+    fetchAllV2('classes'),
+    fetchAllV2('backgrounds'),
+    fetchAllV2('feats'),
+    fetchAllV2('spells'),
+    fetchAllV2('items'),
+    fetchAllV2('weapons'),
+    fetchAllV2('armor'),
+  ]);
+
+  console.log(`  v2: ${v2Species.length} species, ${v2Classes.length} classes, ${v2Backgrounds.length} backgrounds, ${v2Spells.length} spells, ${v2Items.length} items`);
+  console.log('Fetch complete.\n');
 
   const client = await pool.connect();
 
   try {
-    // Phase 0: Lookup tables
-    console.log('Phase 0: Importing lookup tables...');
+    // Phase 1: Lookup tables
+    console.log('Phase 1: Importing lookup tables...');
     await client.query('BEGIN');
-    await importAbilities(client);
-    await importDamageTypes(client);
-    await importSpellSchools(client);
-    await importConditions(client);
-    await importSizes(client);
-    await importLanguages(client);
-    await importAlignments(client);
-    await importItemCategories(client);
-    await importItemRarities(client);
-    await importWeaponProperties(client);
-    await client.query('COMMIT');
-    console.log('Phase 0 complete.\n');
-
-    // Phase 1: Entity tables
-    console.log('Phase 1: Importing entity tables...');
-    await client.query('BEGIN');
-    const classes = await importClasses(client);
-    await importSpecies(client);
-    await importBackgrounds(client);
-    await importFeats(client);
+    await importLookups(client, {
+      abilities: v2Abilities, damageTypes: v2DamageTypes, spellSchools: v2SpellSchools,
+      conditions: v2Conditions, sizes: v2Sizes, languages: v2Languages,
+      alignments: v2Alignments, itemCategories: v2ItemCategories,
+      itemRarities: v2ItemRarities, weaponProperties: v2WeaponProperties,
+    });
     await client.query('COMMIT');
     console.log('Phase 1 complete.\n');
 
-    // Phase 2: Items, Spells, and class junctions
-    console.log('Phase 2: Importing items, spells, and class junctions...');
+    // Phase 2: Entity tables (per-source)
+    console.log('Phase 2: Importing entity tables (per-source)...');
     await client.query('BEGIN');
-    await importItems(client);
-    const spells = await importSpells(client);
-    await importClassJunctions(client, classes);
+    await importSpecies(client, v2Species);
+    await importClasses(client, v2Classes);
+    await importBackgrounds(client, v2Backgrounds);
+    await importFeats(client, v2Feats);
     await client.query('COMMIT');
     console.log('Phase 2 complete.\n');
 
-    // Phase 3: Weapons, Armor, spell-class junctions
-    console.log('Phase 3: Importing weapons, armor, and spell-class junctions...');
+    // Phase 3: Items, spells, weapons, armor
+    console.log('Phase 3: Importing items, spells, weapons, armor...');
     await client.query('BEGIN');
-    await importWeapons(client);
-    await importArmor(client);
-    await importSpellClassJunctions(client, spells);
+    await importItems(client, v2Items);
+    await importSpells(client, v2Spells);
+    await importWeapons(client, v2Weapons, v2Items);
+    await importArmor(client, v2Armor, v2Items);
     await client.query('COMMIT');
     console.log('Phase 3 complete.\n');
+
+    // Phase 4: Data migration
+    console.log('Phase 4: Migrating existing data...');
+    await client.query('BEGIN');
+    await migrateExistingData(client);
+    await client.query('COMMIT');
+    console.log('Phase 4 complete.\n');
 
     console.log('=== Import complete! ===');
   } catch (error) {

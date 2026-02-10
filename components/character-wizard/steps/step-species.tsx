@@ -3,19 +3,22 @@ import { useWizard } from '../wizard-context';
 import { useSrdData } from '../use-srd-data';
 import { fetchSpecies } from '../../../utils/api/srd';
 import type { SrdSpecies } from '../../../utils/srd/types';
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '../../ui/card';
-import { ScrollArea } from '../../ui/scroll-area';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '../../ui/select';
 import { Label } from '../../ui/label';
-import { MarkdownText } from '../markdown-text';
+import { Info } from 'lucide-react';
+import { SrdEntityCard } from '../srd-entity-card';
+import { SrdDetailModal } from '../srd-detail-modal';
 
 export function StepSpecies() {
   const { state, dispatch } = useWizard();
+  const source = state.documentSource;
   const { data: speciesList, loading } = useSrdData(
-    (opts) => fetchSpecies(state.sourceKey, opts),
-    [state.sourceKey],
+    (opts) => fetchSpecies({ source }, opts),
+    [source],
   );
   const [selectedSpecies, setSelectedSpecies] = useState<SrdSpecies | null>(null);
+  const [detailEntity, setDetailEntity] = useState<SrdSpecies | null>(null);
+  const [detailOpen, setDetailOpen] = useState(false);
 
   // Restore selection when data loads
   if (speciesList && state.speciesKey && !selectedSpecies) {
@@ -46,6 +49,11 @@ export function StepSpecies() {
 
   const species = speciesList ?? [];
 
+  const getSummary = (s: SrdSpecies) => {
+    if (!s.traits || s.traits.length === 0) return '';
+    return s.traits.slice(0, 3).map(t => t.name).join(', ');
+  };
+
   return (
     <div className="space-y-6">
       <div>
@@ -55,97 +63,64 @@ export function StepSpecies() {
         </p>
       </div>
 
-      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+      <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-3">
         {species
           .filter((s: SrdSpecies) => !s.is_subspecies)
           .map((s: SrdSpecies) => (
-          <Card
+          <SrdEntityCard
             key={s.key}
-            className={`cursor-pointer transition-all hover:shadow-lg ${
-              selectedSpecies?.key === s.key ? 'ring-2 ring-primary' : ''
-            }`}
-            onClick={() => handleSelectSpecies(s)}
-          >
-            <CardHeader>
-              <CardTitle>{s.name}</CardTitle>
-              {s.source_key && (
-                <CardDescription>{s.source_key}</CardDescription>
-              )}
-            </CardHeader>
-            <CardContent>
-              {s.desc_text && (
-                <MarkdownText text={s.desc_text} className="text-sm text-muted-foreground line-clamp-3" />
-              )}
-            </CardContent>
-          </Card>
+            name={s.name}
+            summary={getSummary(s)}
+            documentSource={s.document_source}
+            isSelected={selectedSpecies?.key === s.key}
+            onSelect={() => handleSelectSpecies(s)}
+            onInfoClick={() => { setDetailEntity(s); setDetailOpen(true); }}
+          />
         ))}
       </div>
-
-      {selectedSpecies && (
-        <Card>
-          <CardHeader>
-            <CardTitle>{selectedSpecies.name} Traits</CardTitle>
-          </CardHeader>
-          <CardContent>
-            <ScrollArea className="h-64">
-              <div className="space-y-4 pr-4">
-                {selectedSpecies.desc_text && (
-                  <MarkdownText text={selectedSpecies.desc_text} className="text-sm text-muted-foreground" />
-                )}
-
-                {selectedSpecies.traits.length > 0 && (
-                  <div>
-                    <h4 className="font-semibold mb-2">Racial Traits</h4>
-                    {selectedSpecies.traits.map((trait, idx) => (
-                      <div key={idx} className="mb-3">
-                        <h5 className="font-medium text-sm">{trait.name}</h5>
-                        <MarkdownText text={trait.desc} className="text-sm text-muted-foreground" />
-                      </div>
-                    ))}
-                  </div>
-                )}
-              </div>
-            </ScrollArea>
-          </CardContent>
-        </Card>
-      )}
 
       {selectedSpecies?.subspecies && selectedSpecies.subspecies.length > 0 && (
         <div className="space-y-2">
           <Label htmlFor="subspecies-select">Choose a Subrace</Label>
-          <Select
-            value={state.subraceKey || ''}
-            onValueChange={handleSelectSubspecies}
-          >
-            <SelectTrigger id="subspecies-select">
-              <SelectValue placeholder="Select a subrace..." />
-            </SelectTrigger>
-            <SelectContent>
-              {selectedSpecies.subspecies.map((sub: SrdSpecies) => (
-                <SelectItem key={sub.key} value={sub.key}>
-                  {sub.name}
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
-
-          {state.subraceKey && (
-            <Card className="mt-4">
-              <CardHeader>
-                <CardTitle>
-                  {selectedSpecies.subspecies.find((s: SrdSpecies) => s.key === state.subraceKey)?.name}
-                </CardTitle>
-              </CardHeader>
-              <CardContent>
-                {(() => {
-                  const desc = selectedSpecies.subspecies.find((s: SrdSpecies) => s.key === state.subraceKey)?.desc_text;
-                  return desc ? <MarkdownText text={desc} className="text-sm text-muted-foreground" /> : null;
-                })()}
-              </CardContent>
-            </Card>
-          )}
+          <div className="flex items-center gap-2">
+            <Select
+              value={state.subraceKey || ''}
+              onValueChange={handleSelectSubspecies}
+            >
+              <SelectTrigger id="subspecies-select" className="flex-1">
+                <SelectValue placeholder="Select a subrace..." />
+              </SelectTrigger>
+              <SelectContent>
+                {selectedSpecies.subspecies.map((sub: SrdSpecies) => (
+                  <SelectItem key={sub.key} value={sub.key}>
+                    {sub.name}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+            {state.subraceKey && (() => {
+              const sub = selectedSpecies.subspecies!.find((s: SrdSpecies) => s.key === state.subraceKey);
+              return sub ? (
+                <button
+                  type="button"
+                  className="p-2 rounded-md hover:bg-muted text-muted-foreground hover:text-foreground transition-colors"
+                  onClick={() => { setDetailEntity(sub); setDetailOpen(true); }}
+                  aria-label={`Details for ${sub.name}`}
+                >
+                  <Info className="h-4 w-4" />
+                </button>
+              ) : null;
+            })()}
+          </div>
         </div>
       )}
+
+      <SrdDetailModal
+        open={detailOpen}
+        onOpenChange={setDetailOpen}
+        entityType="species"
+        entity={detailEntity}
+      />
     </div>
   );
 }

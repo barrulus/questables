@@ -3,17 +3,19 @@ import { useWizard } from '../wizard-context';
 import { useSrdData } from '../use-srd-data';
 import { fetchBackgrounds } from '../../../utils/api/srd';
 import type { SrdBackground } from '../../../utils/srd/types';
-import { Card, CardContent, CardHeader, CardTitle } from '../../ui/card';
-import { ScrollArea } from '../../ui/scroll-area';
-import { MarkdownText } from '../markdown-text';
+import { SrdEntityCard } from '../srd-entity-card';
+import { SrdDetailModal } from '../srd-detail-modal';
 
 export function StepBackground() {
   const { state, dispatch } = useWizard();
+  const source = state.documentSource;
   const { data: backgroundsList, loading } = useSrdData(
-    (opts) => fetchBackgrounds(undefined, opts),
-    [],
+    (opts) => fetchBackgrounds({ source }, opts),
+    [source],
   );
   const [selectedBackground, setSelectedBackground] = useState<SrdBackground | null>(null);
+  const [detailEntity, setDetailEntity] = useState<SrdBackground | null>(null);
+  const [detailOpen, setDetailOpen] = useState(false);
 
   const backgrounds = backgroundsList ?? [];
 
@@ -36,6 +38,11 @@ export function StepBackground() {
     );
   }
 
+  const getSummary = (bg: SrdBackground) => {
+    if (!bg.benefits || bg.benefits.length === 0) return '';
+    return bg.benefits.slice(0, 2).map(b => b.name).join(', ');
+  };
+
   return (
     <div className="space-y-6">
       <div>
@@ -45,55 +52,26 @@ export function StepBackground() {
         </p>
       </div>
 
-      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+      <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-3">
         {backgrounds.map((bg: SrdBackground) => (
-          <Card
+          <SrdEntityCard
             key={bg.key}
-            className={`cursor-pointer transition-all hover:shadow-lg ${
-              selectedBackground?.key === bg.key ? 'ring-2 ring-primary' : ''
-            }`}
-            onClick={() => handleSelectBackground(bg)}
-          >
-            <CardHeader>
-              <CardTitle>{bg.name}</CardTitle>
-            </CardHeader>
-            <CardContent>
-              {bg.desc_text && (
-                <MarkdownText text={bg.desc_text} className="text-sm text-muted-foreground line-clamp-3" />
-              )}
-            </CardContent>
-          </Card>
+            name={bg.name}
+            summary={getSummary(bg)}
+            documentSource={bg.document_source}
+            isSelected={selectedBackground?.key === bg.key}
+            onSelect={() => handleSelectBackground(bg)}
+            onInfoClick={() => { setDetailEntity(bg); setDetailOpen(true); }}
+          />
         ))}
       </div>
 
-      {selectedBackground && (
-        <Card>
-          <CardHeader>
-            <CardTitle>{selectedBackground.name}</CardTitle>
-          </CardHeader>
-          <CardContent>
-            <ScrollArea className="h-96">
-              <div className="space-y-4 pr-4">
-                {selectedBackground.desc_text && (
-                  <MarkdownText text={selectedBackground.desc_text} className="text-sm text-muted-foreground" />
-                )}
-
-                {selectedBackground.benefits.length > 0 && (
-                  <div>
-                    <h4 className="font-semibold mb-2">Benefits</h4>
-                    {selectedBackground.benefits.map((benefit, idx) => (
-                      <div key={idx} className="mb-3">
-                        <h5 className="font-medium text-sm">{benefit.name}</h5>
-                        <MarkdownText text={benefit.desc} className="text-sm text-muted-foreground" />
-                      </div>
-                    ))}
-                  </div>
-                )}
-              </div>
-            </ScrollArea>
-          </CardContent>
-        </Card>
-      )}
+      <SrdDetailModal
+        open={detailOpen}
+        onOpenChange={setDetailOpen}
+        entityType="background"
+        entity={detailEntity}
+      />
     </div>
   );
 }
