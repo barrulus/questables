@@ -6,12 +6,14 @@ interface WizardFooterProps {
   onCreateCharacter: () => void;
   onSaveDraft: () => void;
   isCreating: boolean;
+  isSaving?: boolean;
 }
 
 export function WizardFooter({
   onCreateCharacter,
   onSaveDraft,
   isCreating,
+  isSaving = false,
 }: WizardFooterProps) {
   const { state, goNext, goBack, canGoNext, canGoBack } = useWizard();
   const isLastStep = state.currentStep === WIZARD_STEPS.length - 1;
@@ -23,11 +25,11 @@ export function WizardFooter({
           <Button
             variant="outline"
             onClick={onSaveDraft}
-            disabled={isCreating}
+            disabled={isCreating || isSaving}
             className="gap-2"
           >
             <Save className="h-4 w-4" />
-            Save Draft
+            {isSaving ? 'Saving...' : 'Save Draft'}
           </Button>
         </div>
 

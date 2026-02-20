@@ -515,3 +515,65 @@ export async function deleteCharacter(
     'Failed to delete character',
   );
 }
+
+/** Fetch the most recent wizard draft for a user (creation_state IS NOT NULL). */
+export async function getUserDraft(
+  userId: string,
+  options: ApiRequestOptions = {},
+): Promise<Character | null> {
+  const data = await fetchJson<{ draft?: Record<string, unknown> | null }>(
+    `/api/users/${userId}/characters/draft`,
+    { method: 'GET', signal: options.signal },
+    'Failed to load draft',
+  );
+
+  if (!data?.draft) {
+    return null;
+  }
+
+  return mapCharacterFromServer(data.draft);
+}
+
+/**
+ * Save (or update) a wizard draft. If `draftId` is provided, the existing
+ * draft character row is updated; otherwise a new character row is created
+ * with `creation_state` set so it can be resumed later.
+ */
+export async function saveDraft(
+  userId: string,
+  creationState: Record<string, unknown>,
+  draftId?: string | null,
+  options: ApiRequestOptions = {},
+): Promise<Character> {
+  if (draftId) {
+    // Update existing draft row
+    return updateCharacter(draftId, { creationState }, options);
+  }
+
+  // Create a new draft character row with minimal required fields
+  const draftName = (creationState.name as string) || 'Draft Character';
+  return createCharacter({
+    userId,
+    name: draftName,
+    className: (creationState.classKey as string) || 'Unknown',
+    level: 1,
+    race: (creationState.speciesKey as string) || 'Unknown',
+    background: (creationState.backgroundKey as string) || 'Unknown',
+    hitPoints: { max: 0, current: 0, temporary: 0 },
+    armorClass: 10,
+    speed: 30,
+    proficiencyBonus: 2,
+    abilities: (creationState.baseAbilities as Character['abilities']) ?? {
+      strength: 10, dexterity: 10, constitution: 10,
+      intelligence: 10, wisdom: 10, charisma: 10,
+    },
+    savingThrows: {},
+    skills: {},
+    inventory: [],
+    equipment: { weapons: {}, accessories: {} },
+    speciesKey: (creationState.speciesKey as string) || null,
+    classKey: (creationState.classKey as string) || null,
+    backgroundKey: (creationState.backgroundKey as string) || null,
+    creationState,
+  }, options);
+}

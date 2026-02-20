@@ -337,4 +337,31 @@ export const registerCharacterRoutes = (app) => {
       client?.release();
     }
   });
+
+  // Fetch the most recent wizard draft for a user (creation_state IS NOT NULL)
+  app.get('/api/users/:userId/characters/draft', requireAuth, async (req, res) => {
+    const { userId } = req.params;
+    let client;
+    try {
+      client = await getClient({ label: 'characters.draft' });
+      const result = await client.query(
+        `SELECT * FROM characters
+          WHERE user_id = $1 AND creation_state IS NOT NULL
+          ORDER BY updated_at DESC
+          LIMIT 1`,
+        [userId],
+      );
+
+      if (result.rows.length === 0) {
+        return res.json({ draft: null });
+      }
+
+      res.json({ draft: result.rows[0] });
+    } catch (error) {
+      logError('Draft fetch failed', error, { userId });
+      res.status(500).json({ error: 'Failed to fetch draft' });
+    } finally {
+      client?.release();
+    }
+  });
 };
