@@ -21,6 +21,7 @@ import {
   deleteCampaignRegion,
 } from '../services/maps/service.js';
 import { getSettlementInfo, getSettlementTile } from '../services/maps/settlement-service.js';
+import { getWorldIngestionStatus } from '../services/maps/ingestion-service.js';
 import { getViewerContextOrThrow, ensureDmControl } from '../services/campaigns/service.js';
 
 const router = Router();
@@ -75,6 +76,18 @@ router.get('/world/:id', async (req, res) => {
     return res.json(worldMap);
   } catch (error) {
     logError('World map fetch failed', error, { worldMapId: id });
+    return res.status(500).json({ error: error.message });
+  }
+});
+
+router.get('/world/:worldId/status', async (req, res) => {
+  const { worldId } = req.params;
+
+  try {
+    const layers = await getWorldIngestionStatus(worldId);
+    return res.json({ worldId, layers });
+  } catch (error) {
+    logError('World map ingestion status failed', error, { worldId });
     return res.status(500).json({ error: error.message });
   }
 });

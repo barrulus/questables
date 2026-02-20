@@ -139,11 +139,11 @@ const upload = multer({
   storage,
   limits: { fileSize: 50 * 1024 * 1024 }, // 50MB limit
   fileFilter: (req, file, cb) => {
-    const allowedTypes = ['image/jpeg', 'image/png', 'image/webp', 'application/json'];
+    const allowedTypes = ['image/jpeg', 'image/png', 'image/webp', 'application/json', 'image/svg+xml'];
     if (allowedTypes.includes(file.mimetype)) {
       cb(null, true);
     } else {
-      cb(new Error('Invalid file type. Allowed: JPEG, PNG, WebP, JSON'));
+      cb(new Error('Invalid file type. Allowed: JPEG, PNG, WebP, JSON, SVG'));
     }
   }
 });

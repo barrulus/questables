@@ -26,8 +26,10 @@ import {
   Star,
   LogOut,
   User,
+  Upload,
   Users
 } from "lucide-react";
+import { MapsTab } from "./map-upload-wizard/maps-tab";
 import { apiFetch, readErrorMessage, readJsonBody } from "../utils/api-client";
 
 interface LevelRange {
@@ -570,7 +572,7 @@ export function DMDashboard({ user, onEnterGame, onLogout }: DMDashboardProps) {
 
       <div className="p-6">
         <Tabs value={activeTab} onValueChange={setActiveTab} className="space-y-6">
-          <TabsList className="grid w-full gap-2 sm:grid-cols-3">
+          <TabsList className="grid w-full gap-2 sm:grid-cols-4">
             <TabsTrigger value="campaigns" className="flex items-center gap-2">
               <MapIcon className="w-4 h-4" />
               <span>Campaigns</span>
@@ -582,6 +584,10 @@ export function DMDashboard({ user, onEnterGame, onLogout }: DMDashboardProps) {
             <TabsTrigger value="characters" className="flex items-center gap-2">
               <Shield className="w-4 h-4" />
               <span>Characters</span>
+            </TabsTrigger>
+            <TabsTrigger value="maps" className="flex items-center gap-2">
+              <Upload className="w-4 h-4" />
+              <span>Maps</span>
             </TabsTrigger>
           </TabsList>
 
@@ -964,6 +970,10 @@ export function DMDashboard({ user, onEnterGame, onLogout }: DMDashboardProps) {
                 )}
               </CardContent>
             </Card>
+          </TabsContent>
+
+          <TabsContent value="maps" className="space-y-6">
+            <MapsTab userId={user.id} />
           </TabsContent>
 
         </Tabs>

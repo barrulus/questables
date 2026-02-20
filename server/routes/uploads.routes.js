@@ -6,6 +6,14 @@ import {
   appendCampaignAsset,
   listCampaignAssets,
 } from '../services/uploads/service.js';
+import {
+  parseSvgDimensions,
+  createOrUpdateWorld,
+  extractMetersPerPixel,
+  ingestLayer,
+  updateWorldMetersPerPixel,
+} from '../services/maps/ingestion-service.js';
+import { getWorldMapById } from '../services/maps/service.js';
 
 export const registerUploadRoutes = (app, { upload }) => {
   if (!upload) {
@@ -126,6 +134,97 @@ export const registerUploadRoutes = (app, { upload }) => {
       logError('Campaign asset listing failed', error, { campaignId });
       const status = error.status || 500;
       return res.status(status).json({ error: error.code || 'campaign_assets_failed', message: error.message });
+    }
+  });
+
+  // --- Map Wizard: SVG upload (Step 0) ---
+  router.post('/upload/map/svg', upload.single('svgFile'), async (req, res) => {
+    if (!req.file) {
+      return res.status(400).json({ error: 'No SVG file uploaded' });
+    }
+
+    const { name, description, metersPerPixel } = req.body ?? {};
+    if (!name || typeof name !== 'string' || !name.trim()) {
+      return res.status(400).json({ error: 'Name is required' });
+    }
+
+    try {
+      const svgContent = await fs.readFile(req.file.path, 'utf8');
+      const { width, height } = parseSvgDimensions(svgContent);
+
+      const mpp = metersPerPixel ? Number.parseFloat(metersPerPixel) : null;
+      const worldId = await createOrUpdateWorld({
+        name: name.trim(),
+        description: typeof description === 'string' ? description.trim() || null : null,
+        widthPixels: width,
+        heightPixels: height,
+        metersPerPixel: Number.isFinite(mpp) ? mpp : null,
+        uploadedBy: req.body?.uploaded_by ?? null,
+      });
+
+      logInfo('Map SVG uploaded', {
+        telemetryEvent: 'upload.map.svg',
+        worldId,
+        width,
+        height,
+      });
+
+      return res.json({
+        worldId,
+        name: name.trim(),
+        width,
+        height,
+        metersPerPixel: Number.isFinite(mpp) ? mpp : null,
+      });
+    } catch (error) {
+      logError('Map SVG upload failed', error, { filename: req.file?.filename });
+      return res.status(500).json({ error: error.message });
+    }
+  });
+
+  // --- Map Wizard: GeoJSON layer upload (Steps 1-5) ---
+  router.post('/upload/map/:worldId/layer', upload.single('geojsonFile'), async (req, res) => {
+    const { worldId } = req.params;
+
+    if (!req.file) {
+      return res.status(400).json({ error: 'No GeoJSON file uploaded' });
+    }
+
+    const { layerType } = req.body ?? {};
+    if (!layerType) {
+      return res.status(400).json({ error: 'layerType is required (cells, burgs, routes, rivers, markers)' });
+    }
+
+    try {
+      const world = await getWorldMapById(worldId);
+      if (!world) {
+        return res.status(404).json({ error: 'World map not found' });
+      }
+
+      const fileContent = await fs.readFile(req.file.path, 'utf8');
+      const geojsonData = JSON.parse(fileContent);
+
+      // If world doesn't have meters_per_pixel, try to extract from GeoJSON metadata
+      if (!world.meters_per_pixel) {
+        const mpp = extractMetersPerPixel(geojsonData);
+        if (mpp !== null) {
+          await updateWorldMetersPerPixel(worldId, mpp);
+        }
+      }
+
+      const result = await ingestLayer(worldId, layerType, geojsonData);
+
+      logInfo('Map layer ingested', {
+        telemetryEvent: 'upload.map.layer',
+        worldId,
+        layerType,
+        rowCount: result.rowCount,
+      });
+
+      return res.json({ worldId, layerType: result.layerType, rowCount: result.rowCount, status: 'complete' });
+    } catch (error) {
+      logError('Map layer upload failed', error, { worldId, layerType });
+      return res.status(500).json({ error: error.message });
     }
   });
 

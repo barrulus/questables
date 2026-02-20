@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useId, useState } from 'react';
 import { Input } from './ui/input';
 import { Progress } from './ui/progress';
 import { Card, CardContent, CardHeader, CardTitle } from './ui/card';
@@ -34,6 +34,7 @@ export default function FileUpload<TResult = unknown>({
   multiple = false,
   additionalFields = {}
 }: FileUploadProps<TResult>) {
+  const inputId = useId();
   const [uploading, setUploading] = useState(false);
   const [progress, setProgress] = useState(0);
   const [dragActive, setDragActive] = useState(false);
@@ -167,7 +168,7 @@ export default function FileUpload<TResult = unknown>({
           onDragLeave={handleDrag}
           onDragOver={handleDrag}
           onDrop={handleDrop}
-          onClick={() => document.getElementById('file-input')?.click()}
+          onClick={() => document.getElementById(inputId)?.click()}
         >
           <div className="flex flex-col items-center gap-2">
             <Upload className="w-12 h-12 text-muted-foreground" />
@@ -183,7 +184,7 @@ export default function FileUpload<TResult = unknown>({
           </div>
           
           <Input
-            id="file-input"
+            id={inputId}
             type="file"
             accept={acceptedTypes.join(',')}
             multiple={multiple}
