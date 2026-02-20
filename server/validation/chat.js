@@ -8,4 +8,12 @@ export const validateChatMessage = [
     .optional()
     .isIn(['text', 'dice_roll', 'system', 'ooc'])
     .withMessage('Invalid message type'),
+  body('channel_type')
+    .optional()
+    .isIn(['party', 'private', 'dm_whisper', 'dm_broadcast'])
+    .withMessage('channel_type must be party, private, dm_whisper, or dm_broadcast'),
+  body('channel_target_user_id')
+    .optional({ nullable: true })
+    .isUUID()
+    .withMessage('channel_target_user_id must be a valid UUID'),
 ];

@@ -30,6 +30,7 @@ import { registerNpcRoutes } from './routes/npcs.routes.js';
 import { registerUploadRoutes } from './routes/uploads.routes.js';
 import { registerUserRoutes } from './routes/users.routes.js';
 import { registerSrdRoutes } from './routes/srd.routes.js';
+import { registerGameStateRoutes } from './routes/game-state.routes.js';
 import { ensureLLMService } from './llm/request-helpers.js';
 import {
   logInfo,
@@ -400,6 +401,7 @@ registerEncounterRoutes(app);
 registerNpcRoutes(app);
 registerUploadRoutes(app, { upload });
 registerSrdRoutes(app);
+registerGameStateRoutes(app);
 
 const loadProviderConfigurations = async () => {
   try {

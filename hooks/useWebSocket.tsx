@@ -222,6 +222,22 @@ export const useWebSocket = (campaignId: string) => {
       setMessages((prev) => [...prev, { type: 'npc-teleported', data }]);
     });
 
+    socket.on('game-phase-changed', (data) => {
+      setMessages((prev) => [...prev, { type: 'game-phase-changed', data }]);
+    });
+
+    socket.on('turn-advanced', (data) => {
+      setMessages((prev) => [...prev, { type: 'turn-advanced', data }]);
+    });
+
+    socket.on('world-turn-completed', (data) => {
+      setMessages((prev) => [...prev, { type: 'world-turn-completed', data }]);
+    });
+
+    socket.on('turn-order-changed', (data) => {
+      setMessages((prev) => [...prev, { type: 'turn-order-changed', data }]);
+    });
+
     socket.on('error', (error) => {
       console.error('[Socket.io] Server error:', error);
     });

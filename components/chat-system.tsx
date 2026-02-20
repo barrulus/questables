@@ -11,6 +11,12 @@ import { useUser } from "../contexts/UserContext";
 import { useWebSocket } from "../hooks/useWebSocket";
 import { apiFetch, readErrorMessage, readJsonBody } from "../utils/api-client";
 import { handleAsyncError } from "../utils/error-handling";
+import {
+  ChatChannelTabs,
+  buildDefaultTabs,
+  type ChannelTab,
+  type ChannelType,
+} from "./chat-channel-tabs";
 
 interface DiceRollResult {
   expression: string;
@@ -31,6 +37,8 @@ interface ChatMessage {
   character_id?: string | null;
   character_name?: string | null;
   dice_roll?: DiceRollResult;
+  channel_type?: ChannelType;
+  channel_target_user_id?: string | null;
   created_at: string;
 }
 
@@ -42,6 +50,8 @@ interface CampaignCharacter {
 interface ChatSystemProps {
   campaignId: string;
   campaignName?: string;
+  campaignRole?: "dm" | "player";
+  dmUserId?: string | null;
 }
 
 interface ApiChatMessage {
@@ -55,6 +65,8 @@ interface ApiChatMessage {
   character_id?: string | null;
   character_name?: string | null;
   dice_roll?: unknown;
+  channel_type?: string;
+  channel_target_user_id?: string | null;
   created_at: string;
 }
 
@@ -107,11 +119,15 @@ function normalizeChatMessage(raw: ApiChatMessage): ChatMessage {
     character_id: raw.character_id ?? null,
     character_name: raw.character_name ?? undefined,
     dice_roll: parseDiceRoll(raw.dice_roll),
+    channel_type: (raw.channel_type as ChannelType) ?? "party",
+    channel_target_user_id: raw.channel_target_user_id ?? null,
     created_at: raw.created_at,
   };
 }
 
-export function ChatSystem({ campaignId, campaignName }: ChatSystemProps) {
+const DEFAULT_CHANNEL: ChannelTab = { channelType: "party", label: "Party" };
+
+export function ChatSystem({ campaignId, campaignName, campaignRole, dmUserId }: ChatSystemProps) {
   const { user } = useUser();
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [newMessage, setNewMessage] = useState("");
@@ -121,6 +137,10 @@ export function ChatSystem({ campaignId, campaignName }: ChatSystemProps) {
   const [sending, setSending] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [charactersError, setCharactersError] = useState<string | null>(null);
+
+  // Channel state
+  const [activeChannel, setActiveChannel] = useState<ChannelTab>(DEFAULT_CHANNEL);
+  const [unreadCounts, setUnreadCounts] = useState<Record<string, number>>({});
 
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const messageInputRef = useRef<HTMLInputElement | null>(null);
@@ -137,7 +157,99 @@ export function ChatSystem({ campaignId, campaignName }: ChatSystemProps) {
     connectionAttempts,
   } = useWebSocket(campaignId);
 
-  const hasMessages = messages.length > 0;
+  const isDm = campaignRole === "dm" || (user && dmUserId === user.id);
+  const channelTabs = useMemo(() => buildDefaultTabs(isDm ?? false), [isDm]);
+
+  // ── Channel key for unread tracking ─────────────────────────────────
+  const channelKey = useCallback(
+    (channelType: string, targetUserId?: string | null) =>
+      `${channelType}:${targetUserId ?? "all"}`,
+    [],
+  );
+
+  // ── Load unread counts ──────────────────────────────────────────────
+  const loadUnreadCounts = useCallback(async () => {
+    if (!campaignId || !user) return;
+    try {
+      const response = await apiFetch(`/api/campaigns/${campaignId}/channels/unread`);
+      if (!response.ok) return;
+      const payload = await readJsonBody<{
+        counts: { channel_type: string; channel_target_user_id?: string | null; unread_count: number }[];
+      }>(response);
+      const counts: Record<string, number> = {};
+      for (const row of payload.counts ?? []) {
+        counts[channelKey(row.channel_type, row.channel_target_user_id)] = row.unread_count;
+      }
+      setUnreadCounts(counts);
+    } catch {
+      /* ignore */
+    }
+  }, [campaignId, channelKey, user]);
+
+  useEffect(() => {
+    loadUnreadCounts();
+  }, [loadUnreadCounts]);
+
+  // ── Mark channel as read on tab switch ──────────────────────────────
+  const handleChannelChange = useCallback(
+    (tab: ChannelTab) => {
+      setActiveChannel(tab);
+
+      // Clear local unread for this channel
+      const key = channelKey(tab.channelType, tab.targetUserId);
+      setUnreadCounts((prev) => ({ ...prev, [key]: 0 }));
+
+      // Tell server
+      if (campaignId) {
+        void apiFetch(`/api/campaigns/${campaignId}/channels/read`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            channel_type: tab.channelType,
+            channel_target_user_id: tab.targetUserId ?? null,
+          }),
+        }).catch(() => {});
+      }
+    },
+    [campaignId, channelKey],
+  );
+
+  // ── Tabs with unread counts ─────────────────────────────────────────
+  const tabsWithUnread = useMemo(
+    () =>
+      channelTabs.map((tab) => ({
+        ...tab,
+        unreadCount: unreadCounts[channelKey(tab.channelType, tab.targetUserId)] ?? 0,
+      })),
+    [channelTabs, channelKey, unreadCounts],
+  );
+
+  // ── Filter messages by active channel ───────────────────────────────
+  const filteredMessages = useMemo(() => {
+    return messages.filter((msg) => {
+      const msgChannel = msg.channel_type ?? "party";
+
+      if (activeChannel.channelType === "party") {
+        return msgChannel === "party";
+      }
+      if (activeChannel.channelType === "dm_broadcast") {
+        return msgChannel === "dm_broadcast";
+      }
+      if (activeChannel.channelType === "dm_whisper") {
+        return msgChannel === "dm_whisper";
+      }
+      if (activeChannel.channelType === "private") {
+        return (
+          msgChannel === "private" &&
+          ((msg.sender_id === user?.id && msg.channel_target_user_id === activeChannel.targetUserId) ||
+            (msg.sender_id === activeChannel.targetUserId && msg.channel_target_user_id === user?.id))
+        );
+      }
+      return true;
+    });
+  }, [messages, activeChannel, user]);
+
+  const hasMessages = filteredMessages.length > 0;
 
   const loadCampaignCharacter = useCallback(async (signal?: AbortSignal) => {
     if (!user || !campaignId) {
@@ -179,6 +291,7 @@ export function ChatSystem({ campaignId, campaignName }: ChatSystemProps) {
         }
         setError(null);
 
+        // Load all channel messages at once (no channel filter — we filter client-side)
         const response = await apiFetch(`/api/campaigns/${campaignId}/messages`, { signal });
         if (!response.ok) {
           throw new Error(await readErrorMessage(response, "Failed to load chat messages"));
@@ -256,17 +369,27 @@ export function ChatSystem({ campaignId, campaignName }: ChatSystemProps) {
       return next;
     });
 
+    // Increment unread for non-active channels
+    const incomingKey = channelKey(incoming.channel_type ?? "party", incoming.channel_target_user_id);
+    const activeKey = channelKey(activeChannel.channelType, activeChannel.targetUserId);
+    if (incomingKey !== activeKey && incoming.sender_id !== user?.id) {
+      setUnreadCounts((prev) => ({
+        ...prev,
+        [incomingKey]: (prev[incomingKey] ?? 0) + 1,
+      }));
+    }
+
     if (incoming.sender_id !== user?.id) {
       toast.success(`New message from ${incoming.sender_name}`);
     }
-  }, [wsMessages, user]);
+  }, [wsMessages, user, activeChannel, channelKey]);
 
   useEffect(() => {
     if (loading) {
       return;
     }
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
-  }, [messages, loading]);
+  }, [filteredMessages, loading]);
 
   useEffect(() => () => stopTyping(), [stopTyping]);
 
@@ -302,6 +425,8 @@ export function ChatSystem({ campaignId, campaignName }: ChatSystemProps) {
             type: messageType,
             character_id: characterId,
             dice_roll: diceRoll ?? null,
+            channel_type: activeChannel.channelType,
+            channel_target_user_id: activeChannel.targetUserId ?? null,
           }),
         });
 
@@ -340,7 +465,7 @@ export function ChatSystem({ campaignId, campaignName }: ChatSystemProps) {
         setSending(false);
       }
     },
-    [campaignCharacter, campaignId, connected, sendChatMessage, speakingInCharacter, stopTyping, user]
+    [activeChannel, campaignCharacter, campaignId, connected, sendChatMessage, speakingInCharacter, stopTyping, user]
   );
 
   const evaluateDiceExpression = (expression: string): DiceRollResult => {
@@ -434,6 +559,19 @@ export function ChatSystem({ campaignId, campaignName }: ChatSystemProps) {
   }, []);
 
   const getMessageStyling = useCallback((message: ChatMessage) => {
+    // Channel-specific visual styles
+    const channelType = message.channel_type ?? "party";
+    if (channelType === "dm_broadcast") {
+      return "bg-amber-50 border border-amber-200 text-amber-900 italic";
+    }
+    if (channelType === "dm_whisper") {
+      return "bg-indigo-50 border border-indigo-200 text-indigo-900";
+    }
+    if (channelType === "private") {
+      return "bg-emerald-50 border border-emerald-200 text-emerald-900";
+    }
+
+    // Default message type styles
     if (message.message_type === "system") {
       return "bg-purple-50 border border-purple-200 text-purple-800";
     }
@@ -464,6 +602,23 @@ export function ChatSystem({ campaignId, campaignName }: ChatSystemProps) {
 
     return `${typingUsers.slice(0, -1).join(", ")} and ${typingUsers[typingUsers.length - 1]} are typing...`;
   }, [typingUsers]);
+
+  // Channel placeholder text
+  const inputPlaceholder = useMemo(() => {
+    switch (activeChannel.channelType) {
+      case "dm_broadcast":
+        return "Narrate to all players...";
+      case "dm_whisper":
+        return "Whisper to/from the DM...";
+      case "private":
+        return "Private message...";
+      default:
+        return "Type your message...";
+    }
+  }, [activeChannel.channelType]);
+
+  // Disable input for dm_broadcast if not DM
+  const inputDisabled = sending || (activeChannel.channelType === "dm_broadcast" && !isDm);
 
   if (!user) {
     return (
@@ -530,6 +685,13 @@ export function ChatSystem({ campaignId, campaignName }: ChatSystemProps) {
         </div>
       </div>
 
+      {/* Channel Tabs */}
+      <ChatChannelTabs
+        tabs={tabsWithUnread}
+        activeChannel={activeChannel}
+        onChannelChange={handleChannelChange}
+      />
+
       <div className="flex flex-col gap-3 border-b px-4 py-3">
         <div className="flex flex-wrap items-center gap-2 text-sm">
           {campaignCharacter ? (
@@ -565,7 +727,7 @@ export function ChatSystem({ campaignId, campaignName }: ChatSystemProps) {
 
       <ScrollArea className="flex-1 px-4">
         <div className="space-y-3 py-4">
-          {messages.map((message) => (
+          {filteredMessages.map((message) => (
             <div key={message.id} className={`flex gap-3 rounded p-2 ${getMessageStyling(message)}`}>
               <Avatar className="h-8 w-8">
                 <AvatarFallback>
@@ -607,7 +769,7 @@ export function ChatSystem({ campaignId, campaignName }: ChatSystemProps) {
         <div className="flex gap-2">
           <Input
             ref={messageInputRef}
-            placeholder="Type your message..."
+            placeholder={inputPlaceholder}
             value={newMessage}
             onChange={(event) => {
               const value = event.target.value;
@@ -635,9 +797,9 @@ export function ChatSystem({ campaignId, campaignName }: ChatSystemProps) {
               }
             }}
             className="flex-1"
-            disabled={sending}
+            disabled={inputDisabled}
           />
-          <Button onClick={handleTextSubmit} disabled={sending || !newMessage.trim()} size="sm">
+          <Button onClick={handleTextSubmit} disabled={inputDisabled || !newMessage.trim()} size="sm">
             {sending ? <Loader2 className="h-4 w-4 animate-spin" /> : <Send className="h-4 w-4" />}
           </Button>
         </div>

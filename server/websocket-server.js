@@ -18,6 +18,10 @@ export const REALTIME_EVENTS = {
   unplannedEncounterCreated: 'unplanned-encounter-created',
   npcSentimentAdjusted: 'npc-sentiment-adjusted',
   npcTeleported: 'npc-teleported',
+  gamePhaseChanged: 'game-phase-changed',
+  turnAdvanced: 'turn-advanced',
+  worldTurnCompleted: 'world-turn-completed',
+  turnOrderChanged: 'turn-order-changed',
 };
 
 const CAMPAIGN_ROOM_PREFIX = 'campaign-';
@@ -111,7 +115,7 @@ class WebSocketServer {
         });
       });
 
-      // Handle chat messages
+      // Handle chat messages (channel-aware)
       socket.on('chat-message', async (payload) => {
         try {
           const { campaignId } = payload;
@@ -135,6 +139,9 @@ class WebSocketServer {
             }
           }
 
+          const channelType = incoming.channelType ?? 'party';
+          const channelTargetUserId = incoming.channelTargetUserId ?? null;
+
           const messageData = {
             type: 'new_message',
             data: {
@@ -148,16 +155,30 @@ class WebSocketServer {
               character_id: characterId,
               character_name: characterName,
               dice_roll: incoming.diceRoll ?? null,
+              channel_type: channelType,
+              channel_target_user_id: channelTargetUserId,
               created_at: incoming.createdAt || now,
             }
           };
 
-          this.io.to(`${CAMPAIGN_ROOM_PREFIX}${campaignId}`).emit('new-message', messageData);
+          // Channel-aware delivery
+          if (channelType === 'private' || channelType === 'dm_whisper') {
+            // Only emit to sender + target
+            this.emitToUser(campaignId, socket.user.id, 'new-message', messageData);
+            if (channelTargetUserId && channelTargetUserId !== socket.user.id) {
+              this.emitToUser(campaignId, channelTargetUserId, 'new-message', messageData);
+            }
+          } else {
+            // party / dm_broadcast → broadcast to whole campaign room
+            this.io.to(`${CAMPAIGN_ROOM_PREFIX}${campaignId}`).emit('new-message', messageData);
+          }
+
           logInfo('WebSocket chat message broadcast', {
             campaignId,
             messageId: messageData.data.id,
             messageType: messageData.data.message_type,
             senderId: messageData.data.sender_id,
+            channelType,
           });
         } catch (error) {
           logError('WebSocket chat broadcast failed', error, {
@@ -168,19 +189,48 @@ class WebSocketServer {
         }
       });
 
-      // Handle typing indicators
-      socket.on('typing-start', (campaignId) => {
-        socket.to(`${CAMPAIGN_ROOM_PREFIX}${campaignId}`).emit('user-typing', {
-          userId: socket.user.id,
-          username: socket.user.username
-        });
+      // Handle typing indicators (channel-aware)
+      socket.on('typing-start', (campaignIdOrPayload) => {
+        const campaignId = typeof campaignIdOrPayload === 'string'
+          ? campaignIdOrPayload
+          : campaignIdOrPayload?.campaignId;
+        const targetUserId = typeof campaignIdOrPayload === 'object'
+          ? campaignIdOrPayload?.targetUserId
+          : null;
+
+        if (targetUserId) {
+          // Private typing: only tell the target
+          this.emitToUser(campaignId, targetUserId, 'user-typing', {
+            userId: socket.user.id,
+            username: socket.user.username,
+          });
+        } else {
+          socket.to(`${CAMPAIGN_ROOM_PREFIX}${campaignId}`).emit('user-typing', {
+            userId: socket.user.id,
+            username: socket.user.username,
+          });
+        }
       });
 
-      socket.on('typing-stop', (campaignId) => {
-        socket.to(`${CAMPAIGN_ROOM_PREFIX}${campaignId}`).emit('user-stopped-typing', {
-          userId: socket.user.id,
-          username: socket.user.username
-        });
+      socket.on('typing-stop', (campaignIdOrPayload) => {
+        const campaignId = typeof campaignIdOrPayload === 'string'
+          ? campaignIdOrPayload
+          : campaignIdOrPayload?.campaignId;
+        const targetUserId = typeof campaignIdOrPayload === 'object'
+          ? campaignIdOrPayload?.targetUserId
+          : null;
+
+        if (targetUserId) {
+          this.emitToUser(campaignId, targetUserId, 'user-stopped-typing', {
+            userId: socket.user.id,
+            username: socket.user.username,
+          });
+        } else {
+          socket.to(`${CAMPAIGN_ROOM_PREFIX}${campaignId}`).emit('user-stopped-typing', {
+            userId: socket.user.id,
+            username: socket.user.username,
+          });
+        }
       });
 
       // Handle combat updates
@@ -471,6 +521,84 @@ class WebSocketServer {
       npcId: npc?.npcId ?? npc?.id ?? null,
       mode: mode ?? null,
     });
+  }
+
+  // ── Game State Events ──────────────────────────────────────────────────
+
+  emitGamePhaseChanged(campaignId, { sessionId, previousPhase, newPhase, gameState }) {
+    const payload = {
+      sessionId,
+      previousPhase,
+      newPhase,
+      gameState,
+      emittedAt: new Date().toISOString(),
+    };
+    this.broadcastToCampaign(campaignId, REALTIME_EVENTS.gamePhaseChanged, payload, {
+      category: 'game-state',
+      event: 'phase-changed',
+      sessionId,
+      previousPhase,
+      newPhase,
+    });
+  }
+
+  emitTurnAdvanced(campaignId, { sessionId, gameState }) {
+    const payload = {
+      sessionId,
+      gameState,
+      emittedAt: new Date().toISOString(),
+    };
+    this.broadcastToCampaign(campaignId, REALTIME_EVENTS.turnAdvanced, payload, {
+      category: 'game-state',
+      event: 'turn-advanced',
+      sessionId,
+      activePlayerId: gameState?.activePlayerId ?? null,
+    });
+  }
+
+  emitWorldTurnCompleted(campaignId, { sessionId, gameState }) {
+    const payload = {
+      sessionId,
+      gameState,
+      emittedAt: new Date().toISOString(),
+    };
+    this.broadcastToCampaign(campaignId, REALTIME_EVENTS.worldTurnCompleted, payload, {
+      category: 'game-state',
+      event: 'world-turn-completed',
+      sessionId,
+    });
+  }
+
+  emitTurnOrderChanged(campaignId, { sessionId, gameState }) {
+    const payload = {
+      sessionId,
+      gameState,
+      emittedAt: new Date().toISOString(),
+    };
+    this.broadcastToCampaign(campaignId, REALTIME_EVENTS.turnOrderChanged, payload, {
+      category: 'game-state',
+      event: 'turn-order-changed',
+      sessionId,
+    });
+  }
+
+  // ── Channel-aware Messaging ─────────────────────────────────────────────
+
+  /**
+   * Send to a specific user within a campaign (for private/whisper messages).
+   * Emits to all sockets in the campaign room that belong to `targetUserId`.
+   */
+  emitToUser(campaignId, targetUserId, event, data) {
+    const roomName = `${CAMPAIGN_ROOM_PREFIX}${campaignId}`;
+    const room = this.io.sockets.adapter.rooms.get(roomName);
+    if (!room) return;
+
+    for (const socketId of room) {
+      const socket = this.io.sockets.sockets.get(socketId);
+      if (socket?.user?.id === targetUserId) {
+        socket.emit(event, data);
+      }
+    }
   }
 
   // Get connected users in a campaign

@@ -1,9 +1,10 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Accordion, AccordionContent, AccordionItem, AccordionTrigger } from "./ui/accordion";
 import { toast } from "sonner";
-import { Loader2, MapPin, Sparkles, Compass, Target, Users, FileText } from "lucide-react";
+import { Loader2, MapPin, Sparkles, Compass, Target, Users, FileText, Swords, SkipForward, Play } from "lucide-react";
 import { useGameSession } from "../contexts/GameSessionContext";
 import { useUser } from "../contexts/UserContext";
+import { useGameState, type GamePhase } from "../contexts/GameStateContext";
 import {
   fetchJson,
   listCampaignSpawns,
@@ -191,9 +192,23 @@ const describeError = (error: unknown, fallback: string): string => {
   return fallback;
 };
 
+const GAME_PHASES: { value: GamePhase; label: string }[] = [
+  { value: "exploration", label: "Exploration" },
+  { value: "combat", label: "Combat" },
+  { value: "social", label: "Social" },
+  { value: "rest", label: "Rest" },
+];
+
 export function DMSidebar() {
   const { activeCampaignId, latestSession } = useGameSession();
   const { user } = useUser();
+  const {
+    gameState,
+    changePhase: changeGamePhase,
+    endTurn: endGameTurn,
+    executeDmWorldTurn,
+    skipTurn: skipGameTurn,
+  } = useGameState();
 
   const [sessions, setSessions] = useState<SessionSidebarRecord[]>([]);
   const [sessionsLoading, setSessionsLoading] = useState(false);
@@ -1378,6 +1393,114 @@ export function DMSidebar() {
                   <AlertDescription>{teleportPlayerError}</AlertDescription>
                 </Alert>
               )}
+              </div>
+            </AccordionContent>
+          </AccordionItem>
+
+          <AccordionItem value="game-state">
+            <AccordionTrigger>Game State</AccordionTrigger>
+            <AccordionContent>
+              <div className="space-y-4">
+                {!gameState ? (
+                  <p className="text-sm text-muted-foreground">
+                    No active game state. Activate a session to initialize game state.
+                  </p>
+                ) : (
+                  <>
+                    <div className="space-y-2">
+                      <Label>Current Phase: <span className="font-semibold capitalize">{gameState.phase}</span></Label>
+                      <div className="flex flex-wrap gap-2">
+                        {GAME_PHASES.filter((p) => p.value !== gameState.phase).map((p) => (
+                          <Button
+                            key={p.value}
+                            variant="outline"
+                            size="sm"
+                            onClick={() => {
+                              void changeGamePhase(p.value).catch((err: Error) => {
+                                toast.error(err.message || "Failed to change phase");
+                              });
+                            }}
+                          >
+                            <Swords className="mr-1 h-3 w-3" />
+                            {p.label}
+                          </Button>
+                        ))}
+                      </div>
+                    </div>
+
+                    <div className="space-y-2">
+                      <Label>Turn Order (Round {gameState.roundNumber})</Label>
+                      {gameState.turnOrder.length === 0 ? (
+                        <p className="text-sm text-muted-foreground">No turn order (rest phase).</p>
+                      ) : (
+                        <div className="space-y-1">
+                          {gameState.turnOrder.map((userId, index) => {
+                            const player = players.find((p) => p.id === userId);
+                            const isActive = gameState.activePlayerId === userId;
+                            return (
+                              <div
+                                key={userId}
+                                className={`flex items-center justify-between rounded px-2 py-1 text-sm ${
+                                  isActive ? "bg-primary/10 font-semibold" : ""
+                                }`}
+                              >
+                                <span>
+                                  {index + 1}. {player?.name ?? userId.slice(0, 8)}
+                                  {isActive && " (active)"}
+                                </span>
+                                {isActive && (
+                                  <Button
+                                    variant="ghost"
+                                    size="sm"
+                                    className="h-6 px-2 text-xs"
+                                    onClick={() => {
+                                      void skipGameTurn(userId).catch((err: Error) => {
+                                        toast.error(err.message || "Failed to skip turn");
+                                      });
+                                    }}
+                                  >
+                                    <SkipForward className="mr-1 h-3 w-3" />
+                                    Skip
+                                  </Button>
+                                )}
+                              </div>
+                            );
+                          })}
+                        </div>
+                      )}
+                    </div>
+
+                    <div className="flex flex-wrap gap-2">
+                      {gameState.activePlayerId && !gameState.worldTurnPending && (
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          onClick={() => {
+                            void endGameTurn().catch((err: Error) => {
+                              toast.error(err.message || "Failed to end turn");
+                            });
+                          }}
+                        >
+                          <Play className="mr-1 h-3 w-3" />
+                          End Turn
+                        </Button>
+                      )}
+                      {gameState.worldTurnPending && (
+                        <Button
+                          size="sm"
+                          onClick={() => {
+                            void executeDmWorldTurn().catch((err: Error) => {
+                              toast.error(err.message || "Failed to execute world turn");
+                            });
+                          }}
+                        >
+                          <Sparkles className="mr-1 h-3 w-3" />
+                          Execute World Turn
+                        </Button>
+                      )}
+                    </div>
+                  </>
+                )}
               </div>
             </AccordionContent>
           </AccordionItem>

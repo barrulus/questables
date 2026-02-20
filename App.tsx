@@ -17,6 +17,9 @@ import { UserProvider, useUser } from "./contexts/UserContext";
 import { ErrorBoundary } from "./components/error-boundary";
 import { DatabaseProvider, DatabaseStatus, useDatabaseContext } from "./components/database-status";
 import { GameSessionProvider, useGameSession } from "./contexts/GameSessionContext";
+import { GameStateProvider } from "./contexts/GameStateContext";
+import { PhaseIndicator } from "./components/game-state/phase-indicator";
+import { TurnBanner } from "./components/game-state/turn-banner";
 import { CharacterCreationWizard } from "./components/character-wizard/character-creation-wizard";
 
 type AppState = "landing" | "dashboard" | "game" | "character-create";
@@ -339,6 +342,7 @@ function AppContent() {
               {!latestSession && !campaignLoading && (
                 <Badge variant="outline">No sessions recorded</Badge>
               )}
+              <PhaseIndicator />
               <DatabaseStatus variant="badge" />
               <span className="text-sm text-muted-foreground">{health.status}</span>
               <span className="text-sm text-muted-foreground">{user.username}</span>
@@ -353,6 +357,9 @@ function AppContent() {
             </div>
           </div>
         </div>
+
+        {/* Turn Banner */}
+        <TurnBanner />
 
         {/* Main Layout */}
         <div className="flex flex-1 overflow-hidden">
@@ -410,7 +417,9 @@ export default function App() {
       <DatabaseProvider>
         <UserProvider>
           <GameSessionProvider>
-            <AppContent />
+            <GameStateProvider>
+              <AppContent />
+            </GameStateProvider>
           </GameSessionProvider>
         </UserProvider>
       </DatabaseProvider>

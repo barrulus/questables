@@ -16,6 +16,7 @@ import { normalizeEncounterType, normalizeEncounterDifficulty, DEFAULT_ENCOUNTER
 import { sanitizeUserInput } from '../utils/sanitization.js';
 import { logError, logInfo } from '../utils/logger.js';
 import { incrementCounter, recordEvent } from '../utils/telemetry.js';
+import { initializeGameState } from '../services/game-state/service.js';
 
 const router = Router();
 
@@ -282,9 +283,30 @@ router.put(
       values.push(sessionId);
 
       const { rows } = await client.query(query, values);
-      await client.query('COMMIT');
 
       const session = rows[0];
+
+      // Auto-initialize game state when session transitions to active
+      if (
+        sessionRow.status === 'scheduled' &&
+        session.status === 'active' &&
+        !session.game_state
+      ) {
+        try {
+          const gameState = await initializeGameState(
+            client,
+            sessionId,
+            sessionRow.campaign_id,
+            { dmUserId: req.user.id },
+          );
+          session.game_state = gameState;
+        } catch (initError) {
+          logError('Game state auto-init failed (non-fatal)', initError, { sessionId });
+        }
+      }
+
+      await client.query('COMMIT');
+
       logInfo('Session updated', {
         telemetryEvent: 'session.updated',
         sessionId,

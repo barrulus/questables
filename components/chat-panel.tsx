@@ -25,7 +25,7 @@ interface CampaignSummary {
 
 export function ChatPanel() {
   const { user } = useUser();
-  const { activeCampaignId, selectCampaign, loading: activeCampaignLoading } = useGameSession();
+  const { activeCampaignId, activeCampaign, selectCampaign, loading: activeCampaignLoading } = useGameSession();
   const [campaigns, setCampaigns] = useState<CampaignSummary[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -209,7 +209,12 @@ export function ChatPanel() {
             <p className="text-sm">Create or join a campaign to enable chat.</p>
           </div>
         ) : (
-          <ChatSystem campaignId={selectedCampaign.id} campaignName={selectedCampaign.name} />
+          <ChatSystem
+            campaignId={selectedCampaign.id}
+            campaignName={selectedCampaign.name}
+            campaignRole={selectedCampaign.role}
+            dmUserId={activeCampaign?.dmUserId ?? null}
+          />
         )}
       </CardContent>
     </Card>

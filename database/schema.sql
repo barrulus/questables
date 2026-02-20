@@ -656,12 +656,30 @@ CREATE TABLE IF NOT EXISTS public.sessions (
     experience_awarded INTEGER DEFAULT 0,
     treasure_awarded JSONB DEFAULT '[]'::jsonb,
     status TEXT NOT NULL DEFAULT 'scheduled' CHECK (status IN ('scheduled', 'active', 'completed', 'cancelled')),
+    game_state JSONB,
     created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW() NOT NULL,
     updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW() NOT NULL,
     UNIQUE(campaign_id, session_number)
 );
 CREATE INDEX IF NOT EXISTS idx_sessions_campaign_id ON public.sessions(campaign_id);
 CREATE INDEX IF NOT EXISTS idx_sessions_status ON public.sessions(status);
+
+CREATE TABLE IF NOT EXISTS public.game_state_log (
+    id BIGSERIAL PRIMARY KEY,
+    session_id UUID NOT NULL REFERENCES public.sessions(id) ON DELETE CASCADE,
+    campaign_id UUID NOT NULL REFERENCES public.campaigns(id) ON DELETE CASCADE,
+    event_type TEXT NOT NULL CHECK (event_type IN (
+      'phase_changed', 'turn_advanced', 'world_turn_started',
+      'world_turn_completed', 'turn_order_set', 'player_skipped'
+    )),
+    actor_id UUID REFERENCES public.user_profiles(id),
+    previous_state JSONB,
+    new_state JSONB NOT NULL,
+    metadata JSONB DEFAULT '{}'::jsonb,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+);
+CREATE INDEX IF NOT EXISTS idx_game_state_log_session ON public.game_state_log(session_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_game_state_log_campaign ON public.game_state_log(campaign_id, created_at DESC);
 DROP TRIGGER IF EXISTS _touch_sessions ON public.sessions;
 CREATE TRIGGER _touch_sessions
 BEFORE UPDATE ON public.sessions
@@ -959,11 +977,26 @@ CREATE TABLE IF NOT EXISTS public.chat_messages (
     is_private BOOLEAN DEFAULT false,
     recipients JSONB,
     reactions JSONB DEFAULT '[]'::jsonb,
+    channel_type TEXT NOT NULL DEFAULT 'party'
+      CHECK (channel_type IN ('party', 'private', 'dm_whisper', 'dm_broadcast')),
+    channel_target_user_id UUID REFERENCES public.user_profiles(id),
     created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW() NOT NULL
 );
 CREATE INDEX IF NOT EXISTS idx_chat_messages_campaign_id ON public.chat_messages(campaign_id);
 CREATE INDEX IF NOT EXISTS idx_chat_messages_session_id ON public.chat_messages(session_id);
 CREATE INDEX IF NOT EXISTS idx_chat_messages_created_at ON public.chat_messages(created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_chat_messages_channel
+  ON public.chat_messages (campaign_id, channel_type, created_at DESC);
+
+CREATE TABLE IF NOT EXISTS public.chat_read_cursors (
+  user_id UUID REFERENCES public.user_profiles(id),
+  campaign_id UUID REFERENCES public.campaigns(id),
+  channel_type TEXT NOT NULL,
+  channel_target_user_id UUID,
+  last_read_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW(),
+  PRIMARY KEY (user_id, campaign_id, channel_type,
+    COALESCE(channel_target_user_id, '00000000-0000-0000-0000-000000000000'))
+);
 
 -- =============================================================================
 -- SPATIAL FUNCTIONS (SRID 0 safe; no geography)
