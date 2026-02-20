@@ -3,7 +3,6 @@ import type { ConfigEnv, HmrOptions, UserConfig, BuildOptions } from 'vite'
 import type { PreRenderedChunk } from 'rollup'
 import react from '@vitejs/plugin-react'
 import tailwindcss from '@tailwindcss/vite'
-import { VueMcp } from 'vite-plugin-vue-mcp'
 import path from 'path'
 import { existsSync, readFileSync } from 'fs'
 import { fileURLToPath } from 'url'
@@ -85,7 +84,7 @@ export default defineConfig(({ mode }: ConfigEnv): UserConfig => {
   }
 
   return {
-    plugins: [react(), tailwindcss(), VueMcp()],
+    plugins: [react(), tailwindcss()],
 
     optimizeDeps: {
       entries: ['index.html'],

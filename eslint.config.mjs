@@ -6,6 +6,11 @@ import { defineConfig } from 'eslint/config';
 import globals from 'globals';
 
 export default defineConfig(
+  // Ignore build artifacts and non-source directories
+  {
+    ignores: ['dist/**', 'working/**', 'map_data/**', 'node_modules/**'],
+  },
+
   // Base rules
   eslint.configs.recommended,
   // TS (works even if you have some JS files)
@@ -39,15 +44,23 @@ export default defineConfig(
     },
   },
 
-  // Browser/client code (optional block – only if you have web/client folders)
+  // Browser/client code
   {
-    files: ['web/**', 'client/**'],
+    files: ['web/**', 'client/**', 'components/**', 'hooks/**', 'contexts/**', 'utils/**'],
     languageOptions: {
       globals: {
         ...globals.browser,
       },
     },
-    // You can re-enable stricter rules here if you want
-    // rules: { 'no-console': 'warn' },
+  },
+
+  // Test files (Jest globals)
+  {
+    files: ['tests/**'],
+    languageOptions: {
+      globals: {
+        ...globals.jest,
+      },
+    },
   },
 );

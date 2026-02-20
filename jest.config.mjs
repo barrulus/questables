@@ -14,7 +14,7 @@ export default {
   moduleNameMapper: {
     '^@/(.*)$': '<rootDir>/$1',
     '^ol/ol\\.css$': '<rootDir>/ol/ol.css',
-    '\\.(css|less|scss|sass)$': '<rootDir>/identity-obj-proxy.cjs',
+    '\\.(css|less|scss|sass)$': 'identity-obj-proxy',
   },
   setupFilesAfterEnv: ['<rootDir>/src/setupTests.ts'],
   testMatch: [
@@ -43,10 +43,4 @@ export default {
   moduleDirectories: ['node_modules', '<rootDir>'],
   clearMocks: true,
   verbose: true,
-  globals: {
-    'ts-jest': {
-      useESM: true,
-      tsconfig: 'tsconfig.json',
-    },
-  },
 };
