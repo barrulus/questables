@@ -17,6 +17,7 @@ import { sanitizeUserInput } from '../utils/sanitization.js';
 import { logError, logInfo } from '../utils/logger.js';
 import { incrementCounter, recordEvent } from '../utils/telemetry.js';
 import { initializeGameState } from '../services/game-state/service.js';
+import { initializeLiveStates } from '../services/live-state/service.js';
 
 const router = Router();
 
@@ -302,6 +303,16 @@ router.put(
           session.game_state = gameState;
         } catch (initError) {
           logError('Game state auto-init failed (non-fatal)', initError, { sessionId });
+        }
+
+        // Also initialize live states from character records
+        try {
+          await initializeLiveStates(client, {
+            sessionId,
+            campaignId: sessionRow.campaign_id,
+          });
+        } catch (liveStateError) {
+          logError('Live state auto-init failed (non-fatal)', liveStateError, { sessionId });
         }
       }
 

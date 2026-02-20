@@ -3,7 +3,7 @@ import { Ollama } from 'ollama';
 import { EnhancedLLMProvider } from '../provider-registry.js';
 import { NARRATIVE_TYPES } from '../narrative-types.js';
 import { LLMConfigurationError, LLMProviderError } from '../errors.js';
-import { logDebug, logError, logInfo } from '../../utils/logger.js';
+import { logDebug, logError, logInfo, logWarn } from '../../utils/logger.js';
 
 const NANOS_IN_MS = 1_000_000;
 
@@ -132,6 +132,11 @@ export class OllamaProvider extends EnhancedLLMProvider {
       ...options.extra,
     };
 
+    // Inject structured output schema when provided
+    if (options.schema) {
+      generationOptions.format = options.schema;
+    }
+
     // Clean undefined values to avoid API complaints
     Object.keys(generationOptions).forEach((key) => {
       if (generationOptions[key] === undefined) {
@@ -170,6 +175,21 @@ export class OllamaProvider extends EnhancedLLMProvider {
 
       const content = typeof response?.response === 'string' ? response.response.trim() : '';
 
+      // Attempt JSON parse when structured output was requested
+      let parsed = null;
+      if (options.schema && content) {
+        try {
+          parsed = JSON.parse(content);
+        } catch {
+          logWarn('Ollama structured output failed to parse as JSON, treating as narration-only', {
+            provider: this.name,
+            type,
+            requestId,
+            contentLength: content.length,
+          });
+        }
+      }
+
       logInfo('Ollama generation completed', {
         provider: this.name,
         host: this.host,
@@ -183,6 +203,7 @@ export class OllamaProvider extends EnhancedLLMProvider {
 
       return {
         content,
+        parsed,
         metrics,
         provider: {
           name: this.name,

@@ -238,6 +238,31 @@ export const useWebSocket = (campaignId: string) => {
       setMessages((prev) => [...prev, { type: 'turn-order-changed', data }]);
     });
 
+    // WS3: Action processing events
+    socket.on('dm-narration', (data) => {
+      setMessages((prev) => [...prev, { type: 'dm-narration', data }]);
+    });
+
+    socket.on('roll-requested', (data) => {
+      setMessages((prev) => [...prev, { type: 'roll-requested', data }]);
+    });
+
+    socket.on('action-completed', (data) => {
+      setMessages((prev) => [...prev, { type: 'action-completed', data }]);
+    });
+
+    socket.on('live-state-changed', (data) => {
+      setMessages((prev) => [...prev, { type: 'live-state-changed', data }]);
+    });
+
+    socket.on('region-triggered', (data) => {
+      setMessages((prev) => [...prev, { type: 'region-triggered', data }]);
+    });
+
+    socket.on('world-turn-narration', (data) => {
+      setMessages((prev) => [...prev, { type: 'world-turn-narration', data }]);
+    });
+
     socket.on('error', (error) => {
       console.error('[Socket.io] Server error:', error);
     });

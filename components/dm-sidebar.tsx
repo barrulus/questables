@@ -273,6 +273,7 @@ export function DMSidebar() {
   const [teleportPlayerFeedback, setTeleportPlayerFeedback] = useState<TeleportPlayerResponse | null>(null);
   const [teleportPlayerError, setTeleportPlayerError] = useState<string | null>(null);
 
+  const [worldTurnWithLLM, setWorldTurnWithLLM] = useState(false);
   const [teleportNpcMode, setTeleportNpcMode] = useState<"location" | "coordinates">("location");
   const [teleportNpcId, setTeleportNpcId] = useState<string>(NONE_VALUE);
   const [teleportNpcLocationId, setTeleportNpcLocationId] = useState<string>(NONE_VALUE);
@@ -1486,17 +1487,28 @@ export function DMSidebar() {
                         </Button>
                       )}
                       {gameState.worldTurnPending && (
-                        <Button
-                          size="sm"
-                          onClick={() => {
-                            void executeDmWorldTurn().catch((err: Error) => {
-                              toast.error(err.message || "Failed to execute world turn");
-                            });
-                          }}
-                        >
-                          <Sparkles className="mr-1 h-3 w-3" />
-                          Execute World Turn
-                        </Button>
+                        <div className="flex items-center gap-2">
+                          <Button
+                            size="sm"
+                            onClick={() => {
+                              void executeDmWorldTurn().catch((err: Error) => {
+                                toast.error(err.message || "Failed to execute world turn");
+                              });
+                            }}
+                          >
+                            <Sparkles className="mr-1 h-3 w-3" />
+                            {worldTurnWithLLM ? "Execute World Turn (LLM)" : "Execute World Turn"}
+                          </Button>
+                          <label className="flex items-center gap-1 text-xs text-muted-foreground cursor-pointer">
+                            <input
+                              type="checkbox"
+                              checked={worldTurnWithLLM}
+                              onChange={(e) => setWorldTurnWithLLM(e.target.checked)}
+                              className="h-3 w-3"
+                            />
+                            LLM
+                          </label>
+                        </div>
                       )}
                     </div>
                   </>

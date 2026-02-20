@@ -9,6 +9,8 @@ export const NARRATIVE_TYPES = Object.freeze({
   OBJECTIVE_COMBAT: 'objective_combat',
   OBJECTIVE_NPCS: 'objective_npcs',
   OBJECTIVE_RUMOURS: 'objective_rumours',
+  PLAYER_ACTION_RESPONSE: 'player_action_response',
+  DM_WORLD_TURN: 'dm_world_turn',
 });
 
 export const SUPPORTED_TYPES = new Set(Object.values(NARRATIVE_TYPES));

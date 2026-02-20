@@ -1120,3 +1120,66 @@ BEGIN
   WHERE r.world_id = world_map_id
     AND ST_Intersects(r.geom, ST_MakeEnvelope(west, south, east, north, 0));
 END$$;
+
+-- =============================================================================
+-- SESSION PLAYER ACTIONS (WS3: Action Processing Pipeline)
+-- =============================================================================
+CREATE TABLE IF NOT EXISTS public.session_player_actions (
+    id UUID DEFAULT gen_random_uuid() PRIMARY KEY,
+    session_id UUID NOT NULL REFERENCES public.sessions(id) ON DELETE CASCADE,
+    campaign_id UUID NOT NULL REFERENCES public.campaigns(id) ON DELETE CASCADE,
+    user_id UUID NOT NULL REFERENCES public.user_profiles(id),
+    character_id UUID NOT NULL REFERENCES public.characters(id),
+    round_number INTEGER NOT NULL DEFAULT 1,
+    action_type TEXT NOT NULL CHECK (action_type IN (
+        'move', 'interact', 'search', 'use_item', 'cast_spell',
+        'talk_to_npc', 'pass', 'free_action'
+    )),
+    action_payload JSONB NOT NULL DEFAULT '{}',
+    dm_response JSONB,
+    roll_result JSONB,
+    status TEXT NOT NULL DEFAULT 'pending'
+        CHECK (status IN ('pending', 'processing', 'awaiting_roll', 'completed', 'failed')),
+    created_at TIMESTAMPTZ DEFAULT NOW(),
+    resolved_at TIMESTAMPTZ
+);
+CREATE INDEX IF NOT EXISTS idx_spa_session_round
+    ON public.session_player_actions (session_id, round_number, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_spa_user_session
+    ON public.session_player_actions (user_id, session_id);
+CREATE INDEX IF NOT EXISTS idx_spa_status
+    ON public.session_player_actions (status) WHERE status IN ('pending', 'awaiting_roll');
+
+-- =============================================================================
+-- SESSION LIVE STATES (WS3: Server-Authoritative Character State)
+-- =============================================================================
+CREATE TABLE IF NOT EXISTS public.session_live_states (
+    id UUID DEFAULT gen_random_uuid() PRIMARY KEY,
+    session_id UUID NOT NULL REFERENCES public.sessions(id) ON DELETE CASCADE,
+    campaign_id UUID NOT NULL REFERENCES public.campaigns(id) ON DELETE CASCADE,
+    user_id UUID NOT NULL REFERENCES public.user_profiles(id),
+    character_id UUID NOT NULL REFERENCES public.characters(id),
+    hp_current INTEGER NOT NULL,
+    hp_max INTEGER NOT NULL,
+    hp_temporary INTEGER NOT NULL DEFAULT 0,
+    conditions TEXT[] NOT NULL DEFAULT ARRAY[]::TEXT[],
+    spell_slots JSONB NOT NULL DEFAULT '{}'::jsonb,
+    hit_dice JSONB NOT NULL DEFAULT '{}'::jsonb,
+    class_resources JSONB NOT NULL DEFAULT '{}'::jsonb,
+    inspiration BOOLEAN NOT NULL DEFAULT false,
+    death_saves JSONB NOT NULL DEFAULT '{"successes": 0, "failures": 0}'::jsonb,
+    xp_gained INTEGER NOT NULL DEFAULT 0,
+    change_log JSONB NOT NULL DEFAULT '[]'::jsonb,
+    created_at TIMESTAMPTZ DEFAULT NOW(),
+    updated_at TIMESTAMPTZ DEFAULT NOW(),
+    UNIQUE(session_id, character_id)
+);
+CREATE INDEX IF NOT EXISTS idx_sls_session ON public.session_live_states (session_id);
+CREATE INDEX IF NOT EXISTS idx_sls_character ON public.session_live_states (character_id);
+DROP TRIGGER IF EXISTS _touch_session_live_states ON public.session_live_states;
+CREATE TRIGGER _touch_session_live_states
+BEFORE UPDATE ON public.session_live_states
+FOR EACH ROW EXECUTE FUNCTION public.tg_touch_updated_at();
+
+-- WS3: free_movement flag on sessions
+ALTER TABLE public.sessions ADD COLUMN IF NOT EXISTS free_movement BOOLEAN NOT NULL DEFAULT false;

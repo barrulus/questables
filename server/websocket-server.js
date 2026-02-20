@@ -22,6 +22,12 @@ export const REALTIME_EVENTS = {
   turnAdvanced: 'turn-advanced',
   worldTurnCompleted: 'world-turn-completed',
   turnOrderChanged: 'turn-order-changed',
+  dmNarration: 'dm-narration',
+  rollRequested: 'roll-requested',
+  actionCompleted: 'action-completed',
+  liveStateChanged: 'live-state-changed',
+  regionTriggered: 'region-triggered',
+  worldTurnNarration: 'world-turn-narration',
 };
 
 const CAMPAIGN_ROOM_PREFIX = 'campaign-';
@@ -578,6 +584,96 @@ class WebSocketServer {
     this.broadcastToCampaign(campaignId, REALTIME_EVENTS.turnOrderChanged, payload, {
       category: 'game-state',
       event: 'turn-order-changed',
+      sessionId,
+    });
+  }
+
+  // ── Action Processing Events (WS3) ─────────────────────────────────────
+
+  emitDmNarration(campaignId, { actionId, narration, characterId, actionType }) {
+    const payload = {
+      actionId,
+      narration,
+      characterId: characterId ?? null,
+      actionType: actionType ?? null,
+      emittedAt: new Date().toISOString(),
+    };
+    this.broadcastToCampaign(campaignId, REALTIME_EVENTS.dmNarration, payload, {
+      category: 'action',
+      event: 'dm-narration',
+      actionId,
+    });
+  }
+
+  emitRollRequested(campaignId, targetUserId, { actionId, requiredRolls }) {
+    const payload = {
+      actionId,
+      requiredRolls,
+      emittedAt: new Date().toISOString(),
+    };
+    this.emitToUser(campaignId, targetUserId, REALTIME_EVENTS.rollRequested, payload);
+    logInfo('Roll request sent to player', {
+      event: 'roll-requested',
+      campaignId,
+      targetUserId,
+      actionId,
+    });
+  }
+
+  emitActionCompleted(campaignId, { actionId, characterId, actionType, outcome }) {
+    const payload = {
+      actionId,
+      characterId,
+      actionType,
+      outcome,
+      emittedAt: new Date().toISOString(),
+    };
+    this.broadcastToCampaign(campaignId, REALTIME_EVENTS.actionCompleted, payload, {
+      category: 'action',
+      event: 'action-completed',
+      actionId,
+    });
+  }
+
+  emitLiveStateChanged(campaignId, { sessionId, liveStates, reason }) {
+    const payload = {
+      sessionId,
+      liveStates,
+      reason: reason ?? null,
+      emittedAt: new Date().toISOString(),
+    };
+    this.broadcastToCampaign(campaignId, REALTIME_EVENTS.liveStateChanged, payload, {
+      category: 'live-state',
+      event: 'live-state-changed',
+      sessionId,
+      count: Array.isArray(liveStates) ? liveStates.length : 0,
+    });
+  }
+
+  emitRegionTriggered(campaignId, { playerId, region }) {
+    const payload = {
+      playerId,
+      region,
+      emittedAt: new Date().toISOString(),
+    };
+    this.broadcastToCampaign(campaignId, REALTIME_EVENTS.regionTriggered, payload, {
+      category: 'region',
+      event: 'region-triggered',
+      regionId: region?.id ?? null,
+      regionCategory: region?.category ?? null,
+    });
+  }
+
+  emitWorldTurnNarration(campaignId, { sessionId, narration, stateChanges }) {
+    const payload = {
+      sessionId,
+      narration,
+      stateChanges: stateChanges ?? null,
+      emittedAt: new Date().toISOString(),
+    };
+    this.broadcastToCampaign(campaignId, REALTIME_EVENTS.worldTurnNarration, payload, {
+      category: 'game-state',
+      event: 'world-turn-narration',
       sessionId,
     });
   }

@@ -45,6 +45,7 @@ import {
   MARKDOWN_FIELDS,
 } from '../objectives/objective-validation.js';
 import { respondWithNarrativeError } from '../llm/narrative-errors.js';
+import { checkRegionTriggers } from '../services/regions/trigger-service.js';
 import { LLMProviderError, LLMServiceError } from '../llm/index.js';
 import {
   OBJECTIVE_RETURNING_FIELDS,
@@ -798,6 +799,31 @@ router.post(
         throw error;
       }
 
+      // Movement gating: check if active session restricts movement
+      if (!viewer.isAdmin && !['dm', 'co-dm'].includes(viewer.role)) {
+        const { rows: activeSessionRows } = await client.query(
+          `SELECT id, game_state, free_movement FROM public.sessions
+            WHERE campaign_id = $1 AND status = 'active'
+            ORDER BY session_number DESC LIMIT 1`,
+          [campaignId],
+        );
+        const activeSession = activeSessionRows[0];
+        if (activeSession && !activeSession.free_movement) {
+          const gs = activeSession.game_state;
+          if (gs?.activePlayerId) {
+            const phase = gs.phase;
+            if (phase === 'exploration' || phase === 'social' || phase === 'combat') {
+              if (gs.activePlayerId !== req.user.id) {
+                const error = new Error('You can only move on your turn');
+                error.status = 403;
+                error.code = 'movement_not_your_turn';
+                throw error;
+              }
+            }
+          }
+        }
+      }
+
       const {
         player,
         requestedDistance,
@@ -836,6 +862,26 @@ router.post(
           grid,
           pathId: pathId ?? null,
         });
+
+        // Check region triggers after movement (non-blocking)
+        const finalTarget = snappedTarget || requestedTarget;
+        if (finalTarget?.x != null && finalTarget?.y != null) {
+          checkRegionTriggers(client, {
+            campaignId,
+            worldMapId: null,
+            x: finalTarget.x,
+            y: finalTarget.y,
+          }).then((regions) => {
+            for (const region of regions) {
+              wsServer.emitRegionTriggered(campaignId, {
+                playerId: player.id,
+                region,
+              });
+            }
+          }).catch((triggerErr) => {
+            logError('[Movement] Region trigger check failed (non-fatal)', triggerErr);
+          });
+        }
       }
 
       res.json({

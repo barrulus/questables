@@ -18,8 +18,12 @@ import { ErrorBoundary } from "./components/error-boundary";
 import { DatabaseProvider, DatabaseStatus, useDatabaseContext } from "./components/database-status";
 import { GameSessionProvider, useGameSession } from "./contexts/GameSessionContext";
 import { GameStateProvider } from "./contexts/GameStateContext";
+import { ActionProvider } from "./contexts/ActionContext";
+import { LiveStateProvider } from "./contexts/LiveStateContext";
 import { PhaseIndicator } from "./components/game-state/phase-indicator";
 import { TurnBanner } from "./components/game-state/turn-banner";
+import { ActionPanel } from "./components/action-panel/action-panel";
+import { LiveStateBar } from "./components/live-state/live-state-bar";
 import { CharacterCreationWizard } from "./components/character-wizard/character-creation-wizard";
 
 type AppState = "landing" | "dashboard" | "game" | "character-create";
@@ -361,6 +365,9 @@ function AppContent() {
         {/* Turn Banner */}
         <TurnBanner />
 
+        {/* Live State Bar */}
+        <LiveStateBar />
+
         {/* Main Layout */}
         <div className="flex flex-1 overflow-hidden">
           {/* Icon Sidebar */}
@@ -387,8 +394,12 @@ function AppContent() {
                   )}
                   
                   {/* Map */}
-                  <div className="flex-1">
-                    <OpenLayersMap />
+                  <div className="flex-1 flex flex-col">
+                    <div className="flex-1">
+                      <OpenLayersMap />
+                    </div>
+                    {/* Action Panel */}
+                    <ActionPanel />
                   </div>
                 </div>
               </ResizablePanel>
@@ -418,7 +429,11 @@ export default function App() {
         <UserProvider>
           <GameSessionProvider>
             <GameStateProvider>
-              <AppContent />
+              <ActionProvider>
+                <LiveStateProvider>
+                  <AppContent />
+                </LiveStateProvider>
+              </ActionProvider>
             </GameStateProvider>
           </GameSessionProvider>
         </UserProvider>
