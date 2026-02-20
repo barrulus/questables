@@ -989,14 +989,15 @@ CREATE INDEX IF NOT EXISTS idx_chat_messages_channel
   ON public.chat_messages (campaign_id, channel_type, created_at DESC);
 
 CREATE TABLE IF NOT EXISTS public.chat_read_cursors (
-  user_id UUID REFERENCES public.user_profiles(id),
-  campaign_id UUID REFERENCES public.campaigns(id),
+  id BIGSERIAL PRIMARY KEY,
+  user_id UUID NOT NULL REFERENCES public.user_profiles(id),
+  campaign_id UUID NOT NULL REFERENCES public.campaigns(id),
   channel_type TEXT NOT NULL,
   channel_target_user_id UUID,
-  last_read_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW(),
-  PRIMARY KEY (user_id, campaign_id, channel_type,
-    COALESCE(channel_target_user_id, '00000000-0000-0000-0000-000000000000'))
+  last_read_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW()
 );
+CREATE UNIQUE INDEX IF NOT EXISTS idx_chat_read_cursors_unique
+  ON public.chat_read_cursors (user_id, campaign_id, channel_type, COALESCE(channel_target_user_id, '00000000-0000-0000-0000-000000000000'));
 
 -- =============================================================================
 -- SPATIAL FUNCTIONS (SRID 0 safe; no geography)
