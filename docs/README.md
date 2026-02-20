@@ -14,6 +14,7 @@ Comprehensive documentation for the Questables D&D 5e campaign management applic
 | [Character Wizard](./character-wizard.md) | 7-step character creation flow and state |
 | [LLM Integration](./llm-integration.md) | Narrative generation, provider system, caching |
 | [WebSocket Events](./websocket-events.md) | Real-time event reference for Socket.io |
+| [User Journeys](./user-journeys.md) | Complete UI inventory, user flows, navigation tree, API reference |
 | [Development Guide](./development-guide.md) | Setup, testing, conventions, troubleshooting |
 
 ## Supplementary

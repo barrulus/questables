@@ -36,6 +36,65 @@ Used by DMs for campaign preparation. Additional features:
 - Layer visibility toggles
 - Debounced viewport-based data loading
 
+## Map Upload
+
+Maps can be loaded via two methods:
+
+### CLI Importer
+
+`afmg_geojson_importer.mjs` imports Azgaar's Fantasy Map Generator GeoJSON exports from the command line:
+
+```bash
+node afmg_geojson_importer.mjs --world MyWorld --dir ./exports
+```
+
+Expects 5 GeoJSON files (`{world}_cells.geojson`, `_burgs`, `_routes`, `_rivers`, `_markers`) and an SVG file (`{world}_states.svg`) for map dimensions. Extracts `metadata.scale.meters_per_pixel` from GeoJSON metadata.
+
+### Web Upload Wizard
+
+The DM Dashboard **Maps** tab provides a step-by-step wizard for uploading AFMG exports through the browser. Located in `components/map-upload-wizard/`.
+
+**Wizard Steps:**
+
+1. **SVG Upload** — Enter map name, optional description and meters-per-pixel, then upload the SVG map file. Creates/updates a `maps_world` entry with extracted dimensions.
+2. **Cells** — Upload `_cells.geojson` (terrain/biome polygons). Optional, can skip.
+3. **Burgs** — Upload `_burgs.geojson` (settlements). Optional, can skip.
+4. **Routes** — Upload `_routes.geojson` (roads/trails). Optional, can skip.
+5. **Rivers** — Upload `_rivers.geojson` (waterways). Optional, can skip.
+6. **Markers** — Upload `_markers.geojson` (points of interest). Optional, can skip.
+7. **Summary** — Shows feature counts per layer.
+
+**API Endpoints:**
+
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| `POST` | `/api/upload/map/svg` | Upload SVG, create/update world entry |
+| `POST` | `/api/upload/map/:worldId/layer` | Upload GeoJSON layer for ingestion |
+| `GET` | `/api/maps/world/:worldId/status` | Get feature counts per layer |
+
+**Server-Side Ingestion:**
+
+`server/services/maps/ingestion-service.js` provides the core ingestion logic, ported from the CLI importer:
+
+- `parseSvgDimensions(svgString)` — Extract width/height from SVG attributes or viewBox
+- `extractMetersPerPixel(geojsonObj)` — Read `metadata.scale.meters_per_pixel` from GeoJSON
+- `createOrUpdateWorld(opts)` — Create or update `maps_world` entry with computed bounds
+- `ingestLayer(worldId, layerType, geojsonObj)` — Dispatch to type-specific ingesters, wrapped in a transaction
+- `getWorldIngestionStatus(worldId)` — COUNT per feature table
+
+Each layer ingester uses `ON CONFLICT (world_id, *_id) DO UPDATE` for idempotent upserts, matching the CLI importer behavior. All geometry is stored with SRID 0 (pixel-space).
+
+**Frontend Components:**
+
+| Component | File | Purpose |
+|-----------|------|---------|
+| `MapsTab` | `maps-tab.tsx` | Container switching between list and wizard |
+| `MapList` | `map-list.tsx` | Card grid of existing world maps |
+| `MapUploadWizard` | `map-upload-wizard.tsx` | 7-step wizard orchestrator with progress stepper |
+| `SvgUploadStep` | `svg-upload-step.tsx` | Name, description, mpp inputs + SVG file drop |
+| `LayerUploadStep` | `layer-upload-step.tsx` | Per-layer GeoJSON upload with skip option |
+| `WizardSummary` | `wizard-summary.tsx` | Results summary with feature counts |
+
 ## Data Loading
 
 ### MapDataLoader (Singleton)
