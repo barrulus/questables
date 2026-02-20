@@ -164,6 +164,9 @@ export function StepEquipmentSpells() {
     const spellcastingClasses = ['wizard', 'cleric', 'druid', 'bard', 'sorcerer', 'warlock', 'paladin', 'ranger'];
     const caster = spellcastingClasses.some((c) => state.classKey?.toLowerCase().includes(c));
     setIsSpellcaster(caster);
+    // Reset counts while loading to avoid stale values from a previous class
+    setCantripsKnown(0);
+    setSpellsKnown(0);
 
     const controller = new AbortController();
     setLoading(true);
@@ -180,6 +183,12 @@ export function StepEquipmentSpells() {
             setCantripsKnown(4); setSpellsKnown(2);
           } else if (key.includes('warlock')) {
             setCantripsKnown(2); setSpellsKnown(2);
+          } else if (key.includes('cleric') || key.includes('druid')) {
+            // Prepared casters: cantrips are fixed, spells prepared handled below
+            setCantripsKnown(3);
+          } else if (key.includes('paladin') || key.includes('ranger')) {
+            // Half-casters: spells prepared = CHA/WIS mod + half level (min 1)
+            setCantripsKnown(0);
           } else {
             setCantripsKnown(2); setSpellsKnown(2);
           }
@@ -194,14 +203,33 @@ export function StepEquipmentSpells() {
     return () => controller.abort();
   }, [state.classKey]);
 
-  // Prepared casters (cleric/druid): spells prepared = WIS modifier + level (min 1)
+  // Prepared casters (cleric/druid/paladin/ranger): spells prepared = ability mod + level (min 1)
   useEffect(() => {
     const key = state.classKey?.toLowerCase() ?? '';
     if (key.includes('cleric') || key.includes('druid')) {
       const wisMod = Math.floor((state.baseAbilities.wisdom - 10) / 2);
       setSpellsKnown(Math.max(1, wisMod + 1));
+    } else if (key.includes('paladin')) {
+      const chaMod = Math.floor((state.baseAbilities.charisma - 10) / 2);
+      setSpellsKnown(Math.max(1, chaMod + 1));
+    } else if (key.includes('ranger')) {
+      const wisMod = Math.floor((state.baseAbilities.wisdom - 10) / 2);
+      setSpellsKnown(Math.max(1, wisMod + 1));
     }
-  }, [state.classKey, state.baseAbilities.wisdom]);
+  }, [state.classKey, state.baseAbilities.wisdom, state.baseAbilities.charisma]);
+
+  // Trim selections if the limit decreased (e.g. user lowered WIS after picking spells)
+  useEffect(() => {
+    if (cantripsKnown > 0 && state.chosenCantrips.length > cantripsKnown) {
+      dispatch({ type: 'SET_CANTRIPS', cantrips: state.chosenCantrips.slice(0, cantripsKnown) });
+    }
+  }, [cantripsKnown, state.chosenCantrips.length, dispatch]);
+
+  useEffect(() => {
+    if (spellsKnown > 0 && state.chosenSpells.length > spellsKnown) {
+      dispatch({ type: 'SET_SPELLS', spells: state.chosenSpells.slice(0, spellsKnown) });
+    }
+  }, [spellsKnown, state.chosenSpells.length, dispatch]);
 
   const shopTotalSpent = useMemo(
     () => shopCart.reduce((sum, e) => sum + e.cost * e.qty, 0),
@@ -249,6 +277,7 @@ export function StepEquipmentSpells() {
   const level1Spells = spells.filter((s) => s.level === 1);
 
   const handleCantripToggle = (spellKey: string, checked: boolean) => {
+    if (checked && state.chosenCantrips.length >= cantripsKnown) return;
     const newCantrips = checked
       ? [...state.chosenCantrips, spellKey]
       : state.chosenCantrips.filter((s) => s !== spellKey);
@@ -256,6 +285,7 @@ export function StepEquipmentSpells() {
   };
 
   const handleSpellToggle = (spellKey: string, checked: boolean) => {
+    if (checked && state.chosenSpells.length >= spellsKnown) return;
     const newSpells = checked
       ? [...state.chosenSpells, spellKey]
       : state.chosenSpells.filter((s) => s !== spellKey);

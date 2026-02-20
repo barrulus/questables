@@ -1249,30 +1249,18 @@ export function PlayerDashboard({ user, onEnterGame, onLogout, onCreateCharacter
         )}
       </Dialog>
 
-      <Dialog
-        open={characterManagerOpen}
-        onOpenChange={(open) => {
-          setCharacterManagerOpen(open);
-          if (!open) {
-            setCharacterManagerCommand(null);
-          }
-        }}
-      >
-        <DialogContent className="max-w-[1100px] w-full max-h-[90vh] overflow-hidden p-0">
-          <DialogHeader className="px-6 pt-6 pb-4">
-            <DialogTitle>Character Manager</DialogTitle>
-            <DialogDescription>
-              Create, edit, and delete your characters using the live database. Changes apply immediately.
-            </DialogDescription>
-          </DialogHeader>
-          <div className="h-[78vh]">
-            <CharacterManager
-              command={characterManagerCommand}
-              onCharactersChanged={handleCharacterManagerChanged}
-            />
-          </div>
-        </DialogContent>
-      </Dialog>
+      {characterManagerOpen && (
+        <div className="hidden">
+          <CharacterManager
+            command={characterManagerCommand}
+            onCharactersChanged={handleCharacterManagerChanged}
+            onFormClosed={() => {
+              setCharacterManagerOpen(false);
+              setCharacterManagerCommand(null);
+            }}
+          />
+        </div>
+      )}
     </div>
   );
 }

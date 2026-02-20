@@ -8,7 +8,7 @@ import { Progress } from "./ui/progress";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "./ui/tabs";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "./ui/select";
 import { CampaignManager } from "./campaign-manager";
-import { hasCampaignDescription } from "./campaign-shared";
+import { hasCampaignDescription, parseJsonField, getStatusColor } from "./campaign-shared";
 import { toast } from "sonner";
 import {
   AlertCircle,
@@ -21,7 +21,6 @@ import {
   MapPin,
   Play,
   Search,
-  Settings,
   Shield,
   Sword,
   Star,
@@ -125,15 +124,6 @@ interface DMDashboardProps {
   onLogout: () => void;
 }
 
-const statusColorMap: Record<CampaignStatus | "full", string> = {
-  planning: "bg-yellow-500",
-  recruiting: "bg-blue-500",
-  active: "bg-green-500",
-  paused: "bg-orange-500",
-  completed: "bg-gray-500",
-  full: "bg-purple-500"
-};
-
 function isValidDate(value: unknown): value is string {
   return typeof value === "string" && value.trim().length > 0;
 }
@@ -151,22 +141,6 @@ function parseDate(value: unknown): Date | null {
 function toNumber(value: unknown, fallback = 0): number {
   const numeric = Number(value);
   return Number.isFinite(numeric) ? numeric : fallback;
-}
-
-function parseJsonField<T>(value: unknown, fallback: T): T {
-  if (value === null || value === undefined) return fallback;
-  if (Array.isArray(value) || typeof value === "object") {
-    return value as T;
-  }
-  if (typeof value === "string") {
-    try {
-      const parsed = JSON.parse(value);
-      return parsed as T;
-    } catch {
-      return fallback;
-    }
-  }
-  return fallback;
 }
 
 function parseStringArray(value: unknown): string[] {
@@ -443,28 +417,37 @@ export function DMDashboard({ user, onEnterGame, onLogout }: DMDashboardProps) {
       setSelectedCampaignId(null);
     }
 
-    try {
-      const response = await apiFetch(`/api/users/${user.id}/characters`);
-      if (!response.ok) {
-        throw new Error(await readErrorMessage(response, "Failed to load characters"));
-      }
-      const payload = await readJsonBody<{ characters?: Record<string, unknown>[] }>(response);
-      const rows = (payload.characters ?? []) as Record<string, unknown>[];
-      setCharacters(rows.map(mapCharacter));
-    } catch (err) {
-      collectedErrors.push(err instanceof Error ? err.message : "Failed to load characters");
+    const [charactersResult, publicCampaignsResult] = await Promise.allSettled([
+      (async () => {
+        const response = await apiFetch(`/api/users/${user.id}/characters`);
+        if (!response.ok) {
+          throw new Error(await readErrorMessage(response, "Failed to load characters"));
+        }
+        const payload = await readJsonBody<{ characters?: Record<string, unknown>[] }>(response);
+        const rows = (payload.characters ?? []) as Record<string, unknown>[];
+        return rows.map(mapCharacter);
+      })(),
+      (async () => {
+        const response = await apiFetch(`/api/campaigns/public`);
+        if (!response.ok) {
+          throw new Error(await readErrorMessage(response, "Failed to load public campaigns"));
+        }
+        const rows = await readJsonBody<Record<string, unknown>[]>(response);
+        return rows.map((record) => mapPlayerCampaign(record, false));
+      })(),
+    ]);
+
+    if (charactersResult.status === "fulfilled") {
+      setCharacters(charactersResult.value);
+    } else {
+      collectedErrors.push(charactersResult.reason instanceof Error ? charactersResult.reason.message : "Failed to load characters");
       setCharacters([]);
     }
 
-    try {
-      const response = await apiFetch(`/api/campaigns/public`);
-      if (!response.ok) {
-        throw new Error(await readErrorMessage(response, "Failed to load public campaigns"));
-      }
-      const rows = await readJsonBody<Record<string, unknown>[]>(response);
-      setPublicCampaigns(rows.map((record) => mapPlayerCampaign(record, false)));
-    } catch (err) {
-      collectedErrors.push(err instanceof Error ? err.message : "Failed to load public campaigns");
+    if (publicCampaignsResult.status === "fulfilled") {
+      setPublicCampaigns(publicCampaignsResult.value);
+    } else {
+      collectedErrors.push(publicCampaignsResult.reason instanceof Error ? publicCampaignsResult.reason.message : "Failed to load public campaigns");
       setPublicCampaigns([]);
     }
 
@@ -545,9 +528,6 @@ export function DMDashboard({ user, onEnterGame, onLogout }: DMDashboardProps) {
               <Loader2 className="w-4 h-4 mr-1" />
               Refresh
             </Button>
-            <Button variant="ghost" size="sm">
-              <Settings className="w-4 h-4" />
-            </Button>
             <Button variant="ghost" size="sm" onClick={onLogout}>
               <LogOut className="w-4 h-4" />
             </Button>
@@ -558,8 +538,11 @@ export function DMDashboard({ user, onEnterGame, onLogout }: DMDashboardProps) {
       {error && (
         <div className="px-6 py-3">
           <div className="flex items-center gap-2 rounded-md border border-destructive/50 bg-destructive/10 px-4 py-3 text-sm text-destructive">
-            <AlertCircle className="w-4 h-4" />
-            <span>{error}</span>
+            <AlertCircle className="w-4 h-4 shrink-0" />
+            <span className="flex-1">{error}</span>
+            <Button variant="outline" size="sm" onClick={handleRefresh}>
+              Retry
+            </Button>
           </div>
         </div>
       )}
@@ -821,7 +804,7 @@ export function DMDashboard({ user, onEnterGame, onLogout }: DMDashboardProps) {
                             <p className="font-medium leading-tight">{campaign.name}</p>
                             <p className="text-xs text-muted-foreground">DM: {campaign.dmName}</p>
                           </div>
-                          <Badge className={`${statusColorMap[campaign.status]} text-white capitalize`}>
+                          <Badge className={`${getStatusColor(campaign.status)} text-white capitalize`}>
                             {campaign.status}
                           </Badge>
                         </div>
@@ -881,7 +864,7 @@ export function DMDashboard({ user, onEnterGame, onLogout }: DMDashboardProps) {
                             <p className="font-medium leading-tight">{campaign.name}</p>
                             <p className="text-xs text-muted-foreground">DM: {campaign.dmName}</p>
                           </div>
-                          <Badge className={`${statusColorMap[campaign.status]} text-white capitalize`}>
+                          <Badge className={`${getStatusColor(campaign.status)} text-white capitalize`}>
                             {campaign.status}
                           </Badge>
                         </div>

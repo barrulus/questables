@@ -1,5 +1,6 @@
 import { useState, useEffect, useCallback } from "react";
 import { Card, CardContent, CardHeader, CardTitle } from "./ui/card";
+import { Accordion, AccordionContent, AccordionItem, AccordionTrigger } from "./ui/accordion";
 import { Badge } from "./ui/badge";
 import { Button } from "./ui/button";
 import { Progress } from "./ui/progress";
@@ -245,239 +246,236 @@ export function CharacterSheet({ characterId, refreshTrigger }: CharacterSheetPr
   });
 
   return (
-    <div className="space-y-6">
-      {/* Character Info Header */}
+    <div className="space-y-4">
+      {/* Card 1: Character Stats */}
       <Card>
-        <CardHeader>
+        <CardHeader className="pb-2">
           <div className="flex justify-between items-start">
             <div>
-              <CardTitle className="text-2xl">{character.name}</CardTitle>
-              <p className="text-muted-foreground">
+              <CardTitle className="text-xl">{character.name}</CardTitle>
+              <p className="text-sm text-muted-foreground">
                 Level {character.level} {character.race} {character.class}
               </p>
-              <p className="text-sm text-muted-foreground">
-                {character.background}
-              </p>
-            </div>
-            <Badge variant="outline">Level {character.level}</Badge>
-          </div>
-        </CardHeader>
-      </Card>
-
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-        {/* Combat Stats */}
-        <Card>
-          <CardHeader>
-            <CardTitle>Combat Stats</CardTitle>
-          </CardHeader>
-          <CardContent className="space-y-4">
-            <div className="space-y-2">
-              <div className="flex justify-between">
-                <span>Hit Points</span>
-                <span>{hitPoints.current}/{hitPoints.max}</span>
-              </div>
-              <Progress value={hitPoints.max > 0 ? (hitPoints.current / hitPoints.max) * 100 : 0} />
-              {hitPoints.temporary > 0 && (
-                <div className="text-xs text-blue-600">
-                  +{hitPoints.temporary} temporary HP
-                </div>
+              {character.background && (
+                <p className="text-xs text-muted-foreground">{character.background}</p>
               )}
             </div>
-            
-            <div className="grid grid-cols-2 gap-4 text-center">
-              <div className="p-3 border rounded">
-                <div className="text-2xl font-bold">{armorClass}</div>
-                <div className="text-sm text-muted-foreground">Armor Class</div>
-              </div>
-              <div className="p-3 border rounded">
-                <div className="text-2xl font-bold">{initiative >= 0 ? '+' : ''}{initiative}</div>
-                <div className="text-sm text-muted-foreground">Initiative</div>
-              </div>
-            </div>
+            <Badge variant="outline">Lv {character.level}</Badge>
+          </div>
+        </CardHeader>
+        <CardContent className="pt-0">
+          <Accordion type="multiple" defaultValue={["combat", "abilities", "skills"]}>
+            <AccordionItem value="combat">
+              <AccordionTrigger>Combat</AccordionTrigger>
+              <AccordionContent>
+                <div className="space-y-3">
+                  <div className="space-y-1">
+                    <div className="flex justify-between text-sm">
+                      <span>Hit Points</span>
+                      <span>{hitPoints.current}/{hitPoints.max}</span>
+                    </div>
+                    <Progress value={hitPoints.max > 0 ? (hitPoints.current / hitPoints.max) * 100 : 0} />
+                    {hitPoints.temporary > 0 && (
+                      <div className="text-xs text-blue-600">
+                        +{hitPoints.temporary} temporary HP
+                      </div>
+                    )}
+                  </div>
+                  <div className="grid grid-cols-4 gap-2 text-center">
+                    <div className="p-2 border rounded">
+                      <div className="text-lg font-bold">{armorClass}</div>
+                      <div className="text-[10px] text-muted-foreground">AC</div>
+                    </div>
+                    <div className="p-2 border rounded">
+                      <div className="text-lg font-bold">{initiative >= 0 ? '+' : ''}{initiative}</div>
+                      <div className="text-[10px] text-muted-foreground">Init</div>
+                    </div>
+                    <div className="p-2 border rounded">
+                      <div className="text-lg font-bold">{character.speed}</div>
+                      <div className="text-[10px] text-muted-foreground">Speed</div>
+                    </div>
+                    <div className="p-2 border rounded">
+                      <div className="text-lg font-bold">+{proficiencyBonus}</div>
+                      <div className="text-[10px] text-muted-foreground">Prof</div>
+                    </div>
+                  </div>
+                </div>
+              </AccordionContent>
+            </AccordionItem>
 
-            <div className="grid grid-cols-2 gap-4 text-center">
-              <div className="p-3 border rounded">
-                <div className="text-2xl font-bold">{character.speed} ft</div>
-                <div className="text-sm text-muted-foreground">Speed</div>
-              </div>
-              <div className="p-3 border rounded">
-                <div className="text-2xl font-bold">+{proficiencyBonus}</div>
-                <div className="text-sm text-muted-foreground">Proficiency</div>
-              </div>
-            </div>
-          </CardContent>
-        </Card>
+            <AccordionItem value="abilities">
+              <AccordionTrigger>Abilities</AccordionTrigger>
+              <AccordionContent>
+                <div className="grid grid-cols-3 gap-2">
+                  {displayAbilities.map(({ ability, modifier, score }) => (
+                    <div key={ability} className="text-center p-2 border rounded">
+                      <div className="text-xs font-medium uppercase">{ability.slice(0, 3)}</div>
+                      <div className="text-lg font-bold">{modifier >= 0 ? '+' : ''}{modifier}</div>
+                      <div className="text-[10px] text-muted-foreground">{score}</div>
+                    </div>
+                  ))}
+                </div>
+              </AccordionContent>
+            </AccordionItem>
 
-        {/* Ability Scores */}
-        <Card>
-          <CardHeader>
-            <CardTitle>Ability Scores</CardTitle>
-          </CardHeader>
-          <CardContent>
-            <div className="grid grid-cols-2 gap-3">
-              {displayAbilities.map(({ ability, modifier, score }) => (
-                <div key={ability} className="text-center p-3 border rounded">
-                  <div className="text-sm font-medium capitalize mb-1">{ability.slice(0, 3)}</div>
-                  <div className="text-2xl font-bold">{modifier >= 0 ? '+' : ''}{modifier}</div>
-                  <div className="text-xs text-muted-foreground">{score}</div>
+            <AccordionItem value="skills">
+              <AccordionTrigger>Skills</AccordionTrigger>
+              <AccordionContent>
+                <div className="grid grid-cols-2 gap-x-4 gap-y-1">
+                  {displaySkills.map(({ name, bonus }) => (
+                    <div key={name} className="flex justify-between items-center py-0.5">
+                      <span className="text-xs truncate">{name}</span>
+                      <Badge variant="secondary" className="text-xs ml-1 shrink-0">{bonus >= 0 ? '+' : ''}{bonus}</Badge>
+                    </div>
+                  ))}
                 </div>
-              ))}
-            </div>
-          </CardContent>
-        </Card>
+              </AccordionContent>
+            </AccordionItem>
+          </Accordion>
+        </CardContent>
+      </Card>
 
-        {/* Skills */}
-        <Card>
-          <CardHeader>
-            <CardTitle>Skills</CardTitle>
-          </CardHeader>
-          <CardContent>
-            <div className="space-y-2">
-              {displaySkills.map(({ name, bonus }) => (
-                <div key={name} className="flex justify-between items-center">
-                  <span className="text-sm">{name}</span>
-                  <Badge variant="secondary">{bonus >= 0 ? '+' : ''}{bonus}</Badge>
+      {/* Card 2: Character Details */}
+      <Card>
+        <CardHeader className="pb-2">
+          <CardTitle className="text-base">Character Details</CardTitle>
+        </CardHeader>
+        <CardContent className="pt-0">
+          <Accordion type="multiple" defaultValue={["background", "equipment"]}>
+            <AccordionItem value="background">
+              <AccordionTrigger>Background & Traits</AccordionTrigger>
+              <AccordionContent>
+                <div className="space-y-3">
+                  {character.backstory && (
+                    <>
+                      <div>
+                        <h4 className="text-xs font-medium uppercase text-muted-foreground">Backstory</h4>
+                        <p className="text-sm">{character.backstory}</p>
+                      </div>
+                      <Separator />
+                    </>
+                  )}
+                  {character.personality && (
+                    <>
+                      <div>
+                        <h4 className="text-xs font-medium uppercase text-muted-foreground">Personality</h4>
+                        <p className="text-sm">{character.personality}</p>
+                      </div>
+                      <Separator />
+                    </>
+                  )}
+                  {character.ideals && (
+                    <>
+                      <div>
+                        <h4 className="text-xs font-medium uppercase text-muted-foreground">Ideals</h4>
+                        <p className="text-sm">{character.ideals}</p>
+                      </div>
+                      <Separator />
+                    </>
+                  )}
+                  {character.bonds && (
+                    <>
+                      <div>
+                        <h4 className="text-xs font-medium uppercase text-muted-foreground">Bonds</h4>
+                        <p className="text-sm">{character.bonds}</p>
+                      </div>
+                      <Separator />
+                    </>
+                  )}
+                  {character.flaws && (
+                    <div>
+                      <h4 className="text-xs font-medium uppercase text-muted-foreground">Flaws</h4>
+                      <p className="text-sm">{character.flaws}</p>
+                    </div>
+                  )}
+                  {!character.backstory && !character.personality && !character.ideals && !character.bonds && !character.flaws && (
+                    <p className="text-sm text-muted-foreground">No background details available</p>
+                  )}
                 </div>
-              ))}
-            </div>
-          </CardContent>
-        </Card>
-      </div>
+              </AccordionContent>
+            </AccordionItem>
 
-      {/* Character Details */}
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-        <Card>
-          <CardHeader>
-            <CardTitle>Character Details</CardTitle>
-          </CardHeader>
-          <CardContent className="space-y-3">
-            {character.backstory && (
-              <>
-                <div>
-                  <h4 className="font-medium">Backstory</h4>
-                  <p className="text-sm text-muted-foreground">{character.backstory}</p>
-                </div>
-                <Separator />
-              </>
-            )}
-            {character.personality && (
-              <>
-                <div>
-                  <h4 className="font-medium">Personality</h4>
-                  <p className="text-sm text-muted-foreground">{character.personality}</p>
-                </div>
-                <Separator />
-              </>
-            )}
-            {character.ideals && (
-              <>
-                <div>
-                  <h4 className="font-medium">Ideals</h4>
-                  <p className="text-sm text-muted-foreground">{character.ideals}</p>
-                </div>
-                <Separator />
-              </>
-            )}
-            {character.bonds && (
-              <>
-                <div>
-                  <h4 className="font-medium">Bonds</h4>
-                  <p className="text-sm text-muted-foreground">{character.bonds}</p>
-                </div>
-                <Separator />
-              </>
-            )}
-            {character.flaws && (
-              <div>
-                <h4 className="font-medium">Flaws</h4>
-                <p className="text-sm text-muted-foreground">{character.flaws}</p>
-              </div>
-            )}
-          </CardContent>
-        </Card>
-
-        <Card>
-          <CardHeader>
-            <CardTitle>Equipment & Inventory</CardTitle>
-          </CardHeader>
-          <CardContent className="space-y-3">
-            {character.equipment && Object.keys(character.equipment).length > 0 ? (
-              <div className="space-y-2">
-                <h4 className="font-medium">Equipped Items</h4>
-                <div className="space-y-1 text-sm">
-                  {character.equipment.weapons?.mainHand && (
-                    <div className="flex justify-between">
-                      <span>Main Hand</span>
-                      <span className="text-muted-foreground">{character.equipment.weapons.mainHand.name}</span>
+            <AccordionItem value="equipment">
+              <AccordionTrigger>Equipment & Inventory</AccordionTrigger>
+              <AccordionContent>
+                <div className="space-y-3">
+                  {character.equipment && Object.keys(character.equipment).length > 0 ? (
+                    <div className="space-y-1 text-sm">
+                      {character.equipment.weapons?.mainHand && (
+                        <div className="flex justify-between">
+                          <span>Main Hand</span>
+                          <span className="text-muted-foreground">{character.equipment.weapons.mainHand.name}</span>
+                        </div>
+                      )}
+                      {character.equipment.weapons?.offHand && (
+                        <div className="flex justify-between">
+                          <span>Off Hand</span>
+                          <span className="text-muted-foreground">{character.equipment.weapons.offHand.name}</span>
+                        </div>
+                      )}
+                      {character.equipment.weapons?.ranged && (
+                        <div className="flex justify-between">
+                          <span>Ranged</span>
+                          <span className="text-muted-foreground">{character.equipment.weapons.ranged.name}</span>
+                        </div>
+                      )}
+                      {character.equipment.armor && (
+                        <div className="flex justify-between">
+                          <span>Armor</span>
+                          <span className="text-muted-foreground">{character.equipment.armor.name}</span>
+                        </div>
+                      )}
+                      {character.equipment.shield && (
+                        <div className="flex justify-between">
+                          <span>Shield</span>
+                          <span className="text-muted-foreground">{character.equipment.shield.name}</span>
+                        </div>
+                      )}
+                      {character.equipment.accessories?.ring1 && (
+                        <div className="flex justify-between">
+                          <span>Ring</span>
+                          <span className="text-muted-foreground">{character.equipment.accessories.ring1.name}</span>
+                        </div>
+                      )}
+                      {character.equipment.accessories?.ring2 && (
+                        <div className="flex justify-between">
+                          <span>Ring</span>
+                          <span className="text-muted-foreground">{character.equipment.accessories.ring2.name}</span>
+                        </div>
+                      )}
+                      {character.equipment.accessories?.necklace && (
+                        <div className="flex justify-between">
+                          <span>Necklace</span>
+                          <span className="text-muted-foreground">{character.equipment.accessories.necklace.name}</span>
+                        </div>
+                      )}
+                      {character.equipment.accessories?.cloak && (
+                        <div className="flex justify-between">
+                          <span>Cloak</span>
+                          <span className="text-muted-foreground">{character.equipment.accessories.cloak.name}</span>
+                        </div>
+                      )}
                     </div>
+                  ) : (
+                    <div className="text-sm text-muted-foreground">No equipment data available</div>
                   )}
-                  {character.equipment.weapons?.offHand && (
-                    <div className="flex justify-between">
-                      <span>Off Hand</span>
-                      <span className="text-muted-foreground">{character.equipment.weapons.offHand.name}</span>
+                  <Separator />
+                  {character.inventory && Array.isArray(character.inventory) && character.inventory.length > 0 ? (
+                    <div>
+                      <h4 className="text-xs font-medium uppercase text-muted-foreground">Inventory</h4>
+                      <div className="text-sm">
+                        {character.inventory.length} items
+                      </div>
                     </div>
-                  )}
-                  {character.equipment.weapons?.ranged && (
-                    <div className="flex justify-between">
-                      <span>Ranged</span>
-                      <span className="text-muted-foreground">{character.equipment.weapons.ranged.name}</span>
-                    </div>
-                  )}
-                  {character.equipment.armor && (
-                    <div className="flex justify-between">
-                      <span>Armor</span>
-                      <span className="text-muted-foreground">{character.equipment.armor.name}</span>
-                    </div>
-                  )}
-                  {character.equipment.shield && (
-                    <div className="flex justify-between">
-                      <span>Shield</span>
-                      <span className="text-muted-foreground">{character.equipment.shield.name}</span>
-                    </div>
-                  )}
-                  {character.equipment.accessories?.ring1 && (
-                    <div className="flex justify-between">
-                      <span>Ring</span>
-                      <span className="text-muted-foreground">{character.equipment.accessories.ring1.name}</span>
-                    </div>
-                  )}
-                  {character.equipment.accessories?.ring2 && (
-                    <div className="flex justify-between">
-                      <span>Ring</span>
-                      <span className="text-muted-foreground">{character.equipment.accessories.ring2.name}</span>
-                    </div>
-                  )}
-                  {character.equipment.accessories?.necklace && (
-                    <div className="flex justify-between">
-                      <span>Necklace</span>
-                      <span className="text-muted-foreground">{character.equipment.accessories.necklace.name}</span>
-                    </div>
-                  )}
-                  {character.equipment.accessories?.cloak && (
-                    <div className="flex justify-between">
-                      <span>Cloak</span>
-                      <span className="text-muted-foreground">{character.equipment.accessories.cloak.name}</span>
-                    </div>
+                  ) : (
+                    <div className="text-sm text-muted-foreground">No inventory data available</div>
                   )}
                 </div>
-              </div>
-            ) : (
-              <div className="text-sm text-muted-foreground">No equipment data available</div>
-            )}
-            <Separator />
-            {character.inventory && Array.isArray(character.inventory) && character.inventory.length > 0 ? (
-              <div>
-                <h4 className="font-medium">Inventory</h4>
-                <div className="text-sm text-muted-foreground">
-                  {character.inventory.length} items
-                </div>
-              </div>
-            ) : (
-              <div className="text-sm text-muted-foreground">No inventory data available</div>
-            )}
-          </CardContent>
-        </Card>
-      </div>
+              </AccordionContent>
+            </AccordionItem>
+          </Accordion>
+        </CardContent>
+      </Card>
     </div>
   );
 }

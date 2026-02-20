@@ -12,32 +12,28 @@ CREATE TABLE IF NOT EXISTS public.srd_abilities (
     id UUID DEFAULT uuid_generate_v4() PRIMARY KEY,
     key TEXT UNIQUE NOT NULL,
     name TEXT NOT NULL,
-    desc_text TEXT,
-    source_key TEXT
+    desc_text TEXT
 );
 
 CREATE TABLE IF NOT EXISTS public.srd_damage_types (
     id UUID DEFAULT uuid_generate_v4() PRIMARY KEY,
     key TEXT UNIQUE NOT NULL,
     name TEXT NOT NULL,
-    desc_text TEXT,
-    source_key TEXT
+    desc_text TEXT
 );
 
 CREATE TABLE IF NOT EXISTS public.srd_spell_schools (
     id UUID DEFAULT uuid_generate_v4() PRIMARY KEY,
     key TEXT UNIQUE NOT NULL,
     name TEXT NOT NULL,
-    desc_text TEXT,
-    source_key TEXT
+    desc_text TEXT
 );
 
 CREATE TABLE IF NOT EXISTS public.srd_conditions (
     id UUID DEFAULT uuid_generate_v4() PRIMARY KEY,
     key TEXT UNIQUE NOT NULL,
     name TEXT NOT NULL,
-    descriptions JSONB DEFAULT '[]'::jsonb,
-    source_key TEXT
+    descriptions JSONB DEFAULT '[]'::jsonb
 );
 
 CREATE TABLE IF NOT EXISTS public.srd_sizes (
@@ -45,46 +41,40 @@ CREATE TABLE IF NOT EXISTS public.srd_sizes (
     key TEXT UNIQUE NOT NULL,
     name TEXT NOT NULL,
     rank INTEGER DEFAULT 0,
-    space_diameter NUMERIC,
-    source_key TEXT
+    space_diameter NUMERIC
 );
 
 CREATE TABLE IF NOT EXISTS public.srd_languages (
     id UUID DEFAULT uuid_generate_v4() PRIMARY KEY,
     key TEXT UNIQUE NOT NULL,
     name TEXT NOT NULL,
-    is_exotic BOOLEAN DEFAULT false,
-    source_key TEXT
+    is_exotic BOOLEAN DEFAULT false
 );
 
 CREATE TABLE IF NOT EXISTS public.srd_alignments (
     id UUID DEFAULT uuid_generate_v4() PRIMARY KEY,
     key TEXT UNIQUE NOT NULL,
-    name TEXT NOT NULL,
-    source_key TEXT
+    name TEXT NOT NULL
 );
 
 CREATE TABLE IF NOT EXISTS public.srd_item_categories (
     id UUID DEFAULT uuid_generate_v4() PRIMARY KEY,
     key TEXT UNIQUE NOT NULL,
-    name TEXT NOT NULL,
-    source_key TEXT
+    name TEXT NOT NULL
 );
 
 CREATE TABLE IF NOT EXISTS public.srd_item_rarities (
     id UUID DEFAULT uuid_generate_v4() PRIMARY KEY,
     key TEXT UNIQUE NOT NULL,
     name TEXT NOT NULL,
-    rank INTEGER DEFAULT 0,
-    source_key TEXT
+    rank INTEGER DEFAULT 0
 );
 
 CREATE TABLE IF NOT EXISTS public.srd_weapon_properties (
     id UUID DEFAULT uuid_generate_v4() PRIMARY KEY,
     key TEXT UNIQUE NOT NULL,
     name TEXT NOT NULL,
-    desc_text TEXT,
-    source_key TEXT
+    desc_text TEXT
 );
 
 -- =============================================================================
@@ -99,10 +89,8 @@ CREATE TABLE IF NOT EXISTS public.srd_classes (
     hit_dice TEXT,
     caster_type TEXT CHECK (caster_type IN ('FULL', 'HALF', 'THIRD', 'PACT', 'NONE')),
     subclass_of_key TEXT,
-    features JSONB DEFAULT '[]'::jsonb,
-    source_key TEXT
+    features JSONB DEFAULT '[]'::jsonb
 );
-CREATE INDEX IF NOT EXISTS idx_srd_classes_source ON public.srd_classes(source_key);
 CREATE INDEX IF NOT EXISTS idx_srd_classes_subclass ON public.srd_classes(subclass_of_key);
 
 CREATE TABLE IF NOT EXISTS public.srd_species (
@@ -112,10 +100,8 @@ CREATE TABLE IF NOT EXISTS public.srd_species (
     desc_text TEXT,
     is_subspecies BOOLEAN DEFAULT false,
     subspecies_of_key TEXT,
-    traits JSONB DEFAULT '[]'::jsonb,
-    source_key TEXT
+    traits JSONB DEFAULT '[]'::jsonb
 );
-CREATE INDEX IF NOT EXISTS idx_srd_species_source ON public.srd_species(source_key);
 CREATE INDEX IF NOT EXISTS idx_srd_species_subspecies ON public.srd_species(subspecies_of_key);
 
 CREATE TABLE IF NOT EXISTS public.srd_backgrounds (
@@ -123,10 +109,8 @@ CREATE TABLE IF NOT EXISTS public.srd_backgrounds (
     key TEXT UNIQUE NOT NULL,
     name TEXT NOT NULL,
     desc_text TEXT,
-    benefits JSONB DEFAULT '[]'::jsonb,
-    source_key TEXT
+    benefits JSONB DEFAULT '[]'::jsonb
 );
-CREATE INDEX IF NOT EXISTS idx_srd_backgrounds_source ON public.srd_backgrounds(source_key);
 
 CREATE TABLE IF NOT EXISTS public.srd_feats (
     id UUID DEFAULT uuid_generate_v4() PRIMARY KEY,
@@ -135,10 +119,8 @@ CREATE TABLE IF NOT EXISTS public.srd_feats (
     desc_text TEXT,
     feat_type TEXT,
     prerequisite TEXT,
-    benefits JSONB DEFAULT '{}'::jsonb,
-    source_key TEXT
+    benefits JSONB DEFAULT '{}'::jsonb
 );
-CREATE INDEX IF NOT EXISTS idx_srd_feats_source ON public.srd_feats(source_key);
 CREATE INDEX IF NOT EXISTS idx_srd_feats_type ON public.srd_feats(feat_type);
 
 CREATE TABLE IF NOT EXISTS public.srd_spells (
@@ -161,10 +143,8 @@ CREATE TABLE IF NOT EXISTS public.srd_spells (
     damage_roll TEXT,
     damage_types JSONB DEFAULT '[]'::jsonb,
     saving_throw_ability TEXT,
-    attack_roll BOOLEAN DEFAULT false,
-    source_key TEXT
+    attack_roll BOOLEAN DEFAULT false
 );
-CREATE INDEX IF NOT EXISTS idx_srd_spells_source ON public.srd_spells(source_key);
 CREATE INDEX IF NOT EXISTS idx_srd_spells_level ON public.srd_spells(level);
 CREATE INDEX IF NOT EXISTS idx_srd_spells_school ON public.srd_spells(school_key);
 CREATE INDEX IF NOT EXISTS idx_srd_spells_ritual ON public.srd_spells(ritual) WHERE ritual = true;
@@ -179,10 +159,8 @@ CREATE TABLE IF NOT EXISTS public.srd_items (
     cost TEXT,
     weight NUMERIC,
     weight_unit TEXT DEFAULT 'lb',
-    requires_attunement BOOLEAN DEFAULT false,
-    source_key TEXT
+    requires_attunement BOOLEAN DEFAULT false
 );
-CREATE INDEX IF NOT EXISTS idx_srd_items_source ON public.srd_items(source_key);
 CREATE INDEX IF NOT EXISTS idx_srd_items_category ON public.srd_items(category_key);
 
 CREATE TABLE IF NOT EXISTS public.srd_weapons (
@@ -195,10 +173,8 @@ CREATE TABLE IF NOT EXISTS public.srd_weapons (
     range INTEGER,
     long_range INTEGER,
     is_simple BOOLEAN DEFAULT true,
-    properties JSONB DEFAULT '[]'::jsonb,
-    source_key TEXT
+    properties JSONB DEFAULT '[]'::jsonb
 );
-CREATE INDEX IF NOT EXISTS idx_srd_weapons_source ON public.srd_weapons(source_key);
 
 CREATE TABLE IF NOT EXISTS public.srd_armor (
     id UUID DEFAULT uuid_generate_v4() PRIMARY KEY,
@@ -210,10 +186,8 @@ CREATE TABLE IF NOT EXISTS public.srd_armor (
     ac_cap_dexmod INTEGER,
     category TEXT CHECK (category IN ('light', 'medium', 'heavy', 'shield')),
     grants_stealth_disadvantage BOOLEAN DEFAULT false,
-    strength_score_required INTEGER,
-    source_key TEXT
+    strength_score_required INTEGER
 );
-CREATE INDEX IF NOT EXISTS idx_srd_armor_source ON public.srd_armor(source_key);
 CREATE INDEX IF NOT EXISTS idx_srd_armor_category ON public.srd_armor(category);
 
 -- =============================================================================

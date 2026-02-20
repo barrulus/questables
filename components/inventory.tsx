@@ -1,5 +1,4 @@
 import { useState, useEffect } from "react";
-import { Card, CardContent, CardHeader, CardTitle } from "./ui/card";
 import { Badge } from "./ui/badge";
 import { Button } from "./ui/button";
 import { Input } from "./ui/input";
@@ -258,6 +257,73 @@ export function Inventory({ characterId, onInventoryChange }: InventoryProps) {
   const toolItems = inventory.filter((item) => item.type === 'tool');
   const otherItems = inventory.filter((item) => item.type === 'other');
 
+  /** Render a single inventory row. */
+  const renderItemRow = (item: InventoryItem, options?: {
+    equipable?: boolean;
+    consumable?: boolean;
+  }) => (
+    <div key={item.id} className="flex items-center gap-2 py-2 border-b last:border-b-0">
+      <span className="shrink-0 text-muted-foreground">{getEquipmentIcon(item)}</span>
+      <div className="flex-1 min-w-0">
+        <div className="flex items-center gap-1.5">
+          <span className="font-medium text-sm truncate">{item.name}</span>
+          {item.quantity > 1 && (
+            <span className="text-xs text-muted-foreground shrink-0">×{item.quantity}</span>
+          )}
+          {options?.equipable && isItemEquipped(item) && (
+            <Badge variant="secondary" className="text-[10px] px-1 py-0 shrink-0">E</Badge>
+          )}
+        </div>
+        {item.value && item.value.amount > 0 && (
+          <span className="text-xs text-muted-foreground">{formatItemValue(item.value)}</span>
+        )}
+      </div>
+      <div className="flex items-center shrink-0">
+        {options?.equipable && (
+          <Button
+            variant="ghost"
+            size="icon"
+            className="h-7 w-7"
+            onClick={() => toggleEquipItem(item)}
+            title={isItemEquipped(item) ? 'Unequip' : 'Equip'}
+          >
+            {item.type === 'weapon' ? <Sword className="w-3.5 h-3.5" /> : <Shirt className="w-3.5 h-3.5" />}
+          </Button>
+        )}
+        {options?.consumable && (
+          <>
+            <Button
+              variant="ghost"
+              size="icon"
+              className="h-7 w-7"
+              onClick={() => updateItemQuantity(item.id, -1)}
+              disabled={updating}
+            >
+              <Minus className="w-3.5 h-3.5" />
+            </Button>
+            <Button
+              variant="ghost"
+              size="icon"
+              className="h-7 w-7"
+              onClick={() => updateItemQuantity(item.id, 1)}
+              disabled={updating}
+            >
+              <Plus className="w-3.5 h-3.5" />
+            </Button>
+          </>
+        )}
+        <Button
+          variant="ghost"
+          size="icon"
+          className="h-7 w-7 text-muted-foreground"
+          onClick={() => removeItem(item.id)}
+        >
+          <Trash2 className="w-3.5 h-3.5" />
+        </Button>
+      </div>
+    </div>
+  );
+
   if (loading) {
     return (
       <div className="text-center py-8">
@@ -267,15 +333,17 @@ export function Inventory({ characterId, onInventoryChange }: InventoryProps) {
     );
   }
 
+  const hasItems = inventory.length > 0;
+
   return (
-    <div className="space-y-6">
+    <div className="space-y-4">
       <div className="flex justify-between items-center">
-        <h3 className="text-lg font-semibold">Items</h3>
+        <h3 className="text-lg font-semibold">Inventory</h3>
         <Dialog open={showAddDialog} onOpenChange={setShowAddDialog}>
           <DialogTrigger asChild>
-            <Button>
-              <Plus className="w-4 h-4 mr-2" />
-              Add Item
+            <Button size="sm">
+              <Plus className="w-4 h-4 mr-1" />
+              Add
             </Button>
           </DialogTrigger>
           <DialogContent>
@@ -305,8 +373,8 @@ export function Inventory({ characterId, onInventoryChange }: InventoryProps) {
               <div className="grid grid-cols-3 gap-4">
                 <div>
                   <Label htmlFor="itemType">Type</Label>
-                  <Select 
-                    value={newItem.type ?? 'other'} 
+                  <Select
+                    value={newItem.type ?? 'other'}
                     onValueChange={(value) => setNewItem(prev => ({ ...prev, type: value as InventoryItem['type'] }))}
                   >
                     <SelectTrigger>
@@ -396,202 +464,59 @@ export function Inventory({ characterId, onInventoryChange }: InventoryProps) {
         </Dialog>
       </div>
 
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-        {/* Equipment */}
-        <Card>
-          <CardHeader>
-            <CardTitle>Equipment</CardTitle>
-          </CardHeader>
-          <CardContent className="space-y-3">
-            {equipableItems.map((item) => (
-              <div key={item.id} className="flex items-start justify-between p-3 border rounded">
-                <div className="flex items-start gap-3">
-                  {getEquipmentIcon(item)}
-                  <div>
-                    <div className="flex items-center gap-2">
-                      <span className="font-medium">{item.name}</span>
-                      <Badge variant="outline" className="text-xs">×{item.quantity}</Badge>
-                      {isItemEquipped(item) && <Badge variant="secondary" className="text-xs">Equipped</Badge>}
-                    </div>
-                    {item.description && (
-                      <p className="text-sm text-muted-foreground mt-1">{item.description}</p>
-                    )}
-                    <p className="text-xs text-muted-foreground mt-1">Value: {formatItemValue(item.value)}</p>
-                  </div>
-                </div>
-                <div className="flex gap-1">
-                  <Button 
-                    variant="ghost" 
-                    size="sm"
-                    onClick={() => toggleEquipItem(item)}
-                  >
-                    {isItemEquipped(item) ? "Unequip" : "Equip"}
-                  </Button>
-                  <Button 
-                    variant="ghost" 
-                    size="sm"
-                    onClick={() => removeItem(item.id)}
-                  >
-                    <Trash2 className="w-4 h-4" />
-                  </Button>
-                </div>
-              </div>
-            ))}
-            {equipableItems.length === 0 && (
-              <p className="text-center text-muted-foreground py-4">No equipment items</p>
-            )}
-          </CardContent>
-        </Card>
+      {!hasItems && (
+        <p className="text-center text-muted-foreground py-6 text-sm">No items yet</p>
+      )}
 
-        {/* Consumables */}
-        <Card>
-          <CardHeader>
-            <CardTitle>Consumables</CardTitle>
-          </CardHeader>
-          <CardContent className="space-y-3">
-            {consumableItems.map((item) => (
-              <div key={item.id} className="flex items-start justify-between p-3 border rounded">
-                <div className="flex items-start gap-3">
-                  <Package className="w-4 h-4 mt-1" />
-                  <div>
-                    <div className="flex items-center gap-2">
-                      <span className="font-medium">{item.name}</span>
-                      <Badge variant="outline">×{item.quantity}</Badge>
-                    </div>
-                    {item.description && (
-                      <p className="text-sm text-muted-foreground mt-1">{item.description}</p>
-                    )}
-                    <p className="text-xs text-muted-foreground mt-1">Value: {formatItemValue(item.value)}</p>
-                  </div>
-                </div>
-                <div className="flex gap-1">
-                  <Button 
-                    variant="ghost" 
-                    size="sm"
-                    onClick={() => updateItemQuantity(item.id, -1)}
-                    disabled={updating}
-                  >
-                    <Minus className="w-4 h-4" />
-                  </Button>
-                  <Button 
-                    variant="ghost" 
-                    size="sm"
-                    onClick={() => updateItemQuantity(item.id, 1)}
-                    disabled={updating}
-                  >
-                    <Plus className="w-4 h-4" />
-                  </Button>
-                  <Button 
-                    variant="ghost" 
-                    size="sm"
-                    onClick={() => removeItem(item.id)}
-                  >
-                    <Trash2 className="w-4 h-4" />
-                  </Button>
-                </div>
-              </div>
-            ))}
-            {consumableItems.length === 0 && (
-              <p className="text-center text-muted-foreground py-4">No consumable items</p>
-            )}
-          </CardContent>
-        </Card>
-      </div>
+      {equipableItems.length > 0 && (
+        <div>
+          <h4 className="text-xs font-semibold text-muted-foreground uppercase tracking-wide mb-1">Equipment</h4>
+          <div className="px-1">
+            {equipableItems.map((item) => renderItemRow(item, { equipable: true }))}
+          </div>
+        </div>
+      )}
 
-      {/* Tools */}
+      {consumableItems.length > 0 && (
+        <div>
+          <h4 className="text-xs font-semibold text-muted-foreground uppercase tracking-wide mb-1">Consumables</h4>
+          <div className="px-1">
+            {consumableItems.map((item) => renderItemRow(item, { consumable: true }))}
+          </div>
+        </div>
+      )}
+
       {toolItems.length > 0 && (
-        <Card>
-          <CardHeader>
-            <CardTitle>Tools</CardTitle>
-          </CardHeader>
-          <CardContent>
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-              {toolItems.map((item) => (
-                <div key={item.id} className="flex items-center justify-between p-3 border rounded">
-                  <div className="flex items-center gap-2">
-                    <Package className="w-4 h-4" />
-                    <span className="font-medium">{item.name}</span>
-                    <Badge variant="outline" className="text-xs">×{item.quantity}</Badge>
-                  </div>
-                  <span className="text-xs text-muted-foreground">{formatItemValue(item.value)}</span>
-                  <Button 
-                    variant="ghost" 
-                    size="sm"
-                    onClick={() => removeItem(item.id)}
-                  >
-                    <Trash2 className="w-4 h-4" />
-                  </Button>
-                </div>
-              ))}
-            </div>
-          </CardContent>
-        </Card>
+        <div>
+          <h4 className="text-xs font-semibold text-muted-foreground uppercase tracking-wide mb-1">Tools</h4>
+          <div className="px-1">
+            {toolItems.map((item) => renderItemRow(item))}
+          </div>
+        </div>
       )}
 
-      {/* Treasure */}
       {treasureItems.length > 0 && (
-        <Card>
-          <CardHeader>
-            <CardTitle>Treasure</CardTitle>
-          </CardHeader>
-          <CardContent>
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-              {treasureItems.map((item) => (
-                <div key={item.id} className="flex items-center justify-between p-3 border rounded">
-                  <div className="flex items-center gap-2">
-                    <StarIcon className="w-4 h-4" />
-                    <span className="font-medium">{item.name}</span>
-                    <Badge variant="outline" className="text-xs">×{item.quantity}</Badge>
-                  </div>
-                  <span className="text-xs text-muted-foreground">{formatItemValue(item.value)}</span>
-                  <Button 
-                    variant="ghost" 
-                    size="sm"
-                    onClick={() => removeItem(item.id)}
-                  >
-                    <Trash2 className="w-4 h-4" />
-                  </Button>
-                </div>
-              ))}
-            </div>
-          </CardContent>
-        </Card>
+        <div>
+          <h4 className="text-xs font-semibold text-muted-foreground uppercase tracking-wide mb-1">Treasure</h4>
+          <div className="px-1">
+            {treasureItems.map((item) => renderItemRow(item))}
+          </div>
+        </div>
       )}
 
-      {/* Other */}
       {otherItems.length > 0 && (
-        <Card>
-          <CardHeader>
-            <CardTitle>Miscellaneous</CardTitle>
-          </CardHeader>
-          <CardContent>
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-              {otherItems.map((item) => (
-                <div key={item.id} className="flex items-center justify-between p-3 border rounded">
-                  <div className="flex items-center gap-2">
-                    <Package className="w-4 h-4" />
-                    <span className="font-medium">{item.name}</span>
-                    <Badge variant="outline" className="text-xs">×{item.quantity}</Badge>
-                  </div>
-                  <span className="text-xs text-muted-foreground">{formatItemValue(item.value)}</span>
-                  <Button 
-                    variant="ghost" 
-                    size="sm"
-                    onClick={() => removeItem(item.id)}
-                  >
-                    <Trash2 className="w-4 h-4" />
-                  </Button>
-                </div>
-              ))}
-            </div>
-          </CardContent>
-        </Card>
+        <div>
+          <h4 className="text-xs font-semibold text-muted-foreground uppercase tracking-wide mb-1">Other</h4>
+          <div className="px-1">
+            {otherItems.map((item) => renderItemRow(item))}
+          </div>
+        </div>
       )}
 
       {updating && (
         <div className="text-center py-2">
           <Loader2 className="w-4 h-4 animate-spin inline mr-2" />
-          Saving changes...
+          Saving...
         </div>
       )}
     </div>

@@ -41,7 +41,7 @@ export function SrdEntityCard({
       <h3 className="font-semibold text-sm pr-7 leading-tight">{name}</h3>
 
       {summary && (
-        <p className="text-xs text-muted-foreground mt-1 line-clamp-1">{summary}</p>
+        <p className="text-xs text-muted-foreground mt-1 line-clamp-2">{summary}</p>
       )}
 
       {documentSource && (

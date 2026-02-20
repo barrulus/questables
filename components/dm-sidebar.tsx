@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { Accordion, AccordionContent, AccordionItem, AccordionTrigger } from "./ui/accordion";
 import { toast } from "sonner";
 import { Loader2, MapPin, Sparkles, Compass, Target, Users, FileText } from "lucide-react";
 import { useGameSession } from "../contexts/GameSessionContext";
@@ -22,7 +23,7 @@ import {
   type EncounterDifficulty,
   type NpcSentiment,
 } from "../utils/api-client";
-import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "./ui/card";
+import { CardTitle, CardDescription } from "./ui/card";
 import { Button } from "./ui/button";
 import { Input } from "./ui/input";
 import { Textarea } from "./ui/textarea";
@@ -883,13 +884,11 @@ export function DMSidebar() {
         </CardDescription>
       </div>
       <ScrollArea className="flex-1">
-        <div className="space-y-4 p-4 pb-8">
-          <Card>
-            <CardHeader>
-              <CardTitle>Session Focus</CardTitle>
-              <CardDescription>Persist the active narrative prompt shared with assistants and logs.</CardDescription>
-            </CardHeader>
-            <CardContent className="space-y-4">
+        <Accordion type="multiple" defaultValue={["session-focus"]} className="p-4 pb-8">
+          <AccordionItem value="session-focus">
+            <AccordionTrigger>Session Focus</AccordionTrigger>
+            <AccordionContent>
+              <div className="space-y-4">
               <div className="space-y-2">
                 <Label htmlFor="dm-sidebar-session">Active session</Label>
                 <Select
@@ -964,15 +963,14 @@ export function DMSidebar() {
                   <AlertDescription>{focusError}</AlertDescription>
                 </Alert>
               )}
-            </CardContent>
-          </Card>
+              </div>
+            </AccordionContent>
+          </AccordionItem>
 
-          <Card>
-            <CardHeader>
-              <CardTitle>Session Context</CardTitle>
-              <CardDescription>Maintain extended scene notes for the active session.</CardDescription>
-            </CardHeader>
-            <CardContent className="space-y-4">
+          <AccordionItem value="session-context">
+            <AccordionTrigger>Session Context</AccordionTrigger>
+            <AccordionContent>
+              <div className="space-y-4">
               <Tabs value={contextMode} onValueChange={(value) => setContextMode(value as "replace" | "append")}> 
                 <TabsList>
                   <TabsTrigger value="replace">Replace</TabsTrigger>
@@ -1037,16 +1035,15 @@ export function DMSidebar() {
                   <AlertDescription>{contextError}</AlertDescription>
                 </Alert>
               )}
-            </CardContent>
-          </Card>
+              </div>
+            </AccordionContent>
+          </AccordionItem>
 
-          <Card>
-            <CardHeader>
-              <CardTitle>Unplanned Encounter</CardTitle>
-              <CardDescription>Record emergent encounters without fabricating data or relying on placeholders.</CardDescription>
-            </CardHeader>
-            <CardContent className="space-y-4">
-              <div className="grid gap-4 md:grid-cols-2">
+          <AccordionItem value="unplanned-encounter">
+            <AccordionTrigger>Unplanned Encounter</AccordionTrigger>
+            <AccordionContent>
+              <div className="space-y-4">
+              <div className="grid gap-4 grid-cols-1 sm:grid-cols-2">
                 <div className="space-y-2">
                   <Label htmlFor="dm-sidebar-encounter-type">Encounter type</Label>
                   <Select value={encounterType} onValueChange={(value) => setEncounterType(value as UnplannedEncounterType)}>
@@ -1135,15 +1132,14 @@ export function DMSidebar() {
                   <AlertDescription>{encounterError}</AlertDescription>
                 </Alert>
               )}
-            </CardContent>
-          </Card>
+              </div>
+            </AccordionContent>
+          </AccordionItem>
 
-          <Card>
-            <CardHeader>
-              <CardTitle>NPC Sentiment</CardTitle>
-              <CardDescription>Log trust or sentiment shifts with canonical storage.</CardDescription>
-            </CardHeader>
-            <CardContent className="space-y-4">
+          <AccordionItem value="npc-sentiment">
+            <AccordionTrigger>NPC Sentiment</AccordionTrigger>
+            <AccordionContent>
+              <div className="space-y-4">
               <div className="space-y-2">
                 <Label htmlFor="dm-sidebar-sentiment-npc">NPC</Label>
                 <Select value={sentimentNpcId} onValueChange={setSentimentNpcId}>
@@ -1162,7 +1158,7 @@ export function DMSidebar() {
                 {npcsError && <p className="text-xs text-destructive">{npcsError}</p>}
               </div>
 
-              <div className="grid gap-4 md:grid-cols-3">
+              <div className="grid gap-4 grid-cols-1 sm:grid-cols-3">
                 <div className="space-y-2">
                   <Label htmlFor="dm-sidebar-sentiment-delta">Trust delta</Label>
                   <Input
@@ -1255,15 +1251,14 @@ export function DMSidebar() {
                   <AlertDescription>{sentimentError}</AlertDescription>
                 </Alert>
               )}
-            </CardContent>
-          </Card>
+              </div>
+            </AccordionContent>
+          </AccordionItem>
 
-          <Card>
-            <CardHeader>
-              <CardTitle>Teleport Player</CardTitle>
-              <CardDescription>Move player tokens using recorded spawn points or explicit SRID-0 coordinates.</CardDescription>
-            </CardHeader>
-            <CardContent className="space-y-4">
+          <AccordionItem value="teleport-player">
+            <AccordionTrigger>Teleport Player</AccordionTrigger>
+            <AccordionContent>
+              <div className="space-y-4">
               <div className="space-y-2">
                 <Label htmlFor="dm-sidebar-player-select">Campaign player</Label>
                 <Select value={teleportPlayerId} onValueChange={setTeleportPlayerId}>
@@ -1330,7 +1325,7 @@ export function DMSidebar() {
                   )}
                 </div>
               ) : (
-                <div className="grid gap-4 md:grid-cols-2">
+                <div className="grid gap-4 grid-cols-2">
                   <div className="space-y-2">
                     <Label htmlFor="dm-sidebar-player-x">X coordinate</Label>
                     <Input
@@ -1383,15 +1378,14 @@ export function DMSidebar() {
                   <AlertDescription>{teleportPlayerError}</AlertDescription>
                 </Alert>
               )}
-            </CardContent>
-          </Card>
+              </div>
+            </AccordionContent>
+          </AccordionItem>
 
-          <Card>
-            <CardHeader>
-              <CardTitle>Teleport NPC</CardTitle>
-              <CardDescription>Reposition NPCs to campaign locations or explicit map coordinates.</CardDescription>
-            </CardHeader>
-            <CardContent className="space-y-4">
+          <AccordionItem value="teleport-npc">
+            <AccordionTrigger>Teleport NPC</AccordionTrigger>
+            <AccordionContent>
+              <div className="space-y-4">
               <div className="space-y-2">
                 <Label htmlFor="dm-sidebar-npc-select">NPC</Label>
                 <Select value={teleportNpcId} onValueChange={setTeleportNpcId}>
@@ -1445,7 +1439,7 @@ export function DMSidebar() {
                   </Select>
                 </div>
               ) : (
-                <div className="grid gap-4 md:grid-cols-2">
+                <div className="grid gap-4 grid-cols-2">
                   <div className="space-y-2">
                     <Label htmlFor="dm-sidebar-npc-x">X coordinate</Label>
                     <Input
@@ -1500,9 +1494,10 @@ export function DMSidebar() {
                   <AlertDescription>{teleportNpcError}</AlertDescription>
                 </Alert>
               )}
-            </CardContent>
-          </Card>
-        </div>
+              </div>
+            </AccordionContent>
+          </AccordionItem>
+        </Accordion>
       </ScrollArea>
     </div>
   );

@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
 import {
   Plus,
@@ -64,6 +64,8 @@ export interface CharacterManagerCommand {
 interface CharacterManagerProps {
   command?: CharacterManagerCommand | null;
   onCharactersChanged?: () => void;
+  /** Called when the create/edit form dialog is closed (cancelled or saved). */
+  onFormClosed?: () => void;
 }
 
 const abilityKeys = [
@@ -394,7 +396,7 @@ type SortOption = "updated" | "name" | "level";
 
 type LoadMode = "initial" | "refresh";
 
-export function CharacterManager({ command, onCharactersChanged }: CharacterManagerProps) {
+export function CharacterManager({ command, onCharactersChanged, onFormClosed }: CharacterManagerProps) {
   const { user } = useUser();
   const [characters, setCharacters] = useState<Character[]>([]);
   const [loading, setLoading] = useState(true);
@@ -405,6 +407,20 @@ export function CharacterManager({ command, onCharactersChanged }: CharacterMana
   const [formOpen, setFormOpen] = useState(false);
   const [formMode, setFormMode] = useState<"create" | "edit">("create");
   const [operationPending, setOperationPending] = useState(false);
+  const formInitialStateRef = useRef<CharacterFormState>(emptyFormState);
+
+  const isFormDirty = () =>
+    JSON.stringify(formState) !== JSON.stringify(formInitialStateRef.current);
+
+  const handleFormClose = (open: boolean) => {
+    if (!open && isFormDirty()) {
+      if (!window.confirm("You have unsaved changes. Discard them?")) return;
+    }
+    setFormOpen(open);
+    if (!open) {
+      onFormClosed?.();
+    }
+  };
   const [deleteTarget, setDeleteTarget] = useState<Character | null>(null);
   const [searchTerm, setSearchTerm] = useState("");
   const [sortBy, setSortBy] = useState<SortOption>("updated");
@@ -530,13 +546,16 @@ export function CharacterManager({ command, onCharactersChanged }: CharacterMana
   const openCreateDialog = () => {
     setFormMode("create");
     setFormState(emptyFormState);
+    formInitialStateRef.current = emptyFormState;
     setSelectedCharacterId(null);
     setFormOpen(true);
   };
 
   const openEditDialog = (character: Character) => {
     setFormMode("edit");
-    setFormState(mapCharacterToForm(character));
+    const initial = mapCharacterToForm(character);
+    setFormState(initial);
+    formInitialStateRef.current = initial;
     setSelectedCharacterId(character.id);
     setFormOpen(true);
   };
@@ -553,6 +572,7 @@ export function CharacterManager({ command, onCharactersChanged }: CharacterMana
     if (command.type === "create") {
       setFormMode("create");
       setFormState(emptyFormState);
+      formInitialStateRef.current = emptyFormState;
       setSelectedCharacterId(null);
       setFormOpen(true);
       setProcessedCommandToken(command.token);
@@ -567,7 +587,9 @@ export function CharacterManager({ command, onCharactersChanged }: CharacterMana
     const target = characters.find((character) => character.id === command.characterId) ?? null;
     if (target) {
       setFormMode("edit");
-      setFormState(mapCharacterToForm(target));
+      const initial = mapCharacterToForm(target);
+      setFormState(initial);
+      formInitialStateRef.current = initial;
       setSelectedCharacterId(target.id);
       setFormOpen(true);
       setProcessedCommandToken(command.token);
@@ -621,6 +643,7 @@ export function CharacterManager({ command, onCharactersChanged }: CharacterMana
       setFormState(emptyFormState);
       await loadCharacters("refresh");
       onCharactersChanged?.();
+      onFormClosed?.();
     } catch (err) {
       console.error("Failed to save character", err);
       const message =
@@ -1062,7 +1085,7 @@ export function CharacterManager({ command, onCharactersChanged }: CharacterMana
         </div>
       </div>
 
-      <Dialog open={formOpen} onOpenChange={setFormOpen}>
+      <Dialog open={formOpen} onOpenChange={handleFormClose}>
         <DialogContent className="max-h-[90vh] overflow-y-auto sm:max-w-2xl">
           <DialogHeader>
             <DialogTitle>
@@ -1336,7 +1359,7 @@ export function CharacterManager({ command, onCharactersChanged }: CharacterMana
               </TabsContent>
             </Tabs>
             <div className="flex justify-end gap-2">
-              <Button variant="outline" onClick={() => setFormOpen(false)} disabled={operationPending}>
+              <Button variant="outline" onClick={() => handleFormClose(false)} disabled={operationPending}>
                 Cancel
               </Button>
               <Button onClick={handleSave} disabled={operationPending}>

@@ -1546,7 +1546,7 @@ export function ObjectivesPanel({ campaign, canEdit, worldMap, worldMapLoading, 
           </div>
         ) : null}
       </CardHeader>
-      <CardContent className="flex-1 overflow-hidden">
+      <CardContent className="flex-1 overflow-y-auto">
         {!campaign ? (
           <Alert>
             <AlertTitle>Select a campaign</AlertTitle>

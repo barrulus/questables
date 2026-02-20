@@ -19,6 +19,14 @@ export function MarkdownText({
         if (block.type === 'table') {
           return <MarkdownTable key={i} rows={block.rows} />;
         }
+        if (block.type === 'heading') {
+          const Tag = (`h${Math.min(block.level + 1, 6)}`) as 'h2' | 'h3' | 'h4' | 'h5' | 'h6';
+          return (
+            <Tag key={i} className={`font-semibold ${i > 0 ? 'mt-3' : ''} ${block.level <= 2 ? 'text-base' : 'text-sm'}`}>
+              {renderInline(block.text)}
+            </Tag>
+          );
+        }
         return (
           <p key={i} className={i > 0 ? 'mt-2' : undefined}>
             {renderInline(block.text)}
@@ -31,6 +39,7 @@ export function MarkdownText({
 
 type Block =
   | { type: 'paragraph'; text: string }
+  | { type: 'heading'; level: number; text: string }
   | { type: 'table'; rows: string[][] };
 
 function parseBlocks(text: string): Block[] {
@@ -59,6 +68,14 @@ function parseBlocks(text: string): Block[] {
 
     // Blank line — skip (acts as paragraph break)
     if (line.trim() === '') {
+      i++;
+      continue;
+    }
+
+    // Detect markdown headers (## / ### / ####)
+    const headerMatch = line.match(/^(#{1,4})\s+(.+)$/);
+    if (headerMatch) {
+      blocks.push({ type: 'heading', level: headerMatch[1].length, text: headerMatch[2] });
       i++;
       continue;
     }
@@ -145,7 +162,13 @@ function renderInline(text: string): ReactNode[] {
       parts.push(text.slice(lastIndex, match.index));
     }
     if (match[1] !== undefined) {
-      parts.push(<strong key={match.index}>{match[1]}</strong>);
+      const inner = match[1];
+      // Handle **_bold-italic_** pattern (common in v1 SRD data)
+      if (inner.startsWith('_') && inner.endsWith('_') && inner.length > 2) {
+        parts.push(<strong key={match.index}><em>{inner.slice(1, -1)}</em></strong>);
+      } else {
+        parts.push(<strong key={match.index}>{inner}</strong>);
+      }
     } else {
       parts.push(<em key={match.index}>{match[2]}</em>);
     }

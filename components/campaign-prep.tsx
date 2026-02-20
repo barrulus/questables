@@ -109,8 +109,9 @@ export function CampaignPrep({
   upsertSpawnOverride,
   mapComponent,
 }: CampaignPrepProps) {
+  const { user: contextUser } = useUser();
   const user = viewerOverride === undefined
-    ? useUser().user
+    ? contextUser
     : viewerOverride ?? null;
   const { activeCampaignId, viewerRole } = useGameSession();
   const [worldMap, setWorldMap] = useState<WorldMapRecord | null>(worldMapOverride ?? null);
@@ -1008,7 +1009,7 @@ export function CampaignPrep({
         ) : null}
       </div>
 
-      <div className="flex h-full flex-col overflow-hidden">
+      <div className="flex h-full flex-col overflow-y-auto">
         <ObjectivesPanel
           campaign={campaign}
           canEdit={isCampaignDm}

@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Card, CardContent, CardHeader, CardTitle } from "./ui/card";
+import { Dialog, DialogContent, DialogHeader, DialogTitle } from "./ui/dialog";
 import { Button } from "./ui/button";
 import { Input } from "./ui/input";
 import { Textarea } from "./ui/textarea";
@@ -1236,48 +1237,46 @@ export default function SessionManager({ campaignId, isDM }: { campaignId: strin
       </div>
 
       {/* End Session Modal */}
-      {showEndForm && selectedSession && isDM && (
-        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
-          <Card className="w-full max-w-md">
-            <CardHeader>
-              <CardTitle>End Session</CardTitle>
-            </CardHeader>
-            <CardContent className="space-y-4">
-              <div>
-                <label className="text-sm font-medium">Session Summary</label>
-                <Textarea
-                  placeholder="What happened in this session?"
-                  value={sessionSummary}
-                  onChange={(e) => setSessionSummary(e.target.value)}
-                  disabled={endBusy}
-                />
-              </div>
-              <div>
-                <label className="text-sm font-medium">Experience Awarded</label>
-                <Input
-                  type="number"
-                  placeholder="0"
-                  value={Number.isFinite(experienceAwarded) ? experienceAwarded : ""}
-                  onChange={(e) => {
-                    const value = Number.parseInt(e.target.value, 10);
-                    setExperienceAwarded(Number.isNaN(value) ? 0 : value);
-                  }}
-                  disabled={endBusy}
-                />
-              </div>
-              <div className="flex gap-2">
-                <Button onClick={() => endSession(selectedSession.id)} disabled={endBusy}>
-                  {endBusy ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : null}
-                  End Session
-                </Button>
-                <Button variant="outline" onClick={() => setShowEndForm(false)} disabled={endBusy}>
-                  Cancel
-                </Button>
-              </div>
-            </CardContent>
-          </Card>
-        </div>
-      )}
+      <Dialog open={showEndForm && !!selectedSession && isDM} onOpenChange={(open) => { if (!open) setShowEndForm(false); }}>
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle>End Session</DialogTitle>
+          </DialogHeader>
+          <div className="space-y-4">
+            <div>
+              <label className="text-sm font-medium">Session Summary</label>
+              <Textarea
+                placeholder="What happened in this session?"
+                value={sessionSummary}
+                onChange={(e) => setSessionSummary(e.target.value)}
+                disabled={endBusy}
+              />
+            </div>
+            <div>
+              <label className="text-sm font-medium">Experience Awarded</label>
+              <Input
+                type="number"
+                placeholder="0"
+                value={Number.isFinite(experienceAwarded) ? experienceAwarded : ""}
+                onChange={(e) => {
+                  const value = Number.parseInt(e.target.value, 10);
+                  setExperienceAwarded(Number.isNaN(value) ? 0 : value);
+                }}
+                disabled={endBusy}
+              />
+            </div>
+            <div className="flex gap-2">
+              <Button onClick={() => selectedSession && endSession(selectedSession.id)} disabled={endBusy}>
+                {endBusy ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : null}
+                End Session
+              </Button>
+              <Button variant="outline" onClick={() => setShowEndForm(false)} disabled={endBusy}>
+                Cancel
+              </Button>
+            </div>
+          </div>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

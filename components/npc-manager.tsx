@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { Card, CardContent, CardHeader, CardTitle } from './ui/card';
 import { Button } from './ui/button';
 import { Input } from './ui/input';
@@ -7,21 +7,19 @@ import { Textarea } from './ui/textarea';
 import { Badge } from './ui/badge';
 import { Avatar, AvatarFallback } from './ui/avatar';
 import { ScrollArea } from './ui/scroll-area';
-import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from './ui/dialog';
+import { Dialog, DialogContent, DialogHeader, DialogTitle } from './ui/dialog';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from './ui/select';
-import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle, AlertDialogTrigger } from './ui/alert-dialog';
+import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from './ui/alert-dialog';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from './ui/tabs';
 import { toast } from 'sonner';
 import { fetchJson } from "../utils/api-client";
 import { 
   Users,
   Plus,
-  Edit,
   Trash2,
   Search,
   MapPin,
-  Loader2,
-  UserPlus
+  Loader2
 } from 'lucide-react';
 
 interface NPC {
@@ -114,6 +112,8 @@ const parseNpcRecord = (npc: NpcApiRecord): NPC => {
 export default function NPCManager({ campaignId, isDM }: { campaignId: string; isDM: boolean }) {
   const [npcs, setNpcs] = useState<NPC[]>([]);
   const [selectedNPC, setSelectedNPC] = useState<NPC | null>(null);
+  const [detailNPC, setDetailNPC] = useState<NPC | null>(null);
+  const [deleteNPCTarget, setDeleteNPCTarget] = useState<NPC | null>(null);
   const [locations, setLocations] = useState<LocationSummary[]>([]);
   const [loading, setLoading] = useState(true);
   const [searchTerm, setSearchTerm] = useState('');
@@ -122,7 +122,7 @@ export default function NPCManager({ campaignId, isDM }: { campaignId: string; i
 
   // Create NPC form state
   const [showCreateForm, setShowCreateForm] = useState(false);
-  const [newNPC, setNewNPC] = useState<Partial<NPC>>({
+  const emptyNPC: Partial<NPC> = {
     name: '',
     description: '',
     race: '',
@@ -131,7 +131,19 @@ export default function NPCManager({ campaignId, isDM }: { campaignId: string; i
     appearance: '',
     motivations: '',
     secrets: ''
-  });
+  };
+  const [newNPC, setNewNPC] = useState<Partial<NPC>>(emptyNPC);
+  const npcInitialStateRef = useRef<Partial<NPC>>(emptyNPC);
+
+  const isNpcFormDirty = () =>
+    JSON.stringify(newNPC) !== JSON.stringify(npcInitialStateRef.current);
+
+  const handleCreateFormClose = (open: boolean) => {
+    if (!open && isNpcFormDirty()) {
+      if (!window.confirm("You have unsaved changes. Discard them?")) return;
+    }
+    setShowCreateForm(open);
+  };
 
   // Load NPCs and locations
   const loadNPCs = async () => {
@@ -379,244 +391,17 @@ export default function NPCManager({ campaignId, isDM }: { campaignId: string; i
                       </p>
                       
                       <div className="flex gap-2">
-                  <Dialog onOpenChange={(open) => {
-                    if (open) {
-                      loadRelationships(npc.id);
-                    }
-                  }}>
-                          <DialogTrigger asChild>
-                            <Button variant="ghost" size="sm" className="flex-1">
-                              View Details
-                            </Button>
-                          </DialogTrigger>
-                          <DialogContent className="max-w-2xl max-h-[80vh] overflow-y-auto">
-                            <DialogHeader>
-                              <DialogTitle className="flex items-center gap-2">
-                                <Avatar>
-                                  <AvatarFallback>
-                                    {npc.name.slice(0, 2)}
-                                  </AvatarFallback>
-                                </Avatar>
-                                {npc.name}
-                              </DialogTitle>
-                            </DialogHeader>
-                            
-                            <Tabs defaultValue="details" className="w-full">
-                              <TabsList className="grid w-full grid-cols-3">
-                                <TabsTrigger value="details">Details</TabsTrigger>
-                                <TabsTrigger value="stats">Stats</TabsTrigger>
-                                <TabsTrigger value="relationships">Relationships</TabsTrigger>
-                              </TabsList>
-
-                              <TabsContent value="details" className="space-y-4">
-                                <div className="grid grid-cols-2 gap-4">
-                                  <div>
-                                    <Label className="text-sm font-medium">Race</Label>
-                                    <p className="text-sm text-muted-foreground">{npc.race}</p>
-                                  </div>
-                                  {npc.occupation && (
-                                    <div>
-                                      <Label className="text-sm font-medium">Occupation</Label>
-                                      <p className="text-sm text-muted-foreground">{npc.occupation}</p>
-                                    </div>
-                                  )}
-                                  {npc.location_name && (
-                                    <div>
-                                      <Label className="text-sm font-medium">Location</Label>
-                                      <p className="text-sm text-muted-foreground">{npc.location_name}</p>
-                                    </div>
-                                  )}
-                                </div>
-
-                                <div>
-                                  <Label className="text-sm font-medium">Description</Label>
-                                  <p className="text-sm text-muted-foreground mt-1">{npc.description}</p>
-                                </div>
-
-                                <div>
-                                  <Label className="text-sm font-medium">Personality</Label>
-                                  <p className="text-sm text-muted-foreground mt-1">{npc.personality}</p>
-                                </div>
-
-                                {npc.appearance && (
-                                  <div>
-                                    <Label className="text-sm font-medium">Appearance</Label>
-                                    <p className="text-sm text-muted-foreground mt-1">{npc.appearance}</p>
-                                  </div>
-                                )}
-
-                                {npc.motivations && (
-                                  <div>
-                                    <Label className="text-sm font-medium">Motivations</Label>
-                                    <p className="text-sm text-muted-foreground mt-1">{npc.motivations}</p>
-                                  </div>
-                                )}
-
-                                {isDM && npc.secrets && (
-                                  <div>
-                                    <Label className="text-sm font-medium text-red-600">Secrets (DM Only)</Label>
-                                    <p className="text-sm text-muted-foreground mt-1 p-2 bg-red-50 rounded">
-                                      {npc.secrets}
-                                    </p>
-                                  </div>
-                                )}
-                              </TabsContent>
-
-                              <TabsContent value="stats" className="space-y-4">
-                                {npc.stats ? (
-                                  <div className="space-y-4">
-                                    <div className="grid grid-cols-3 gap-4">
-                                      <div className="text-center">
-                                        <Label className="text-sm font-medium">Armor Class</Label>
-                                        <p className="text-2xl font-bold">{npc.stats.armor_class}</p>
-                                      </div>
-                                      <div className="text-center">
-                                        <Label className="text-sm font-medium">Hit Points</Label>
-                                        <p className="text-2xl font-bold">
-                                          {npc.stats.hit_points.current}/{npc.stats.hit_points.max}
-                                        </p>
-                                      </div>
-                                      <div className="text-center">
-                                        <Label className="text-sm font-medium">Speed</Label>
-                                        <p className="text-2xl font-bold">{npc.stats.speed} ft.</p>
-                                      </div>
-                                    </div>
-
-                                    <div>
-                                      <Label className="text-sm font-medium">Abilities</Label>
-                                      <div className="grid grid-cols-6 gap-2 mt-2">
-                                        {Object.entries(npc.stats.abilities).map(([ability, score]) => (
-                                          <div key={ability} className="text-center">
-                                            <p className="text-xs font-medium uppercase">{ability.substring(0, 3)}</p>
-                                            <p className="text-sm">{score}</p>
-                                            <p className="text-xs text-muted-foreground">
-                                              ({getAbilityModifier(score)})
-                                            </p>
-                                          </div>
-                                        ))}
-                                      </div>
-                                    </div>
-
-                                    {npc.stats.actions && npc.stats.actions.length > 0 && (
-                                      <div>
-                                        <Label className="text-sm font-medium">Actions</Label>
-                                        <div className="space-y-2 mt-2">
-                                          {npc.stats.actions.map((action, index) => (
-                                            <div key={index} className="border rounded p-2">
-                                              <div className="flex items-center gap-2">
-                                                <h4 className="font-medium text-sm">{action.name}</h4>
-                                                <Badge variant="outline" className="text-xs">
-                                                  {action.type.replace('_', ' ')}
-                                                </Badge>
-                                                {action.recharge && (
-                                                  <Badge variant="secondary" className="text-xs">
-                                                    {action.recharge}
-                                                  </Badge>
-                                                )}
-                                              </div>
-                                              <p className="text-xs text-muted-foreground mt-1">
-                                                {action.description}
-                                              </p>
-                                            </div>
-                                          ))}
-                                        </div>
-                                      </div>
-                                    )}
-                                  </div>
-                                ) : (
-                                  <div className="text-center py-8">
-                                    <p className="text-muted-foreground">No stats defined for this NPC.</p>
-                                  </div>
-                                )}
-                              </TabsContent>
-
-                              <TabsContent value="relationships" className="space-y-4">
-                                <div className="flex justify-between items-center">
-                                  <Label className="text-sm font-medium">Relationships</Label>
-                                  {isDM && (
-                                    <Button
-                                      size="sm"
-                                      variant="outline"
-                                      onClick={() => toast.info('Relationship management is disabled until live endpoints ship')}
-                                    >
-                                      <UserPlus className="w-4 h-4 mr-1" />
-                                      Add Relationship
-                                    </Button>
-                                  )}
-                                </div>
-                                
-                                {relationships.length === 0 ? (
-                                  <div className="text-center py-8">
-                                    <p className="text-muted-foreground">No relationships defined.</p>
-                                  </div>
-                                ) : (
-                                  <div className="space-y-2">
-                                    {relationships.map((relationship) => (
-                                      <div key={relationship.id} className="border rounded p-3">
-                                        <div className="flex items-center justify-between mb-2">
-                                          <div className="flex items-center gap-2">
-                                            <Badge className={`text-xs ${getRelationshipColor(relationship.relationship_type)}`}>
-                                              {relationship.relationship_type}
-                                            </Badge>
-                                            <span className="font-medium text-sm">
-                                              {relationship.target_name}
-                                            </span>
-                                          </div>
-                                          <div className="flex items-center gap-1">
-                                            <span className="text-xs text-muted-foreground">Strength:</span>
-                                            <span className="text-xs">{relationship.strength}/10</span>
-                                          </div>
-                                        </div>
-                                        <p className="text-xs text-muted-foreground">
-                                          {relationship.description}
-                                        </p>
-                                      </div>
-                                    ))}
-                                  </div>
-                                )}
-                              </TabsContent>
-                            </Tabs>
-
-                            {isDM && (
-                              <div className="flex gap-2 pt-4 border-t">
-                                <Button
-                                  size="sm"
-                                  variant="outline"
-                                  className="flex-1"
-                                  onClick={() => toast.info('NPC editing will return once the form is wired to the live API')}
-                                >
-                                  <Edit className="w-4 h-4 mr-1" />
-                                  Edit NPC
-                                </Button>
-                                <AlertDialog>
-                                  <AlertDialogTrigger asChild>
-                                    <Button size="sm" variant="destructive">
-                                      <Trash2 className="w-4 h-4 mr-1" />
-                                      Delete
-                                    </Button>
-                                  </AlertDialogTrigger>
-                                  <AlertDialogContent>
-                                    <AlertDialogHeader>
-                                      <AlertDialogTitle>Delete NPC</AlertDialogTitle>
-                                      <AlertDialogDescription>
-                                        Are you sure you want to delete {npc.name}? This action cannot be undone.
-                                      </AlertDialogDescription>
-                                    </AlertDialogHeader>
-                                    <AlertDialogFooter>
-                                      <AlertDialogCancel>Cancel</AlertDialogCancel>
-                                      <AlertDialogAction
-                                        onClick={() => deleteNPC(npc.id)}
-                                        className="bg-red-600 hover:bg-red-700"
-                                      >
-                                        Delete
-                                      </AlertDialogAction>
-                                    </AlertDialogFooter>
-                                  </AlertDialogContent>
-                                </AlertDialog>
-                              </div>
-                            )}
-                          </DialogContent>
-                        </Dialog>
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          className="flex-1"
+                          onClick={() => {
+                            setDetailNPC(npc);
+                            loadRelationships(npc.id);
+                          }}
+                        >
+                          View Details
+                        </Button>
                       </div>
                     </CardContent>
                   </Card>
@@ -627,9 +412,209 @@ export default function NPCManager({ campaignId, isDM }: { campaignId: string; i
         </CardContent>
       </Card>
 
+      {/* NPC Detail Dialog */}
+      <Dialog open={Boolean(detailNPC)} onOpenChange={(open) => { if (!open) setDetailNPC(null); }}>
+        <DialogContent className="max-w-2xl max-h-[85vh] overflow-y-auto">
+          {detailNPC && (
+            <>
+              <DialogHeader>
+                <DialogTitle className="flex items-center gap-2">
+                  <Avatar>
+                    <AvatarFallback>{detailNPC.name.slice(0, 2)}</AvatarFallback>
+                  </Avatar>
+                  {detailNPC.name}
+                </DialogTitle>
+              </DialogHeader>
+
+              <Tabs defaultValue="details" className="w-full">
+                <TabsList className="grid w-full grid-cols-3">
+                  <TabsTrigger value="details">Details</TabsTrigger>
+                  <TabsTrigger value="stats">Stats</TabsTrigger>
+                  <TabsTrigger value="relationships">Relationships</TabsTrigger>
+                </TabsList>
+
+                <TabsContent value="details" className="space-y-4">
+                  <div className="grid grid-cols-2 gap-4">
+                    <div>
+                      <Label className="text-sm font-medium">Race</Label>
+                      <p className="text-sm text-muted-foreground">{detailNPC.race}</p>
+                    </div>
+                    {detailNPC.occupation && (
+                      <div>
+                        <Label className="text-sm font-medium">Occupation</Label>
+                        <p className="text-sm text-muted-foreground">{detailNPC.occupation}</p>
+                      </div>
+                    )}
+                    {detailNPC.location_name && (
+                      <div>
+                        <Label className="text-sm font-medium">Location</Label>
+                        <p className="text-sm text-muted-foreground">{detailNPC.location_name}</p>
+                      </div>
+                    )}
+                  </div>
+                  <div>
+                    <Label className="text-sm font-medium">Description</Label>
+                    <p className="text-sm text-muted-foreground mt-1">{detailNPC.description}</p>
+                  </div>
+                  <div>
+                    <Label className="text-sm font-medium">Personality</Label>
+                    <p className="text-sm text-muted-foreground mt-1">{detailNPC.personality}</p>
+                  </div>
+                  {detailNPC.appearance && (
+                    <div>
+                      <Label className="text-sm font-medium">Appearance</Label>
+                      <p className="text-sm text-muted-foreground mt-1">{detailNPC.appearance}</p>
+                    </div>
+                  )}
+                  {detailNPC.motivations && (
+                    <div>
+                      <Label className="text-sm font-medium">Motivations</Label>
+                      <p className="text-sm text-muted-foreground mt-1">{detailNPC.motivations}</p>
+                    </div>
+                  )}
+                  {isDM && detailNPC.secrets && (
+                    <div>
+                      <Label className="text-sm font-medium text-red-600">Secrets (DM Only)</Label>
+                      <p className="text-sm text-muted-foreground mt-1 p-2 bg-red-50 rounded">{detailNPC.secrets}</p>
+                    </div>
+                  )}
+                </TabsContent>
+
+                <TabsContent value="stats" className="space-y-4">
+                  {detailNPC.stats ? (
+                    <div className="space-y-4">
+                      <div className="grid grid-cols-3 gap-4">
+                        <div className="text-center">
+                          <Label className="text-sm font-medium">Armor Class</Label>
+                          <p className="text-2xl font-bold">{detailNPC.stats.armor_class}</p>
+                        </div>
+                        <div className="text-center">
+                          <Label className="text-sm font-medium">Hit Points</Label>
+                          <p className="text-2xl font-bold">{detailNPC.stats.hit_points.current}/{detailNPC.stats.hit_points.max}</p>
+                        </div>
+                        <div className="text-center">
+                          <Label className="text-sm font-medium">Speed</Label>
+                          <p className="text-2xl font-bold">{detailNPC.stats.speed} ft.</p>
+                        </div>
+                      </div>
+                      <div>
+                        <Label className="text-sm font-medium">Abilities</Label>
+                        <div className="grid grid-cols-6 gap-2 mt-2">
+                          {Object.entries(detailNPC.stats.abilities).map(([ability, score]) => (
+                            <div key={ability} className="text-center">
+                              <p className="text-xs font-medium uppercase">{ability.substring(0, 3)}</p>
+                              <p className="text-sm">{score}</p>
+                              <p className="text-xs text-muted-foreground">({getAbilityModifier(score)})</p>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                      {detailNPC.stats.actions && detailNPC.stats.actions.length > 0 && (
+                        <div>
+                          <Label className="text-sm font-medium">Actions</Label>
+                          <div className="space-y-2 mt-2">
+                            {detailNPC.stats.actions.map((action, index) => (
+                              <div key={index} className="border rounded p-2">
+                                <div className="flex items-center gap-2">
+                                  <h4 className="font-medium text-sm">{action.name}</h4>
+                                  <Badge variant="outline" className="text-xs">{action.type.replace('_', ' ')}</Badge>
+                                  {action.recharge && <Badge variant="secondary" className="text-xs">{action.recharge}</Badge>}
+                                </div>
+                                <p className="text-xs text-muted-foreground mt-1">{action.description}</p>
+                              </div>
+                            ))}
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  ) : (
+                    <div className="text-center py-8">
+                      <p className="text-muted-foreground">No stats defined for this NPC.</p>
+                    </div>
+                  )}
+                </TabsContent>
+
+                <TabsContent value="relationships" className="space-y-4">
+                  <div className="flex justify-between items-center">
+                    <Label className="text-sm font-medium">Relationships</Label>
+                  </div>
+                  {relationships.length === 0 ? (
+                    <div className="text-center py-8">
+                      <p className="text-muted-foreground">No relationships defined.</p>
+                    </div>
+                  ) : (
+                    <div className="space-y-2">
+                      {relationships.map((relationship) => (
+                        <div key={relationship.id} className="border rounded p-3">
+                          <div className="flex items-center justify-between mb-2">
+                            <div className="flex items-center gap-2">
+                              <Badge className={`text-xs ${getRelationshipColor(relationship.relationship_type)}`}>
+                                {relationship.relationship_type}
+                              </Badge>
+                              <span className="font-medium text-sm">{relationship.target_name}</span>
+                            </div>
+                            <div className="flex items-center gap-1">
+                              <span className="text-xs text-muted-foreground">Strength:</span>
+                              <span className="text-xs">{relationship.strength}/10</span>
+                            </div>
+                          </div>
+                          <p className="text-xs text-muted-foreground">{relationship.description}</p>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </TabsContent>
+              </Tabs>
+
+              {isDM && (
+                <div className="flex gap-2 pt-4 border-t">
+                  <Button
+                    size="sm"
+                    variant="destructive"
+                    onClick={() => {
+                      setDeleteNPCTarget(detailNPC);
+                    }}
+                  >
+                    <Trash2 className="w-4 h-4 mr-1" />
+                    Delete
+                  </Button>
+                </div>
+              )}
+            </>
+          )}
+        </DialogContent>
+      </Dialog>
+
+      {/* Delete NPC Confirmation */}
+      <AlertDialog open={Boolean(deleteNPCTarget)} onOpenChange={(open) => { if (!open) setDeleteNPCTarget(null); }}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Delete NPC</AlertDialogTitle>
+            <AlertDialogDescription>
+              Are you sure you want to delete {deleteNPCTarget?.name}? This action cannot be undone.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Cancel</AlertDialogCancel>
+            <AlertDialogAction
+              onClick={() => {
+                if (deleteNPCTarget) {
+                  deleteNPC(deleteNPCTarget.id);
+                  setDeleteNPCTarget(null);
+                  setDetailNPC(null);
+                }
+              }}
+              className="bg-red-600 hover:bg-red-700"
+            >
+              Delete
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
       {/* Create NPC Dialog */}
       {showCreateForm && (
-        <Dialog open={showCreateForm} onOpenChange={setShowCreateForm}>
+        <Dialog open={showCreateForm} onOpenChange={handleCreateFormClose}>
           <DialogContent className="max-w-2xl max-h-[80vh] overflow-y-auto">
             <DialogHeader>
               <DialogTitle>Create New NPC</DialogTitle>
@@ -748,7 +733,7 @@ export default function NPCManager({ campaignId, isDM }: { campaignId: string; i
                 >
                   Create NPC
                 </Button>
-                <Button variant="outline" onClick={() => setShowCreateForm(false)}>
+                <Button variant="outline" onClick={() => handleCreateFormClose(false)}>
                   Cancel
                 </Button>
               </div>

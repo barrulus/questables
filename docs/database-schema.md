@@ -331,8 +331,7 @@ All geometry columns use SRID 0 (unitless pixel space from Azgaar's Fantasy Map 
 
 | Column | Type | Notes |
 |--------|------|-------|
-| key | TEXT | PK (e.g., `srd-2024_elf`) |
-| source_key | TEXT | e.g., `srd-2024` |
+| key | TEXT | PK (e.g., `elf`) |
 | name | TEXT | Display name |
 | desc_text | TEXT | Description (markdown) |
 | speed | INTEGER | Base walking speed |
@@ -344,10 +343,9 @@ All geometry columns use SRID 0 (unitless pixel space from Azgaar's Fantasy Map 
 | Column | Type | Notes |
 |--------|------|-------|
 | key | TEXT | PK |
-| source_key | TEXT | |
 | name | TEXT | |
 | desc_text | TEXT | |
-| hit_die | TEXT | e.g., `d8` |
+| hit_dice | TEXT | e.g., `d8` |
 | caster_type | TEXT | `FULL`, `HALF`, `THIRD`, `PACT`, or null |
 | primary_abilities | TEXT[] | |
 | features | JSONB | `[{ name, desc, level }]` |
@@ -357,7 +355,6 @@ All geometry columns use SRID 0 (unitless pixel space from Azgaar's Fantasy Map 
 | Column | Type | Notes |
 |--------|------|-------|
 | key | TEXT | PK |
-| source_key | TEXT | |
 | name | TEXT | |
 | level | INTEGER | 0 = cantrip |
 | school | TEXT | e.g., `Evocation` |
@@ -375,16 +372,15 @@ All geometry columns use SRID 0 (unitless pixel space from Azgaar's Fantasy Map 
 | spell_key | TEXT | FK → srd_spells |
 | class_key | TEXT | FK → srd_classes |
 
-Class keys use the prefixed format matching `srd_classes.key` (e.g., `srd-2024_wizard`).
+Class keys use slugified names matching `srd_classes.key` (e.g., `wizard`).
 
 #### srd_items
 
 | Column | Type | Notes |
 |--------|------|-------|
 | key | TEXT | PK |
-| source_key | TEXT | |
 | name | TEXT | |
-| category | TEXT | `weapon`, `armor`, `adventuring-gear`, etc. |
+| category_key | TEXT | FK → srd_item_categories |
 | rarity | TEXT | `common`, `uncommon`, etc. |
 | cost | TEXT | GP value as string |
 | weight | DOUBLE PRECISION | Pounds |
@@ -393,7 +389,7 @@ Class keys use the prefixed format matching `srd_classes.key` (e.g., `srd-2024_w
 
 #### srd_backgrounds, srd_feats, srd_conditions
 
-Similar structure with `key`, `source_key`, `name`, `desc_text`, and type-specific JSONB fields.
+Similar structure with `key`, `name`, `desc_text`, and type-specific JSONB fields.
 
 ### LLM
 
@@ -436,7 +432,7 @@ CREATE INDEX idx_campaign_players_location ON campaign_players USING GIST (curre
 CREATE INDEX idx_npcs_position ON npcs USING GIST (world_position);
 ```
 
-Additional B-tree indexes on foreign keys and lookup columns (e.g., `world_map_id`, `campaign_id`, `source_key`).
+Additional B-tree indexes on foreign keys and lookup columns (e.g., `world_map_id`, `campaign_id`).
 
 ## Column Naming Convention
 

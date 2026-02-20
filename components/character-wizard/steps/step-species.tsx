@@ -50,8 +50,17 @@ export function StepSpecies() {
   const species = speciesList ?? [];
 
   const getSummary = (s: SrdSpecies) => {
-    if (!s.traits || s.traits.length === 0) return '';
-    return s.traits.slice(0, 3).map(t => t.name).join(', ');
+    // Prefer desc_text (a prose blurb) when available
+    if (s.desc_text) {
+      // Take just the first sentence for the compact card
+      const first = s.desc_text.split(/\.(?:\s|$)/)[0];
+      return first ? first.trim() + '.' : s.desc_text.trim();
+    }
+    // Fallback: list prominent trait names
+    if (s.traits && s.traits.length > 0) {
+      return s.traits.slice(0, 3).map(t => t.name).join(', ');
+    }
+    return '';
   };
 
   return (
