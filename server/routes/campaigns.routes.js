@@ -2570,6 +2570,72 @@ router.delete('/api/campaigns/:id', async (req, res) => {
 });
 
 
+// ─── Campaign LLM Settings ────────────────────────────────────────────────────
+
+import {
+  getCampaignLLMSettings as fetchLLMSettings,
+  upsertCampaignLLMSettings as saveLLMSettings,
+  getPromptVersionHistory as fetchPromptHistory,
+} from '../services/campaigns/llm-settings.js';
+
+router.get(
+  '/api/campaigns/:campaignId/llm-settings',
+  requireAuth,
+  requireCampaignOwnership,
+  async (req, res) => {
+    try {
+      const settings = await fetchLLMSettings(req.params.campaignId);
+      logInfo('Campaign LLM settings fetched', { campaignId: req.params.campaignId, userId: req.user.id });
+      res.json(settings);
+    } catch (error) {
+      logError('Failed to fetch campaign LLM settings', error, { campaignId: req.params.campaignId });
+      res.status(error.statusCode || 500).json({
+        error: error.code || 'llm_settings_fetch_failed',
+        message: error.message || 'Failed to fetch LLM settings',
+      });
+    }
+  },
+);
+
+router.put(
+  '/api/campaigns/:campaignId/llm-settings',
+  requireAuth,
+  requireCampaignOwnership,
+  async (req, res) => {
+    try {
+      const updated = await saveLLMSettings(req.params.campaignId, req.body ?? {}, req.user.id);
+      logInfo('Campaign LLM settings updated', { campaignId: req.params.campaignId, userId: req.user.id });
+      res.json(updated);
+    } catch (error) {
+      logError('Failed to update campaign LLM settings', error, { campaignId: req.params.campaignId });
+      res.status(error.statusCode || 500).json({
+        error: error.code || 'llm_settings_update_failed',
+        message: error.message || 'Failed to update LLM settings',
+      });
+    }
+  },
+);
+
+router.get(
+  '/api/campaigns/:campaignId/llm-settings/history',
+  requireAuth,
+  requireCampaignOwnership,
+  async (req, res) => {
+    try {
+      const limit = Math.min(parseInt(req.query.limit, 10) || 50, 100);
+      const offset = Math.max(parseInt(req.query.offset, 10) || 0, 0);
+      const history = await fetchPromptHistory(req.params.campaignId, { limit, offset });
+      res.json({ history });
+    } catch (error) {
+      logError('Failed to fetch prompt version history', error, { campaignId: req.params.campaignId });
+      res.status(error.statusCode || 500).json({
+        error: error.code || 'prompt_history_fetch_failed',
+        message: error.message || 'Failed to fetch prompt version history',
+      });
+    }
+  },
+);
+
 export const registerCampaignRoutes = (app) => {
   app.use(router);
 };

@@ -20,8 +20,29 @@ import {
   Sparkles,
   Trash2,
   Zap,
+  Loader2,
 } from "lucide-react";
 import { apiFetch, readErrorMessage, readJsonBody } from "../utils/api-client";
+import {
+  listAdminLLMProviders,
+  createAdminLLMProvider,
+  updateAdminLLMProvider,
+  deleteAdminLLMProvider,
+  setAdminLLMDefaultProvider,
+  listAdminLLMProviderModels,
+  reloadAdminLLMServices,
+  type LLMProviderWithHealth,
+} from "../utils/api-client";
+import { Input } from "./ui/input";
+import { Label } from "./ui/label";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "./ui/select";
+import {
+  Dialog as ProviderDialog,
+  DialogContent as ProviderDialogContent,
+  DialogHeader as ProviderDialogHeader,
+  DialogTitle as ProviderDialogTitle,
+  DialogDescription as ProviderDialogDescription,
+} from "./ui/dialog";
 import { AdminUserManagement } from "./admin-user-management";
 import { AdminModeration } from "./admin-moderation";
 
@@ -146,6 +167,16 @@ export function AdminDashboard({ user, onLogout }: AdminDashboardProps) {
     status: "idle",
   });
 
+  // LLM Configuration state
+  const [llmProviders, setLlmProviders] = useState<LLMProviderWithHealth[]>([]);
+  const [llmProvidersLoading, setLlmProvidersLoading] = useState(false);
+  const [providerDialogOpen, setProviderDialogOpen] = useState(false);
+  const [editingProvider, setEditingProvider] = useState<LLMProviderWithHealth | null>(null);
+  const [providerForm, setProviderForm] = useState({ name: "", adapter: "ollama", host: "", model: "", apiKey: "", timeoutMs: "", temperature: "", topP: "" });
+  const [providerSaving, setProviderSaving] = useState(false);
+  const [availableModels, setAvailableModels] = useState<string[]>([]);
+  const [modelsLoading, setModelsLoading] = useState(false);
+
   const loadMetrics = useCallback(async () => {
     setMetricsState((prev) => ({ status: "loading", data: prev.data }));
 
@@ -269,6 +300,109 @@ export function AdminDashboard({ user, onLogout }: AdminDashboardProps) {
     [llmCacheMutation.status, loadLlmCache, loadLlmMetrics],
   );
 
+  const loadLlmProviders = useCallback(async () => {
+    setLlmProvidersLoading(true);
+    try {
+      const result = await listAdminLLMProviders();
+      setLlmProviders(result.providers);
+    } catch (error) {
+      console.error("Failed to load LLM providers", error);
+    } finally {
+      setLlmProvidersLoading(false);
+    }
+  }, []);
+
+  const openProviderDialog = useCallback((provider?: LLMProviderWithHealth) => {
+    if (provider) {
+      setEditingProvider(provider);
+      setProviderForm({
+        name: provider.name,
+        adapter: provider.adapter,
+        host: provider.host ?? "",
+        model: provider.model ?? "",
+        apiKey: "",
+        timeoutMs: provider.timeoutMs ? String(provider.timeoutMs) : "",
+        temperature: "",
+        topP: "",
+      });
+    } else {
+      setEditingProvider(null);
+      setProviderForm({ name: "", adapter: "ollama", host: "", model: "", apiKey: "", timeoutMs: "", temperature: "", topP: "" });
+    }
+    setAvailableModels([]);
+    setProviderDialogOpen(true);
+  }, []);
+
+  const handleSaveProvider = useCallback(async () => {
+    setProviderSaving(true);
+    try {
+      if (editingProvider) {
+        const updates: Record<string, unknown> = {};
+        if (providerForm.adapter) updates.adapter = providerForm.adapter;
+        if (providerForm.host) updates.host = providerForm.host;
+        if (providerForm.model) updates.model = providerForm.model;
+        if (providerForm.apiKey) updates.apiKey = providerForm.apiKey;
+        if (providerForm.timeoutMs) updates.timeoutMs = Number(providerForm.timeoutMs);
+        await updateAdminLLMProvider(editingProvider.name, updates);
+      } else {
+        await createAdminLLMProvider({
+          name: providerForm.name,
+          adapter: providerForm.adapter,
+          host: providerForm.host || undefined,
+          model: providerForm.model || undefined,
+          apiKey: providerForm.apiKey || undefined,
+          timeoutMs: providerForm.timeoutMs ? Number(providerForm.timeoutMs) : undefined,
+        });
+      }
+      setProviderDialogOpen(false);
+      await loadLlmProviders();
+    } catch (error) {
+      console.error("Failed to save provider", error);
+    } finally {
+      setProviderSaving(false);
+    }
+  }, [editingProvider, providerForm, loadLlmProviders]);
+
+  const handleDeleteProvider = useCallback(async (name: string) => {
+    if (!window.confirm(`Delete provider "${name}"? This cannot be undone.`)) return;
+    try {
+      await deleteAdminLLMProvider(name);
+      await loadLlmProviders();
+    } catch (error) {
+      console.error("Failed to delete provider", error);
+    }
+  }, [loadLlmProviders]);
+
+  const handleSetDefault = useCallback(async (name: string) => {
+    try {
+      await setAdminLLMDefaultProvider(name);
+      await loadLlmProviders();
+    } catch (error) {
+      console.error("Failed to set default provider", error);
+    }
+  }, [loadLlmProviders]);
+
+  const handleLoadModels = useCallback(async (name: string) => {
+    setModelsLoading(true);
+    try {
+      const models = await listAdminLLMProviderModels(name);
+      setAvailableModels(models);
+    } catch (error) {
+      console.error("Failed to load models", error);
+    } finally {
+      setModelsLoading(false);
+    }
+  }, []);
+
+  const handleReloadLLM = useCallback(async () => {
+    try {
+      await reloadAdminLLMServices();
+      await loadLlmProviders();
+    } catch (error) {
+      console.error("Failed to reload LLM services", error);
+    }
+  }, [loadLlmProviders]);
+
   useEffect(() => {
     loadMetrics();
     loadHealth();
@@ -391,12 +525,13 @@ export function AdminDashboard({ user, onLogout }: AdminDashboardProps) {
       </div>
 
       <div className="p-6">
-        <Tabs value={activeTab} onValueChange={setActiveTab} className="space-y-6">
+        <Tabs value={activeTab} onValueChange={(val) => { setActiveTab(val); if (val === "llm-config" && llmProviders.length === 0 && !llmProvidersLoading) loadLlmProviders(); }} className="space-y-6">
           <TabsList>
             <TabsTrigger value="overview">Overview</TabsTrigger>
             <TabsTrigger value="users">Users</TabsTrigger>
             <TabsTrigger value="moderation">Moderation</TabsTrigger>
             <TabsTrigger value="llm">LLM Workloads</TabsTrigger>
+            <TabsTrigger value="llm-config">LLM Configuration</TabsTrigger>
             <TabsTrigger value="system">System Health</TabsTrigger>
             <TabsTrigger value="feature-status">Feature Status</TabsTrigger>
           </TabsList>
@@ -820,6 +955,142 @@ export function AdminDashboard({ user, onLogout }: AdminDashboardProps) {
               </CardContent>
             </Card>
           </TabsContent>
+
+          {/* ── LLM Configuration Tab ── */}
+          <TabsContent value="llm-config" className="space-y-6">
+            <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-4">
+              <div>
+                <h2 className="text-xl font-semibold">LLM Provider Configuration</h2>
+                <p className="text-sm text-muted-foreground">Manage LLM providers, models, and defaults.</p>
+              </div>
+              <div className="flex gap-2">
+                <Button onClick={() => loadLlmProviders()} disabled={llmProvidersLoading}>
+                  {llmProvidersLoading ? <RefreshCw className="w-4 h-4 animate-spin" /> : <RefreshCw className="w-4 h-4" />}
+                  <span className="ml-2">Refresh</span>
+                </Button>
+                <Button onClick={handleReloadLLM} variant="outline">
+                  <Zap className="w-4 h-4" />
+                  <span className="ml-2">Reload Services</span>
+                </Button>
+                <Button onClick={() => openProviderDialog()}>
+                  <span className="ml-1">Add Provider</span>
+                </Button>
+              </div>
+            </div>
+
+            {llmProvidersLoading && llmProviders.length === 0 ? (
+              <Skeleton className="h-32 w-full" />
+            ) : llmProviders.length === 0 ? (
+              <p className="text-sm text-muted-foreground">No providers configured. Add one to get started.</p>
+            ) : (
+              <Card>
+                <CardHeader>
+                  <CardTitle>Providers</CardTitle>
+                  <CardDescription>Registered LLM providers and their health status.</CardDescription>
+                </CardHeader>
+                <CardContent>
+                  <div className="space-y-3">
+                    {llmProviders.map((provider) => (
+                      <div key={provider.name} className="flex items-center justify-between gap-3 rounded-md border p-3">
+                        <div className="flex-1 min-w-0">
+                          <div className="flex items-center gap-2">
+                            <p className="text-sm font-medium">{provider.name}</p>
+                            {provider.default && <Badge className="text-xs">Default</Badge>}
+                            <Badge variant={provider.health.healthy ? "outline" : "destructive"} className="text-xs">
+                              {provider.health.healthy ? "Healthy" : "Unhealthy"}
+                            </Badge>
+                          </div>
+                          <p className="text-xs text-muted-foreground mt-1">
+                            {provider.adapter} &middot; {provider.host ?? "—"} &middot; {provider.model ?? "—"}
+                          </p>
+                        </div>
+                        <div className="flex gap-1">
+                          {!provider.default && (
+                            <Button variant="ghost" size="sm" onClick={() => handleSetDefault(provider.name)}>
+                              Set Default
+                            </Button>
+                          )}
+                          <Button variant="ghost" size="sm" onClick={() => openProviderDialog(provider)}>Edit</Button>
+                          <Button variant="ghost" size="sm" className="text-destructive" onClick={() => handleDeleteProvider(provider.name)}>
+                            <Trash2 className="w-3 h-3" />
+                          </Button>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </CardContent>
+              </Card>
+            )}
+          </TabsContent>
+
+          <ProviderDialog open={providerDialogOpen} onOpenChange={setProviderDialogOpen}>
+            <ProviderDialogContent className="sm:max-w-lg">
+              <ProviderDialogHeader>
+                <ProviderDialogTitle>{editingProvider ? "Edit Provider" : "Add Provider"}</ProviderDialogTitle>
+                <ProviderDialogDescription>
+                  {editingProvider ? `Editing ${editingProvider.name}` : "Configure a new LLM provider."}
+                </ProviderDialogDescription>
+              </ProviderDialogHeader>
+              <div className="space-y-3">
+                {!editingProvider && (
+                  <div>
+                    <Label htmlFor="prov-name">Name</Label>
+                    <Input id="prov-name" value={providerForm.name} onChange={(e) => setProviderForm((p) => ({ ...p, name: e.target.value }))} placeholder="my-provider" />
+                  </div>
+                )}
+                <div>
+                  <Label htmlFor="prov-adapter">Adapter</Label>
+                  <Select value={providerForm.adapter} onValueChange={(v) => setProviderForm((p) => ({ ...p, adapter: v }))}>
+                    <SelectTrigger id="prov-adapter"><SelectValue /></SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="ollama">Ollama</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+                <div>
+                  <Label htmlFor="prov-host">Host</Label>
+                  <Input id="prov-host" value={providerForm.host} onChange={(e) => setProviderForm((p) => ({ ...p, host: e.target.value }))} placeholder="http://192.168.1.34:11434" />
+                </div>
+                <div>
+                  <div className="flex items-center justify-between">
+                    <Label htmlFor="prov-model">Model</Label>
+                    {editingProvider && (
+                      <Button variant="ghost" size="sm" onClick={() => handleLoadModels(editingProvider.name)} disabled={modelsLoading}>
+                        {modelsLoading ? "Loading..." : "Fetch Models"}
+                      </Button>
+                    )}
+                  </div>
+                  {availableModels.length > 0 ? (
+                    <Select value={providerForm.model} onValueChange={(v) => setProviderForm((p) => ({ ...p, model: v }))}>
+                      <SelectTrigger><SelectValue placeholder="Select model" /></SelectTrigger>
+                      <SelectContent>
+                        {availableModels.map((m) => (
+                          <SelectItem key={m} value={m}>{m}</SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  ) : (
+                    <Input id="prov-model" value={providerForm.model} onChange={(e) => setProviderForm((p) => ({ ...p, model: e.target.value }))} placeholder="qwen3:8b" />
+                  )}
+                </div>
+                <div>
+                  <Label htmlFor="prov-apikey">API Key (optional)</Label>
+                  <Input id="prov-apikey" type="password" value={providerForm.apiKey} onChange={(e) => setProviderForm((p) => ({ ...p, apiKey: e.target.value }))} placeholder="Leave blank to keep current" />
+                </div>
+                <div>
+                  <Label htmlFor="prov-timeout">Timeout (ms)</Label>
+                  <Input id="prov-timeout" type="number" value={providerForm.timeoutMs} onChange={(e) => setProviderForm((p) => ({ ...p, timeoutMs: e.target.value }))} placeholder="60000" />
+                </div>
+                <div className="flex justify-end gap-2 pt-2">
+                  <Button variant="outline" onClick={() => setProviderDialogOpen(false)}>Cancel</Button>
+                  <Button onClick={handleSaveProvider} disabled={providerSaving}>
+                    {providerSaving && <Loader2 className="w-4 h-4 mr-2 animate-spin" />}
+                    {editingProvider ? "Update" : "Create"}
+                  </Button>
+                </div>
+              </div>
+            </ProviderDialogContent>
+          </ProviderDialog>
 
           <TabsContent value="system" className="space-y-6">
             <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-4">

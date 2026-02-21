@@ -173,6 +173,7 @@ const mapNPCRow = (row) => {
     secrets: nullIfEmpty(row.secrets),
     stats: parseJson(row.stats, {}),
     currentLocationId: row.current_location_id,
+    voiceConfig: parseJson(row.voice_config, {}),
     relationships: Array.isArray(row.relationships)
       ? row.relationships.map(mapNPCRelationshipRow)
       : [],
@@ -249,7 +250,7 @@ export class LLMContextManager {
     this.pool = pool;
   }
 
-  async buildGameContext({ campaignId, sessionId } = {}) {
+  async buildGameContext({ campaignId, sessionId, llmSettings } = {}) {
     if (!campaignId) {
       throw new LLMServiceError('Campaign ID is required to build LLM context', {
         type: 'context_builder_missing_campaign',
@@ -268,10 +269,11 @@ export class LLMContextManager {
 
       const session = await this.#loadSession(client, { campaignId, sessionId });
       const party = await this.#loadParty(client, campaignId, session);
-      const locations = await this.#loadLocations(client, campaignId);
+      const locations = await this.#loadLocations(client, campaignId, llmSettings);
       const npcs = await this.#loadNPCs(client, campaignId);
       const encounters = await this.#loadEncounters(client, { campaignId, sessionId: session?.id });
-      const recentMessages = await this.#loadRecentMessages(client, campaignId, session?.id);
+      const chatDepth = llmSettings?.chatHistoryDepth || 20;
+      const recentMessages = await this.#loadRecentMessages(client, campaignId, session?.id, chatDepth);
 
       return {
         campaign,
@@ -438,12 +440,17 @@ export class LLMContextManager {
     }));
   }
 
-  async #loadLocations(client, campaignId) {
+  async #loadLocations(client, campaignId, llmSettings) {
+    const includeUndiscovered = llmSettings?.includeUndiscoveredLocations ?? true;
+    const whereClause = includeUndiscovered
+      ? 'WHERE l.campaign_id = $1'
+      : 'WHERE l.campaign_id = $1 AND l.is_discovered = true';
+
     const result = await client.query(
       `SELECT l.*, parent.name AS parent_name
          FROM public.locations l
          LEFT JOIN public.locations parent ON parent.id = l.parent_location_id
-        WHERE l.campaign_id = $1
+        ${whereClause}
         ORDER BY l.is_discovered DESC, l.name ASC` ,
       [campaignId]
     );
@@ -538,7 +545,7 @@ export class LLMContextManager {
     );
   }
 
-  async #loadRecentMessages(client, campaignId, sessionId) {
+  async #loadRecentMessages(client, campaignId, sessionId, limit = 20) {
     const params = [campaignId];
     const whereClauses = ['m.campaign_id = $1'];
 
@@ -547,8 +554,10 @@ export class LLMContextManager {
       whereClauses.push('(m.session_id = $2 OR m.session_id IS NULL)');
     }
 
+    params.push(limit);
+
     const messagesResult = await client.query(
-      `SELECT m.*, 
+      `SELECT m.*,
               u.username,
               c.name AS character_name
          FROM public.chat_messages m
@@ -556,7 +565,7 @@ export class LLMContextManager {
          LEFT JOIN public.characters c ON c.id = m.character_id
         WHERE ${whereClauses.join(' AND ')}
         ORDER BY m.created_at DESC
-        LIMIT 20` ,
+        LIMIT $${params.length}` ,
       params
     );
 

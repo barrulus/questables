@@ -55,10 +55,17 @@ const summarizeParty = (party) => summarizeArray(party, (member) => {
 const summarizeNPCs = (npcs) => summarizeArray(npcs, (npc) => {
   const relationshipSummary = Array.isArray(npc.relationships) && npc.relationships.length > 0
     ? `Relationships: ${npc.relationships
-        .map((rel) => `${rel.relationshipType}(${rel.targetName || rel.targetId})`) 
+        .map((rel) => `${rel.relationshipType}(${rel.targetName || rel.targetId})`)
         .join(', ')}`
     : 'Relationships: none logged';
-  return `- ${npc.name} (${npc.race}${npc.occupation ? `, ${npc.occupation}` : ''}) — ${sanitize(npc.personality)}. ${relationshipSummary}`;
+  let voiceSuffix = '';
+  if (npc.voiceConfig) {
+    const parts = [];
+    if (npc.voiceConfig.speechStyle) parts.push(`speaks ${npc.voiceConfig.speechStyle}`);
+    if (npc.voiceConfig.tone) parts.push(`tone: ${npc.voiceConfig.tone}`);
+    if (parts.length > 0) voiceSuffix = ` [Voice: ${parts.join('; ')}]`;
+  }
+  return `- ${npc.name} (${npc.race}${npc.occupation ? `, ${npc.occupation}` : ''}) — ${sanitize(npc.personality)}. ${relationshipSummary}${voiceSuffix}`;
 });
 
 const summarizeLocations = (locations) => summarizeArray(locations, (location) => {
@@ -73,13 +80,13 @@ const summarizeEncounters = (encounters) => summarizeArray(encounters, (encounte
   return `- ${encounter.name} [${encounter.status}] — ${encounter.type}/${encounter.difficulty}. Participants: ${participants}`;
 });
 
-const summarizeChat = (messages) => {
+const summarizeChat = (messages, chatHistoryDepth = 5) => {
   if (!Array.isArray(messages) || messages.length === 0) {
     return 'No recent chat history.';
   }
   const latest = [...messages]
     .sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt))
-    .slice(0, 5)
+    .slice(0, chatHistoryDepth)
     .map((msg) => {
       const sender = msg.sender?.characterName || msg.sender?.username || msg.sender?.name || 'Unknown';
       return `- [${msg.messageType}] ${sender}: ${sanitize(msg.content).slice(0, 160)}`;
@@ -87,7 +94,7 @@ const summarizeChat = (messages) => {
   return latest.join('\n');
 };
 
-const buildContextSummary = (context) => {
+const buildContextSummary = (context, campaignLLMSettings) => {
   const summarySections = [];
 
   summarySections.push(
@@ -108,7 +115,7 @@ const buildContextSummary = (context) => {
   summarySections.push(`NPCs:\n${summarizeNPCs(context.npcs)}`);
   summarySections.push(`Locations:\n${summarizeLocations(context.locations)}`);
   summarySections.push(`Encounters:\n${summarizeEncounters(context.encounters)}`);
-  summarySections.push(`Recent chat messages:\n${summarizeChat(context.chat?.recentMessages)}`);
+  summarySections.push(`Recent chat messages:\n${summarizeChat(context.chat?.recentMessages, campaignLLMSettings?.chat_history_depth || 5)}`);
 
   return summarySections.join('\n\n');
 };
@@ -131,20 +138,26 @@ const assertContext = (context) => {
   }
 };
 
-const buildSystemPrompt = ({ type, providerConfig }) => {
+const buildSystemPrompt = ({ type, providerConfig, campaignLLMSettings }) => {
   const label = typeLabel[type] ?? 'Narrative Response';
   const providerLine = providerConfig?.model
     ? `Responses must be optimized for provider ${providerConfig.name || 'unknown'} using model ${providerConfig.model}.`
     : `Responses will be generated through provider ${providerConfig?.name || 'unknown provider'}.`;
 
-  return [
+  const lines = [
     'You are the Questables Narrative Engine.',
     `You are producing ${label.toLowerCase()} for a live tabletop campaign.`,
     providerLine,
     'Follow the context exactly—do not invent characters, locations, or events that are not supplied.',
     'Keep responses concise but evocative and respect the Zero-Dummy policy (no placeholders, no promises about unavailable services).',
     'Do not emit analysis, scratch work, or `<think>` sections—return only the finalized response matching the instructions.',
-  ].join('\n');
+  ];
+
+  if (campaignLLMSettings?.system_prompt_additions) {
+    lines.push('', campaignLLMSettings.system_prompt_additions);
+  }
+
+  return lines.join('\n');
 };
 
 export function buildStructuredPrompt({ type, context, providerConfig, request = {} }) {
@@ -157,8 +170,9 @@ export function buildStructuredPrompt({ type, context, providerConfig, request =
 
   assertContext(context);
 
+  const campaignLLMSettings = request.campaignLLMSettings || null;
   const instruction = typeInstruction[type];
-  const contextSummary = buildContextSummary(context);
+  const contextSummary = buildContextSummary(context, campaignLLMSettings);
   const focus = request.focus ? sanitize(request.focus) : null;
 
   const promptSections = [];
@@ -182,11 +196,34 @@ export function buildStructuredPrompt({ type, context, providerConfig, request =
       });
   }
 
+  // Inject custom world context from campaign LLM settings
+  if (campaignLLMSettings?.custom_world_context) {
+    promptSections.push(`### World Lore\n${campaignLLMSettings.custom_world_context}`);
+  }
+
   promptSections.push('### Directives');
   promptSections.push(instruction);
 
+  // Append directive overrides for this narrative type
+  if (campaignLLMSettings?.directive_overrides) {
+    const override = campaignLLMSettings.directive_overrides[type];
+    if (override) {
+      promptSections.push(override);
+    }
+  }
+
+  // Add tone instruction if not default
+  if (campaignLLMSettings?.world_tone && campaignLLMSettings.world_tone !== 'balanced') {
+    promptSections.push(`Narrative tone: adopt a ${campaignLLMSettings.world_tone} tone throughout.`);
+  }
+
+  // Add voice instruction if not default
+  if (campaignLLMSettings?.narrative_voice && campaignLLMSettings.narrative_voice !== 'concise') {
+    promptSections.push(`Writing style: use a ${campaignLLMSettings.narrative_voice} narrative voice.`);
+  }
+
   const prompt = promptSections.join('\n\n');
-  const systemPrompt = buildSystemPrompt({ type, providerConfig });
+  const systemPrompt = buildSystemPrompt({ type, providerConfig, campaignLLMSettings });
 
   return {
     systemPrompt,

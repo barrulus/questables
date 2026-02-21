@@ -1161,3 +1161,190 @@ export async function teleportNpc(
 
   return ensurePayload(data, 'NPC teleport response missing payload');
 }
+
+// ─── Campaign LLM Settings ──────────────────────────────────────────────────
+
+export type WorldTone = 'balanced' | 'dark' | 'heroic' | 'comedic' | 'gritty' | 'custom';
+export type NarrativeVoice = 'concise' | 'verbose' | 'poetic' | 'terse';
+
+export interface CampaignLLMSettings {
+  campaign_id: string;
+  world_tone: WorldTone;
+  narrative_voice: NarrativeVoice;
+  custom_world_context: string | null;
+  system_prompt_additions: string | null;
+  directive_overrides: Record<string, string>;
+  chat_history_depth: number;
+  npc_memory_depth: number;
+  include_undiscovered_locations: boolean;
+  preferred_provider: string | null;
+  preferred_model: string | null;
+  temperature: number | null;
+  top_p: number | null;
+  updated_at: string | null;
+  updated_by: string | null;
+}
+
+export interface PromptVersionEntry {
+  id: string;
+  campaignId: string;
+  fieldName: string;
+  oldValue: string | null;
+  newValue: string | null;
+  changedBy: string | null;
+  changedByUsername: string | null;
+  changedAt: string | null;
+}
+
+export async function getCampaignLLMSettings(
+  campaignId: string,
+  options: ApiRequestOptions = {},
+): Promise<CampaignLLMSettings> {
+  const data = await fetchJson<CampaignLLMSettings>(
+    `/api/campaigns/${campaignId}/llm-settings`,
+    { method: 'GET', signal: options.signal },
+    'Failed to fetch campaign LLM settings',
+  );
+  return ensurePayload(data, 'Campaign LLM settings response missing payload');
+}
+
+export async function updateCampaignLLMSettings(
+  campaignId: string,
+  settings: Partial<CampaignLLMSettings>,
+  options: ApiRequestOptions = {},
+): Promise<CampaignLLMSettings> {
+  const data = await fetchJson<CampaignLLMSettings>(
+    `/api/campaigns/${campaignId}/llm-settings`,
+    buildJsonRequestInit('PUT', settings, options),
+    'Failed to update campaign LLM settings',
+  );
+  return ensurePayload(data, 'Campaign LLM settings update response missing payload');
+}
+
+export async function getCampaignLLMSettingsHistory(
+  campaignId: string,
+  options: ApiRequestOptions = {},
+): Promise<PromptVersionEntry[]> {
+  const data = await fetchJson<{ history: PromptVersionEntry[] }>(
+    `/api/campaigns/${campaignId}/llm-settings/history`,
+    { method: 'GET', signal: options.signal },
+    'Failed to fetch prompt version history',
+  );
+  return data?.history ?? [];
+}
+
+// ─── Admin LLM Provider Management ─────────────────────────────────────────
+
+export interface LLMProviderConfig {
+  id: string;
+  name: string;
+  adapter: string;
+  host: string | null;
+  model: string | null;
+  timeoutMs: number | null;
+  options: Record<string, unknown>;
+  enabled: boolean;
+  defaultProvider: boolean;
+  createdAt: string | null;
+  updatedAt: string | null;
+}
+
+export interface LLMProviderHealth {
+  healthy: boolean;
+  host?: string;
+  model?: string;
+  availableModels?: string[];
+  error?: string;
+}
+
+export interface LLMProviderWithHealth {
+  name: string;
+  adapter: string;
+  default: boolean;
+  enabled: boolean;
+  host: string | null;
+  model: string | null;
+  timeoutMs: number | null;
+  options: Record<string, unknown>;
+  health: LLMProviderHealth;
+}
+
+export async function listAdminLLMProviders(
+  options: ApiRequestOptions = {},
+): Promise<{ providers: LLMProviderWithHealth[]; defaultProvider: string | null }> {
+  const data = await fetchJson<{ providers: LLMProviderWithHealth[]; defaultProvider: string | null }>(
+    '/api/admin/llm/providers',
+    { method: 'GET', signal: options.signal },
+    'Failed to list LLM providers',
+  );
+  return data ?? { providers: [], defaultProvider: null };
+}
+
+export async function createAdminLLMProvider(
+  payload: { name: string; adapter: string; host?: string; model?: string; apiKey?: string; timeoutMs?: number; options?: Record<string, unknown> },
+  options: ApiRequestOptions = {},
+): Promise<LLMProviderConfig> {
+  const data = await fetchJson<LLMProviderConfig>(
+    '/api/admin/llm/providers',
+    buildJsonRequestInit('POST', payload, options),
+    'Failed to create LLM provider',
+  );
+  return ensurePayload(data, 'Provider creation response missing payload');
+}
+
+export async function updateAdminLLMProvider(
+  name: string,
+  updates: Partial<{ adapter: string; host: string; model: string; apiKey: string; timeoutMs: number; options: Record<string, unknown>; enabled: boolean }>,
+  options: ApiRequestOptions = {},
+): Promise<LLMProviderConfig> {
+  const data = await fetchJson<LLMProviderConfig>(
+    `/api/admin/llm/providers/${encodeURIComponent(name)}`,
+    buildJsonRequestInit('PATCH', updates, options),
+    'Failed to update LLM provider',
+  );
+  return ensurePayload(data, 'Provider update response missing payload');
+}
+
+export async function deleteAdminLLMProvider(
+  name: string,
+  options: ApiRequestOptions = {},
+): Promise<void> {
+  await fetchJson(
+    `/api/admin/llm/providers/${encodeURIComponent(name)}`,
+    buildJsonRequestInit('DELETE', undefined, options),
+    'Failed to delete LLM provider',
+  );
+}
+
+export async function setAdminLLMDefaultProvider(
+  name: string,
+  options: ApiRequestOptions = {},
+): Promise<void> {
+  await fetchJson(
+    `/api/admin/llm/providers/${encodeURIComponent(name)}/default`,
+    buildJsonRequestInit('POST', {}, options),
+    'Failed to set default LLM provider',
+  );
+}
+
+export async function listAdminLLMProviderModels(
+  name: string,
+  options: ApiRequestOptions = {},
+): Promise<string[]> {
+  const data = await fetchJson<{ models: string[] }>(
+    `/api/admin/llm/providers/${encodeURIComponent(name)}/models`,
+    { method: 'GET', signal: options.signal },
+    'Failed to list available models',
+  );
+  return data?.models ?? [];
+}
+
+export async function reloadAdminLLMServices(
+  options: ApiRequestOptions = {},
+): Promise<void> {
+  await fetchJson(
+    '/api/admin/llm/reload',
+    buildJsonRequestInit('POST', {}, options),
+    'Failed to reload LLM services',
+  );
+}

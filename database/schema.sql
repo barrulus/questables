@@ -759,6 +759,7 @@ CREATE TABLE IF NOT EXISTS public.npcs (
     current_location_id UUID REFERENCES public.locations(id) ON DELETE SET NULL,
     world_position geometry(Point, 0),
     CONSTRAINT npc_world_position_srid CHECK (world_position IS NULL OR ST_SRID(world_position) = 0),
+    voice_config JSONB DEFAULT '{}'::jsonb,
     created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW() NOT NULL,
     updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW() NOT NULL
 );
@@ -821,6 +822,39 @@ DROP TRIGGER IF EXISTS _touch_llm_providers ON public.llm_providers;
 CREATE TRIGGER _touch_llm_providers
 BEFORE UPDATE ON public.llm_providers
 FOR EACH ROW EXECUTE FUNCTION public.tg_touch_updated_at();
+
+CREATE TABLE IF NOT EXISTS public.campaign_llm_settings (
+    campaign_id    UUID PRIMARY KEY REFERENCES campaigns(id) ON DELETE CASCADE,
+    world_tone     TEXT DEFAULT 'balanced',
+    narrative_voice TEXT DEFAULT 'concise',
+    custom_world_context TEXT,
+    system_prompt_additions TEXT,
+    directive_overrides JSONB DEFAULT '{}'::jsonb,
+    chat_history_depth INT DEFAULT 5,
+    npc_memory_depth   INT DEFAULT 10,
+    include_undiscovered_locations BOOLEAN DEFAULT false,
+    preferred_provider TEXT,
+    preferred_model    TEXT,
+    temperature        NUMERIC(3,2),
+    top_p              NUMERIC(3,2),
+    updated_at TIMESTAMPTZ DEFAULT NOW(),
+    updated_by UUID REFERENCES user_profiles(id)
+);
+DROP TRIGGER IF EXISTS _touch_campaign_llm_settings ON public.campaign_llm_settings;
+CREATE TRIGGER _touch_campaign_llm_settings
+BEFORE UPDATE ON public.campaign_llm_settings
+FOR EACH ROW EXECUTE FUNCTION public.tg_touch_updated_at();
+
+CREATE TABLE IF NOT EXISTS public.prompt_versions (
+    id UUID DEFAULT uuid_generate_v4() PRIMARY KEY,
+    campaign_id UUID REFERENCES campaigns(id) ON DELETE CASCADE NOT NULL,
+    field_name TEXT NOT NULL,
+    old_value TEXT,
+    new_value TEXT,
+    changed_by UUID REFERENCES user_profiles(id),
+    changed_at TIMESTAMPTZ DEFAULT NOW()
+);
+CREATE INDEX IF NOT EXISTS idx_prompt_versions_campaign ON public.prompt_versions(campaign_id, changed_at DESC);
 
 CREATE TABLE IF NOT EXISTS public.llm_narratives (
     id UUID DEFAULT uuid_generate_v4() PRIMARY KEY,

@@ -37,6 +37,7 @@ import { registerLevellingRoutes } from './routes/levelling.routes.js';
 import { registerShopRoutes } from './routes/shop.routes.js';
 import { registerLootRoutes } from './routes/loot.routes.js';
 import { registerAdminRoutes } from './routes/admin.routes.js';
+import { registerAdminLLMRoutes } from './routes/admin-llm.routes.js';
 import { registerModerationRoutes } from './routes/moderation.routes.js';
 import { ensureLLMService } from './llm/request-helpers.js';
 import {
@@ -415,6 +416,7 @@ registerLevellingRoutes(app);
 registerShopRoutes(app);
 registerLootRoutes(app);
 registerAdminRoutes(app);
+registerAdminLLMRoutes(app);
 registerModerationRoutes(app);
 
 const loadProviderConfigurations = async () => {
@@ -499,6 +501,7 @@ const bootstrapLLMServices = async () => {
 };
 
 await bootstrapLLMServices();
+app.locals.bootstrapLLMServices = bootstrapLLMServices;
 
 // Pool event handlers for monitoring
 pool.on('connect', () => {

@@ -214,6 +214,16 @@ Live State: ${formatLiveState(liveState)}`);
     if (npc.secrets) npcParts.push(`Secrets (hidden from player): ${npc.secrets}`);
     if (npc.appearance) npcParts.push(`Appearance: ${npc.appearance}`);
     sections.push(`## NPC\n${npcParts.join('\n')}`);
+
+    // Inject NPC voice style if configured
+    const vc = npc.voice_config || npc.voiceConfig;
+    if (vc && (vc.speechStyle || vc.tone || vc.customInstructions)) {
+      const voiceParts = [];
+      if (vc.speechStyle) voiceParts.push(`Speech style: ${vc.speechStyle}`);
+      if (vc.tone) voiceParts.push(`Tone: ${vc.tone}`);
+      if (vc.customInstructions) voiceParts.push(`Instructions: ${vc.customInstructions}`);
+      sections.push(`## NPC Voice Style\n${voiceParts.join('\n')}`);
+    }
   }
 
   // NPC memories

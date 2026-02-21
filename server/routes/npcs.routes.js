@@ -139,6 +139,7 @@ router.post('/campaigns/:campaignId/npcs', async (req, res) => {
     secrets,
     current_location_id: currentLocationId,
     stats,
+    voice_config: voiceConfig,
   } = req.body ?? {};
 
   try {
@@ -154,6 +155,7 @@ router.post('/campaigns/:campaignId/npcs', async (req, res) => {
       secrets,
       currentLocationId,
       stats,
+      voiceConfig,
     });
 
     logInfo('NPC created', {

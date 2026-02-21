@@ -243,8 +243,10 @@ Roles stored as `TEXT[]` in `user_profiles` with CHECK constraint. Server middle
 **Tabs:**
 - **System Metrics** — Users, campaigns, sessions, activity counts
 - **User Management** — Full CRUD: create, edit, delete users; change roles/status; reset passwords
-- **LLM Usage** — Provider stats, cache metrics, latency
+- **LLM Workloads** — Provider stats, cache metrics, latency, recent requests
+- **LLM Configuration** — Provider CRUD (add/edit/delete), model picker, set default provider, reload services
 - **Database Health** — Connection status, pool stats
+- **Feature Status** — Live vs. pending feature notes
 
 ---
 
@@ -426,7 +428,9 @@ API: `PUT /api/campaigns/{id}` — partial updates supported.
 
 ### Campaign Settings
 
-**Screen:** Settings Dialog
+**Screen:** Settings Dialog (tabbed)
+
+**Tab 1: Gameplay Rules**
 
 | Setting | Type | Description |
 |---------|------|-------------|
@@ -436,6 +440,21 @@ API: `PUT /api/campaigns/{id}` — partial updates supported.
 | Experience model | Select | Milestone / Experience points |
 | Resting rules | Select | Standard / Gritty realism / Heroic |
 | Death save difficulty | Select | Standard / Hardcore / Forgiving |
+
+**Tab 2: AI Narrative** (DM only, loads from `campaign_llm_settings` table)
+
+| Setting | Type | Description |
+|---------|------|-------------|
+| World Tone | Select | Balanced / Dark / Heroic / Comedic / Gritty / Custom |
+| Narrative Voice | Select | Concise / Verbose / Poetic / Terse |
+| World Context | Textarea | Custom world lore injected into every prompt |
+| System Prompt Additions | Textarea | Extra instructions appended to system prompt |
+| Per-Type Directive Override | Select + Textarea | Override directives per narrative type |
+| Chat History Depth | Slider (1–20) | Number of recent messages included in context |
+| NPC Memory Depth | Slider (1–25) | Number of NPC memories included |
+| Include Undiscovered Locations | Checkbox | Whether undiscovered locations appear in context |
+| Provider Override | Text inputs | Optional provider, model, temperature, top_p |
+| Prompt History | Sheet per field | Version history with old/new values and restore |
 
 ### Campaign Deletion
 
@@ -1182,9 +1201,16 @@ ROOT
 |--------|----------|-------------|
 | GET | `/api/campaigns/{id}/npcs` | List NPCs |
 | POST | `/api/campaigns/{id}/npcs` | Create NPC |
-| PUT | `/api/npcs/{npcId}` | Update NPC |
+| PUT | `/api/npcs/{npcId}` | Update NPC (supports `voice_config` JSONB) |
 | DELETE | `/api/npcs/{npcId}` | Delete NPC |
 | GET | `/api/campaigns/{id}/npcs/{npcId}/memories` | NPC memories and relationships |
+
+### Campaign LLM Settings
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| GET | `/api/campaigns/{id}/llm-settings` | Get campaign LLM settings (DM only) |
+| PUT | `/api/campaigns/{id}/llm-settings` | Upsert campaign LLM settings (DM only) |
+| GET | `/api/campaigns/{id}/llm-settings/history` | Prompt version history (DM only) |
 
 ### Campaign Prep
 | Method | Endpoint | Description |
@@ -1237,3 +1263,9 @@ ROOT
 | DELETE | `/api/admin/llm/cache` | Clear LLM cache |
 | DELETE | `/api/admin/llm/cache/{key}` | Invalidate cache entry |
 | GET | `/api/admin/llm/providers` | List LLM providers |
+| POST | `/api/admin/llm/providers` | Create LLM provider |
+| PATCH | `/api/admin/llm/providers/{name}` | Update LLM provider |
+| DELETE | `/api/admin/llm/providers/{name}` | Delete LLM provider |
+| POST | `/api/admin/llm/providers/{name}/default` | Set default provider |
+| GET | `/api/admin/llm/providers/{name}/models` | List available models |
+| POST | `/api/admin/llm/reload` | Reload LLM services from DB config |

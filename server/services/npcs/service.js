@@ -18,6 +18,7 @@ export const createNpc = async ({
   secrets,
   currentLocationId,
   stats,
+  voiceConfig,
 }) => {
   const { rows } = await query(
     `INSERT INTO public.npcs (
@@ -31,8 +32,9 @@ export const createNpc = async ({
         motivations,
         secrets,
         current_location_id,
-        stats
-     ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+        stats,
+        voice_config
+     ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
      RETURNING *`,
     [
       campaignId,
@@ -46,6 +48,7 @@ export const createNpc = async ({
       secrets ?? null,
       currentLocationId ?? null,
       stats ? JSON.stringify(stats) : null,
+      voiceConfig ? JSON.stringify(voiceConfig) : '{}',
     ],
     { label: 'npcs.create' },
   );
