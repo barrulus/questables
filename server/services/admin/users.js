@@ -1,4 +1,5 @@
 import { query } from '../../db/pool.js';
+import { hashPassword } from '../../auth-middleware.js';
 
 /**
  * List users with optional search, status filter, and pagination.
@@ -124,6 +125,142 @@ export async function updateUserRoles(userId, roles, adminId) {
     `UPDATE user_profiles SET roles = $1, updated_at = NOW() WHERE id = $2
      RETURNING id, username, email, roles, status`,
     [roles, userId]
+  );
+
+  if (result.rows.length === 0) {
+    throw Object.assign(new Error('User not found'), { statusCode: 404 });
+  }
+
+  return result.rows[0];
+}
+
+/**
+ * Create a new user.
+ */
+export async function createUser({ username, email, password, roles }) {
+  if (!username || typeof username !== 'string' || !username.trim()) {
+    throw Object.assign(new Error('Username is required'), { statusCode: 400 });
+  }
+  if (!email || typeof email !== 'string' || !email.trim()) {
+    throw Object.assign(new Error('Email is required'), { statusCode: 400 });
+  }
+  if (!password || typeof password !== 'string' || password.length < 6) {
+    throw Object.assign(new Error('Password must be at least 6 characters'), { statusCode: 400 });
+  }
+
+  const validRoles = ['player', 'dm', 'admin'];
+  const normalizedRoles = Array.isArray(roles)
+    ? roles.filter((r) => validRoles.includes(r))
+    : ['player'];
+  if (normalizedRoles.length === 0) normalizedRoles.push('player');
+
+  const existing = await query(
+    `SELECT id FROM user_profiles WHERE LOWER(email) = LOWER($1) OR LOWER(username) = LOWER($2)`,
+    [email.trim(), username.trim()]
+  );
+  if (existing.rows.length > 0) {
+    throw Object.assign(new Error('A user with that email or username already exists'), { statusCode: 409 });
+  }
+
+  const passwordHash = await hashPassword(password);
+
+  const result = await query(
+    `INSERT INTO user_profiles (username, email, password_hash, roles, status, created_at, updated_at)
+     VALUES ($1, $2, $3, $4, 'active', NOW(), NOW())
+     RETURNING id, username, email, roles, status, created_at, last_login`,
+    [username.trim(), email.trim(), passwordHash, normalizedRoles]
+  );
+
+  return result.rows[0];
+}
+
+/**
+ * Update user details (username, email, roles).
+ */
+export async function updateUser(userId, { username, email, roles }, adminId) {
+  const sets = [];
+  const params = [];
+  let paramIndex = 1;
+
+  if (username !== undefined) {
+    sets.push(`username = $${paramIndex++}`);
+    params.push(username.trim());
+  }
+  if (email !== undefined) {
+    sets.push(`email = $${paramIndex++}`);
+    params.push(email.trim());
+  }
+  if (roles !== undefined) {
+    const validRoles = ['player', 'dm', 'admin'];
+    const normalizedRoles = Array.isArray(roles) ? roles.filter((r) => validRoles.includes(r)) : [];
+    if (normalizedRoles.length === 0) {
+      throw Object.assign(new Error('Roles must contain at least one valid role'), { statusCode: 400 });
+    }
+    if (userId === adminId && !normalizedRoles.includes('admin')) {
+      throw Object.assign(new Error('Cannot remove admin role from your own account'), { statusCode: 400 });
+    }
+    sets.push(`roles = $${paramIndex++}`);
+    params.push(normalizedRoles);
+  }
+
+  if (sets.length === 0) {
+    throw Object.assign(new Error('No fields to update'), { statusCode: 400 });
+  }
+
+  sets.push('updated_at = NOW()');
+  params.push(userId);
+
+  const result = await query(
+    `UPDATE user_profiles SET ${sets.join(', ')} WHERE id = $${paramIndex}
+     RETURNING id, username, email, roles, status, created_at, last_login`,
+    params
+  );
+
+  if (result.rows.length === 0) {
+    throw Object.assign(new Error('User not found'), { statusCode: 404 });
+  }
+
+  return result.rows[0];
+}
+
+/**
+ * Delete a user.
+ */
+export async function deleteUser(userId, adminId) {
+  if (userId === adminId) {
+    throw Object.assign(new Error('Cannot delete your own account'), { statusCode: 400 });
+  }
+
+  const result = await query(
+    `DELETE FROM user_profiles WHERE id = $1 RETURNING id, username`,
+    [userId]
+  );
+
+  if (result.rows.length === 0) {
+    throw Object.assign(new Error('User not found'), { statusCode: 404 });
+  }
+
+  return result.rows[0];
+}
+
+/**
+ * Reset a user's password (admin action).
+ */
+export async function resetUserPassword(userId, newPassword, adminId) {
+  if (!newPassword || typeof newPassword !== 'string' || newPassword.length < 6) {
+    throw Object.assign(new Error('Password must be at least 6 characters'), { statusCode: 400 });
+  }
+
+  if (userId === adminId) {
+    throw Object.assign(new Error('Use account settings to change your own password'), { statusCode: 400 });
+  }
+
+  const passwordHash = await hashPassword(newPassword);
+
+  const result = await query(
+    `UPDATE user_profiles SET password_hash = $1, updated_at = NOW() WHERE id = $2
+     RETURNING id, username`,
+    [passwordHash, userId]
   );
 
   if (result.rows.length === 0) {

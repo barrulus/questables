@@ -242,6 +242,7 @@ Roles stored as `TEXT[]` in `user_profiles` with CHECK constraint. Server middle
 
 **Tabs:**
 - **System Metrics** — Users, campaigns, sessions, activity counts
+- **User Management** — Full CRUD: create, edit, delete users; change roles/status; reset passwords
 - **LLM Usage** — Provider stats, cache metrics, latency
 - **Database Health** — Connection status, pool stats
 
@@ -1221,6 +1222,14 @@ ROOT
 ### Admin
 | Method | Endpoint | Description |
 |--------|----------|-------------|
+| GET | `/api/admin/users` | List users (search, filter, paginate) |
+| GET | `/api/admin/users/{userId}` | Get user detail |
+| POST | `/api/admin/users` | Create user |
+| PUT | `/api/admin/users/{userId}` | Update user (username, email, roles) |
+| DELETE | `/api/admin/users/{userId}` | Delete user |
+| PATCH | `/api/admin/users/{userId}/status` | Change user status |
+| PATCH | `/api/admin/users/{userId}/roles` | Change user roles |
+| POST | `/api/admin/users/{userId}/reset-password` | Reset user password |
 | GET | `/api/admin/metrics` | System metrics |
 | GET | `/api/admin/telemetry` | Telemetry snapshot |
 | GET | `/api/admin/llm/metrics` | LLM metrics |
