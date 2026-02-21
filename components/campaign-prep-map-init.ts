@@ -124,7 +124,15 @@ export function useMapInit({
   onRegionDrawComplete,
   view,
 }: UseMapInitOptions): UseMapInitReturn {
-  const { updateViewExtent, handleMapError } = view;
+  const {
+    updateViewExtent,
+    handleMapError,
+    initialFitDoneRef,
+    lastFittedExtentRef,
+    lastFittedSizeRef,
+    isProgrammaticViewUpdateRef,
+    lastAppliedBoundsSignatureRef,
+  } = view;
 
   // ── Layer refs ───────────────────────────────────────────────────────
   const baseLayerRef = useRef<TileLayer | null>(null);
@@ -368,11 +376,11 @@ export function useMapInit({
     if (!container) return;
 
     setMapReady(false);
-    view.initialFitDoneRef.current = false;
-    view.lastFittedExtentRef.current = null;
-    view.lastFittedSizeRef.current = null;
-    view.isProgrammaticViewUpdateRef.current = false;
-    view.lastAppliedBoundsSignatureRef.current = null;
+    initialFitDoneRef.current = false;
+    lastFittedExtentRef.current = null;
+    lastFittedSizeRef.current = null;
+    isProgrammaticViewUpdateRef.current = false;
+    lastAppliedBoundsSignatureRef.current = null;
 
     if (mapInstanceRef.current) {
       mapInstanceRef.current.setTarget(undefined);
@@ -486,9 +494,9 @@ export function useMapInit({
       });
       observer.observe(container);
       resizeObserverRef.current = observer;
-    } else if (!view.initialFitDoneRef.current) {
+    } else if (!initialFitDoneRef.current) {
       pendingFrameRef.current = requestAnimationFrame(() => {
-        if (!view.initialFitDoneRef.current) {
+        if (!initialFitDoneRef.current) {
           tryFinalizeSizing();
         }
         pendingFrameRef.current = null;
@@ -497,12 +505,16 @@ export function useMapInit({
   }, [
     getRegionStyle,
     highlightStyle,
+    initialFitDoneRef,
+    isProgrammaticViewUpdateRef,
+    lastAppliedBoundsSignatureRef,
+    lastFittedExtentRef,
+    lastFittedSizeRef,
     layerVisibility,
     mapContainerRef,
     mapInstanceRef,
     setMapReady,
     updateViewExtent,
-    view,
     worldMap,
   ]);
 

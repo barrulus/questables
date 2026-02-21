@@ -469,8 +469,8 @@ export function CampaignPrepMap({
         )}
 
         {initHook.mapError ? (
-          <div className="absolute inset-0 z-30 flex items-center justify-center bg-transparent">
-            <div className="max-w-sm rounded border border-destructive bg-destructive/10 px-4 py-3 text-sm text-destructive">
+          <div className="pointer-events-none absolute inset-0 z-30 flex items-center justify-center bg-transparent">
+            <div className="pointer-events-auto max-w-sm rounded border border-destructive bg-destructive/10 px-4 py-3 text-sm text-destructive">
               {initHook.mapError}
             </div>
           </div>
