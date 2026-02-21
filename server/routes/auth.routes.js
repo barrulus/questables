@@ -1,5 +1,5 @@
 import { Router } from 'express';
-import { comparePassword, generateToken, generateRefreshToken, hashPassword } from '../auth-middleware.js';
+import { comparePassword, generateToken, generateRefreshToken, hashPassword, verifyToken } from '../auth-middleware.js';
 import { logError, logInfo } from '../utils/logger.js';
 import { query } from '../db/pool.js';
 
@@ -32,8 +32,15 @@ router.post('/login', async (req, res) => {
       return res.status(401).json({ error: 'invalid_credentials', message: 'Invalid email or password.' });
     }
 
+    if (user.status === 'banned' || user.status === 'suspended') {
+      return res.status(403).json({
+        error: 'account_suspended',
+        message: 'Your account has been suspended.'
+      });
+    }
+
     const token = generateToken({ userId: user.id });
-    const refreshToken = generateRefreshToken();
+    const refreshToken = generateRefreshToken(user.id);
 
     logInfo('User logged in', {
       telemetryEvent: 'auth.login',
@@ -58,7 +65,8 @@ router.post('/login', async (req, res) => {
 });
 
 router.post('/register', async (req, res) => {
-  const { username, email, password, roles = ['player'] } = req.body ?? {};
+  const { username, email, password } = req.body ?? {};
+  const roles = ['player'];
 
   if (typeof username !== 'string' || !username.trim()) {
     return res.status(400).json({ error: 'username_required', message: 'Username is required.' });
@@ -94,7 +102,7 @@ router.post('/register', async (req, res) => {
 
     const user = rows[0];
     const token = generateToken({ userId: user.id });
-    const refreshToken = generateRefreshToken();
+    const refreshToken = generateRefreshToken(user.id);
 
     logInfo('User registered', {
       telemetryEvent: 'auth.register',
@@ -105,6 +113,58 @@ router.post('/register', async (req, res) => {
   } catch (error) {
     logError('Registration failed', error, { email });
     return res.status(500).json({ error: 'registration_failed', message: 'Failed to create account.' });
+  }
+});
+
+router.post('/refresh', async (req, res) => {
+  const { refreshToken } = req.body ?? {};
+
+  if (typeof refreshToken !== 'string' || !refreshToken) {
+    return res.status(400).json({ error: 'refresh_token_required', message: 'Refresh token is required.' });
+  }
+
+  try {
+    const decoded = verifyToken(refreshToken);
+
+    if (decoded.type !== 'refresh') {
+      return res.status(401).json({ error: 'invalid_token', message: 'Invalid refresh token.' });
+    }
+
+    const { rows } = await query(
+      'SELECT id, username, email, roles, status FROM user_profiles WHERE id = $1 LIMIT 1',
+      [decoded.userId]
+    );
+
+    if (rows.length === 0) {
+      return res.status(401).json({ error: 'user_not_found', message: 'User not found.' });
+    }
+
+    const user = rows[0];
+
+    if (user.status === 'banned' || user.status === 'suspended') {
+      return res.status(403).json({
+        error: 'account_suspended',
+        message: 'Your account has been suspended.'
+      });
+    }
+
+    const newToken = generateToken({ userId: user.id });
+    const newRefreshToken = generateRefreshToken(user.id);
+
+    return res.json({
+      user: {
+        id: user.id,
+        username: user.username,
+        email: user.email,
+        roles: user.roles,
+        status: user.status,
+      },
+      token: newToken,
+      refreshToken: newRefreshToken,
+    });
+  } catch (error) {
+    logError('Token refresh failed', error);
+    return res.status(401).json({ error: 'refresh_failed', message: 'Invalid or expired refresh token.' });
   }
 });
 

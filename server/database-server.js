@@ -36,6 +36,8 @@ import { registerRestRoutes } from './routes/rest.routes.js';
 import { registerLevellingRoutes } from './routes/levelling.routes.js';
 import { registerShopRoutes } from './routes/shop.routes.js';
 import { registerLootRoutes } from './routes/loot.routes.js';
+import { registerAdminRoutes } from './routes/admin.routes.js';
+import { registerModerationRoutes } from './routes/moderation.routes.js';
 import { ensureLLMService } from './llm/request-helpers.js';
 import {
   logInfo,
@@ -412,6 +414,8 @@ registerRestRoutes(app);
 registerLevellingRoutes(app);
 registerShopRoutes(app);
 registerLootRoutes(app);
+registerAdminRoutes(app);
+registerModerationRoutes(app);
 
 const loadProviderConfigurations = async () => {
   try {

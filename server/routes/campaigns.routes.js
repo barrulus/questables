@@ -6,7 +6,7 @@ import {
   requireCampaignOwnership,
   requireCampaignParticipation,
 } from '../auth-middleware.js';
-import { getClient } from '../db/pool.js';
+import { getClient, query as dbQuery } from '../db/pool.js';
 import { validateCampaign } from '../validation/campaigns.js';
 import { handleValidationErrors } from '../validation/common.js';
 import {
@@ -487,11 +487,12 @@ router.post('/api/campaigns/:campaignId/players', async (req, res) => {
       SELECT c.max_players,
              c.world_map_id,
              c.dm_user_id,
+             c.auto_approve_join_requests,
              COUNT(cp.user_id) as current_players
         FROM campaigns c
         LEFT JOIN campaign_players cp ON c.id = cp.campaign_id AND cp.status = 'active'
        WHERE c.id = $1
-       GROUP BY c.id, c.max_players, c.world_map_id, c.dm_user_id
+       GROUP BY c.id, c.max_players, c.world_map_id, c.dm_user_id, c.auto_approve_join_requests
     `, [campaignId]);
 
     if (campaignCheck.rows.length === 0) {
@@ -517,17 +518,20 @@ router.post('/api/campaigns/:campaignId/players', async (req, res) => {
     }
 
     // Add player to campaign and capture id
+    const autoApprove = campaignMeta.auto_approve_join_requests !== false;
+    const playerStatus = autoApprove ? 'active' : 'pending';
+
     const insertResult = await client.query(
       `INSERT INTO campaign_players (campaign_id, user_id, character_id, status, role)
-       VALUES ($1, $2, $3, 'active', 'player')
+       VALUES ($1, $2, $3, $4, 'player')
        RETURNING id`,
-      [campaignId, userId, characterId]
+      [campaignId, userId, characterId, playerStatus]
     );
 
     const campaignPlayerId = insertResult.rows[0]?.id;
     let autoPlacement = null;
 
-    if (campaignPlayerId) {
+    if (campaignPlayerId && playerStatus === 'active') {
       // Prefer default (or latest) spawn
       const spawnResult = await client.query(
         `SELECT ST_X(world_position) AS x,
@@ -589,8 +593,9 @@ router.post('/api/campaigns/:campaignId/players', async (req, res) => {
     await client.query('COMMIT');
 
     res.json({
-      message: 'Successfully joined campaign',
+      message: playerStatus === 'pending' ? 'Join request submitted — awaiting DM approval' : 'Successfully joined campaign',
       playerId: campaignPlayerId,
+      status: playerStatus,
       autoPlaced: Boolean(autoPlacement),
     });
   } catch (error) {
@@ -601,6 +606,80 @@ router.post('/api/campaigns/:campaignId/players', async (req, res) => {
     res.status(500).json({ error: 'Failed to join campaign' });
   } finally {
     client?.release();
+  }
+});
+
+// DM: list pending join requests
+router.get('/api/campaigns/:campaignId/players/pending', requireAuth, requireCampaignOwnership, async (req, res) => {
+  const { campaignId } = req.params;
+  try {
+    const { rows } = await dbQuery(
+      `SELECT cp.id, cp.user_id, cp.character_id, cp.joined_at,
+              u.username, u.email,
+              ch.name AS character_name
+         FROM campaign_players cp
+         JOIN user_profiles u ON cp.user_id = u.id
+         LEFT JOIN characters ch ON cp.character_id = ch.id
+        WHERE cp.campaign_id = $1 AND cp.status = 'pending'
+        ORDER BY cp.joined_at ASC`,
+      [campaignId]
+    );
+    res.json({ pendingPlayers: rows });
+  } catch (error) {
+    logError('[Campaigns] List pending players error:', error);
+    res.status(500).json({ error: 'Failed to list pending players' });
+  }
+});
+
+// DM: approve a pending player
+router.patch('/api/campaigns/:campaignId/players/:userId/approve', requireAuth, requireCampaignOwnership, async (req, res) => {
+  const { campaignId, userId } = req.params;
+  try {
+    const result = await dbQuery(
+      `UPDATE campaign_players SET status = 'active'
+        WHERE campaign_id = $1 AND user_id = $2 AND status = 'pending'
+       RETURNING id`,
+      [campaignId, userId]
+    );
+    if (result.rows.length === 0) {
+      return res.status(404).json({ error: 'No pending join request found for this user' });
+    }
+    logInfo('[Campaigns] DM approved player join', {
+      telemetryEvent: 'campaign.player.approved',
+      campaignId,
+      userId,
+      approvedBy: req.user.id,
+    });
+    res.json({ message: 'Player approved', playerId: result.rows[0].id });
+  } catch (error) {
+    logError('[Campaigns] Approve player error:', error);
+    res.status(500).json({ error: 'Failed to approve player' });
+  }
+});
+
+// DM: reject a pending player
+router.patch('/api/campaigns/:campaignId/players/:userId/reject', requireAuth, requireCampaignOwnership, async (req, res) => {
+  const { campaignId, userId } = req.params;
+  try {
+    const result = await dbQuery(
+      `UPDATE campaign_players SET status = 'left'
+        WHERE campaign_id = $1 AND user_id = $2 AND status = 'pending'
+       RETURNING id`,
+      [campaignId, userId]
+    );
+    if (result.rows.length === 0) {
+      return res.status(404).json({ error: 'No pending join request found for this user' });
+    }
+    logInfo('[Campaigns] DM rejected player join', {
+      telemetryEvent: 'campaign.player.rejected',
+      campaignId,
+      userId,
+      rejectedBy: req.user.id,
+    });
+    res.json({ message: 'Player rejected' });
+  } catch (error) {
+    logError('[Campaigns] Reject player error:', error);
+    res.status(500).json({ error: 'Failed to reject player' });
   }
 });
 

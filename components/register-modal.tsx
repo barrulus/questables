@@ -8,7 +8,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from ".
 import { Separator } from "./ui/separator";
 import { Checkbox } from "./ui/checkbox";
 import { toast } from "sonner";
-import { Eye, EyeOff, Mail, Lock, User, Crown, Shield } from "lucide-react";
+import { Eye, EyeOff, Mail, Lock, User, Shield } from "lucide-react";
 import { register as registerUser } from "../utils/api/auth";
 import { useUser } from "../contexts/UserContext";
 
@@ -26,7 +26,7 @@ export function RegisterModal(props: RegisterModalProps) {
     email: "",
     password: "",
     confirmPassword: "",
-    role: "player" as "player" | "dm" | "admin"
+    role: "player" as "player" | "dm"
   });
   const [showPassword, setShowPassword] = useState(false);
   const [showConfirmPassword, setShowConfirmPassword] = useState(false);
@@ -68,7 +68,6 @@ export function RegisterModal(props: RegisterModalProps) {
         username: formData.username.trim(),
         email: formData.email.trim(),
         password: formData.password,
-        roles: [formData.role],
       });
 
       let authenticatedUser;
@@ -96,7 +95,6 @@ export function RegisterModal(props: RegisterModalProps) {
     switch (role) {
       case "player": return "Join campaigns and manage your characters";
       case "dm": return "Create and manage campaigns, NPCs, and adventures";
-      case "admin": return "Full system access and user management";
       default: return "";
     }
   };
@@ -149,7 +147,7 @@ export function RegisterModal(props: RegisterModalProps) {
               <Label htmlFor="role">Account Type *</Label>
               <Select 
                 value={formData.role} 
-                onValueChange={(value) => setFormData(prev => ({ ...prev, role: value as "player" | "dm" | "admin" }))}
+                onValueChange={(value) => setFormData(prev => ({ ...prev, role: value as "player" | "dm" }))}
               >
                 <SelectTrigger>
                   <SelectValue />
@@ -170,15 +168,6 @@ export function RegisterModal(props: RegisterModalProps) {
                       <div>
                         <div className="font-medium">Dungeon Master</div>
                         <div className="text-xs text-muted-foreground">Create and manage campaigns</div>
-                      </div>
-                    </div>
-                  </SelectItem>
-                  <SelectItem value="admin">
-                    <div className="flex items-center gap-2">
-                      <Crown className="w-4 h-4" />
-                      <div>
-                        <div className="font-medium">Administrator</div>
-                        <div className="text-xs text-muted-foreground">Full system access</div>
                       </div>
                     </div>
                   </SelectItem>

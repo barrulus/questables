@@ -77,9 +77,10 @@ export const verifyToken = (token) => {
 };
 
 // Refresh token generation
-export const generateRefreshToken = () => {
-  const payload = { 
+export const generateRefreshToken = (userId) => {
+  const payload = {
     type: 'refresh',
+    userId,
     timestamp: Date.now()
   };
   return jwt.sign(payload, JWT_SECRET, { 
@@ -107,7 +108,7 @@ export const requireAuth = async (req, res, next) => {
       const decoded = verifyToken(token);
       
       // Verify user still exists in database
-      const userQuery = 'SELECT id, username, email, roles, created_at FROM user_profiles WHERE id = $1';
+      const userQuery = 'SELECT id, username, email, roles, status, created_at FROM user_profiles WHERE id = $1';
       const userResult = await dbPool.query(userQuery, [decoded.userId]);
       
       if (userResult.rows.length === 0) {
@@ -118,6 +119,14 @@ export const requireAuth = async (req, res, next) => {
       }
       
       const userRow = userResult.rows[0];
+
+      if (userRow.status === 'banned' || userRow.status === 'suspended') {
+        return res.status(403).json({
+          error: 'Account suspended',
+          message: 'Your account has been suspended. Contact an administrator.'
+        });
+      }
+
       const allowedRoles = ['player', 'dm', 'admin'];
       const roles = Array.isArray(userRow.roles)
         ? [...new Set(userRow.roles.filter((role) => allowedRoles.includes(role)))]

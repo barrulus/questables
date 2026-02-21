@@ -298,7 +298,7 @@ CREATE TABLE IF NOT EXISTS public.campaign_players (
     user_id UUID REFERENCES public.user_profiles(id) ON DELETE CASCADE NOT NULL,
     character_id UUID REFERENCES public.characters(id) ON DELETE CASCADE NOT NULL,
     joined_at TIMESTAMP WITH TIME ZONE DEFAULT NOW() NOT NULL,
-    status TEXT NOT NULL DEFAULT 'active' CHECK (status IN ('active', 'inactive', 'left')),
+    status TEXT NOT NULL DEFAULT 'active' CHECK (status IN ('active', 'inactive', 'left', 'pending')),
     role TEXT NOT NULL DEFAULT 'player' CHECK (role IN ('player', 'co-dm')),
     visibility_state TEXT NOT NULL DEFAULT 'visible' CHECK (visibility_state IN ('visible', 'stealthed', 'hidden')),
     loc_current geometry(Point, 0),
@@ -1263,3 +1263,22 @@ CREATE TABLE IF NOT EXISTS public.loot_table_entries (
   created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW() NOT NULL
 );
 CREATE INDEX IF NOT EXISTS idx_loot_entries_table ON public.loot_table_entries(loot_table_id);
+
+-- =============================================================================
+-- MODERATION REPORTS
+-- =============================================================================
+CREATE TABLE IF NOT EXISTS public.moderation_reports (
+    id UUID DEFAULT uuid_generate_v4() PRIMARY KEY,
+    reporter_id UUID REFERENCES public.user_profiles(id) ON DELETE SET NULL NOT NULL,
+    reported_user_id UUID REFERENCES public.user_profiles(id) ON DELETE CASCADE,
+    campaign_id UUID REFERENCES public.campaigns(id) ON DELETE CASCADE,
+    report_type TEXT NOT NULL CHECK (report_type IN ('harassment', 'cheating', 'spam', 'inappropriate_content', 'other')),
+    description TEXT NOT NULL,
+    status TEXT NOT NULL DEFAULT 'pending' CHECK (status IN ('pending', 'reviewed', 'resolved', 'dismissed')),
+    admin_notes TEXT,
+    resolved_by UUID REFERENCES public.user_profiles(id) ON DELETE SET NULL,
+    resolved_at TIMESTAMP WITH TIME ZONE,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW() NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_moderation_reports_status ON public.moderation_reports(status);
+CREATE INDEX IF NOT EXISTS idx_moderation_reports_reported_user ON public.moderation_reports(reported_user_id);

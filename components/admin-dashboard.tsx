@@ -22,6 +22,8 @@ import {
   Zap,
 } from "lucide-react";
 import { apiFetch, readErrorMessage, readJsonBody } from "../utils/api-client";
+import { AdminUserManagement } from "./admin-user-management";
+import { AdminModeration } from "./admin-moderation";
 
 interface AdminDashboardProps {
   user: { id: string; username: string; email: string; roles: string[]; role?: string };
@@ -392,6 +394,8 @@ export function AdminDashboard({ user, onLogout }: AdminDashboardProps) {
         <Tabs value={activeTab} onValueChange={setActiveTab} className="space-y-6">
           <TabsList>
             <TabsTrigger value="overview">Overview</TabsTrigger>
+            <TabsTrigger value="users">Users</TabsTrigger>
+            <TabsTrigger value="moderation">Moderation</TabsTrigger>
             <TabsTrigger value="llm">LLM Workloads</TabsTrigger>
             <TabsTrigger value="system">System Health</TabsTrigger>
             <TabsTrigger value="feature-status">Feature Status</TabsTrigger>
@@ -531,6 +535,14 @@ export function AdminDashboard({ user, onLogout }: AdminDashboardProps) {
                 </Card>
               </div>
             )}
+          </TabsContent>
+
+          <TabsContent value="users" className="space-y-6">
+            <AdminUserManagement />
+          </TabsContent>
+
+          <TabsContent value="moderation" className="space-y-6">
+            <AdminModeration />
           </TabsContent>
 
           <TabsContent value="llm" className="space-y-6">
