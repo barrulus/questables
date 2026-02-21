@@ -28,6 +28,7 @@ const DEFAULT_GAME_STATE = {
   encounterId: null,
   phaseEnteredAt: null, // set at write time
   combatTurnBudget: null, // populated during combat phase
+  restContext: null, // populated during rest phase: { type: 'short'|'long', startedAt: ISO }
 };
 
 /**

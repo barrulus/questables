@@ -17,6 +17,8 @@ import {
 } from '../services/game-state/service.js';
 import { initiateCombat, resolveCombatEnd } from '../services/combat/service.js';
 import { getAllLiveStates } from '../services/live-state/service.js';
+import { resolveDeathSave } from '../services/combat/death-saves.js';
+import { checkLevelUps } from '../services/levelling/service.js';
 import { logError } from '../utils/logger.js';
 
 const router = Router();
@@ -564,6 +566,21 @@ router.post(
           liveStates: updatedStates,
           reason: `combat ended: ${endCondition}`,
         });
+
+        // Check for level-ups after combat XP distribution
+        try {
+          const levelUps = await checkLevelUps(client, { sessionId, campaignId });
+          for (const lu of levelUps) {
+            wsServer.emitToUser(campaignId, lu.userId, 'level-up-available', {
+              characterId: lu.characterId,
+              characterName: lu.characterName,
+              currentLevel: lu.currentLevel,
+              newLevel: lu.newLevel,
+            });
+          }
+        } catch (luErr) {
+          logError('Level-up check after combat failed', luErr, { campaignId });
+        }
       }
 
       return res.json({
@@ -581,6 +598,123 @@ router.post(
       });
     } finally {
       client?.release();
+    }
+  },
+);
+
+// ---------------------------------------------------------------------------
+// POST /campaigns/:campaignId/death-save
+// ---------------------------------------------------------------------------
+router.post(
+  '/campaigns/:campaignId/death-save',
+  requireAuth,
+  [
+    param('campaignId').isUUID(),
+    body('characterId').isUUID(),
+    body('roll').isInt({ min: 1, max: 20 }),
+  ],
+  handleValidationErrors,
+  async (req, res) => {
+    const { campaignId } = req.params;
+    const { characterId, roll } = req.body;
+    const client = await getClient({ label: 'death-save' });
+
+    try {
+      await client.query('BEGIN');
+      const viewer = await getViewerContextOrThrow(client, campaignId, req.user);
+
+      // Players can only roll for their own character
+      if (viewer.role !== 'dm' && viewer.role !== 'co-dm' && !viewer.isAdmin) {
+        const { rows: playerRows } = await client.query(
+          `SELECT character_id FROM public.campaign_players
+            WHERE campaign_id = $1 AND user_id = $2 AND status = 'active'`,
+          [campaignId, req.user.id],
+        );
+        if (!playerRows.some((r) => r.character_id === characterId)) {
+          const err = new Error('You can only roll death saves for your own character');
+          err.status = 403;
+          err.code = 'death_save_forbidden';
+          throw err;
+        }
+      }
+
+      // Validate character is unconscious
+      const { rows: stateRows } = await client.query(
+        `SELECT sls.conditions, sls.session_id
+           FROM public.session_live_states sls
+           JOIN public.sessions s ON s.id = sls.session_id
+          WHERE s.campaign_id = $1 AND sls.character_id = $2 AND s.status = 'active'
+          LIMIT 1`,
+        [campaignId, characterId],
+      );
+
+      if (stateRows.length === 0) {
+        const err = new Error('No active live state found');
+        err.status = 404;
+        err.code = 'live_state_not_found';
+        throw err;
+      }
+
+      const conditions = stateRows[0].conditions || [];
+      if (!conditions.includes('unconscious')) {
+        const err = new Error('Character is not unconscious');
+        err.status = 400;
+        err.code = 'not_unconscious';
+        throw err;
+      }
+
+      const sessionId = stateRows[0].session_id;
+
+      const result = await resolveDeathSave(client, {
+        sessionId,
+        characterId,
+        roll,
+      });
+
+      await client.query('COMMIT');
+
+      // Broadcast
+      const wsServer = req.app?.locals?.wsServer;
+      if (wsServer) {
+        const allStates = await getAllLiveStates(client, { sessionId });
+        wsServer.emitLiveStateChanged(campaignId, {
+          sessionId,
+          liveStates: allStates,
+          reason: `death save: ${result.outcome}`,
+        });
+
+        wsServer.broadcastToCampaign(campaignId, 'death-save-rolled', {
+          sessionId,
+          characterId,
+          ...result,
+          emittedAt: new Date().toISOString(),
+        });
+
+        if (result.outcome === 'dead') {
+          wsServer.broadcastToCampaign(campaignId, 'character-died', {
+            sessionId,
+            characterId,
+            emittedAt: new Date().toISOString(),
+          });
+        } else if (result.outcome === 'stabilized') {
+          wsServer.broadcastToCampaign(campaignId, 'character-stabilized', {
+            sessionId,
+            characterId,
+            emittedAt: new Date().toISOString(),
+          });
+        }
+      }
+
+      res.json(result);
+    } catch (error) {
+      await client.query('ROLLBACK').catch(() => {});
+      logError('Death save failed', error, { campaignId, characterId });
+      res.status(error.status || 500).json({
+        error: error.code || 'death_save_failed',
+        message: error.message || 'Failed to resolve death save',
+      });
+    } finally {
+      client.release();
     }
   },
 );

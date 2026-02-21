@@ -100,6 +100,23 @@ These events are emitted by server-side operations (not triggered by client sock
 | `combatBudgetChanged` | `combat-budget-changed` | Player uses combat action that consumes budget | Private to active player (`emitToUser`) |
 | `concentrationCheck` | `concentration-check` | Concentrating character takes damage | Private to affected player (`emitToUser`) |
 
+### WS5 — Rest Events
+
+| Event Key | Socket Event | Trigger | Delivery |
+|-----------|-------------|---------|----------|
+| `restStarted` | `rest-started` | DM starts a short or long rest | Broadcast to campaign |
+| `hitDiceSpent` | `hit-dice-spent` | Player spends a hit die during short rest | Broadcast to campaign |
+| `restCompleted` | `rest-completed` | DM completes a rest, restoration applied | Broadcast to campaign |
+
+### WS6 — Death Save & Levelling Events
+
+| Event Key | Socket Event | Trigger | Delivery |
+|-----------|-------------|---------|----------|
+| `deathSaveRolled` | `death-save-rolled` | Character rolls a death saving throw | Broadcast to campaign |
+| `characterDied` | `character-died` | Character accumulates 3 death save failures | Broadcast to campaign |
+| `characterStabilized` | `character-stabilized` | Character accumulates 3 death save successes | Broadcast to campaign |
+| `levelUpAvailable` | `level-up-available` | Character XP crosses level threshold | Private to target user (`emitToUser`) |
+
 ### Channel-Aware Message Delivery
 
 Chat messages and typing indicators are now channel-aware:

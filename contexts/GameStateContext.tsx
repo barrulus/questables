@@ -36,6 +36,7 @@ export interface GameState {
   encounterId: string | null;
   phaseEnteredAt: string;
   combatTurnBudget: CombatTurnBudget | null;
+  restContext: { type: "short" | "long"; startedAt: string } | null;
 }
 
 interface GameStateContextValue {

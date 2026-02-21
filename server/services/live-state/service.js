@@ -114,6 +114,16 @@ export const patchLiveState = async (client, { sessionId, characterId, changes, 
     values.push(JSON.stringify(changes.spell_slots));
   }
 
+  if (changes.hit_dice && typeof changes.hit_dice === 'object') {
+    setClauses.push(`hit_dice = $${idx++}`);
+    values.push(JSON.stringify(changes.hit_dice));
+  }
+
+  if (changes.class_resources && typeof changes.class_resources === 'object') {
+    setClauses.push(`class_resources = $${idx++}`);
+    values.push(JSON.stringify(changes.class_resources));
+  }
+
   if (changes.death_saves && typeof changes.death_saves === 'object') {
     setClauses.push(`death_saves = $${idx++}`);
     values.push(JSON.stringify(changes.death_saves));
@@ -153,9 +163,9 @@ export const patchLiveState = async (client, { sessionId, characterId, changes, 
  * Copies from permanent character records.
  */
 export const initializeLiveStates = async (client, { sessionId, campaignId }) => {
-  // Get all active players in the campaign
+  // Get all active players in the campaign, joining class data for hit dice
   const { rows: players } = await client.query(
-    `SELECT cp.user_id, cp.character_id, c.hit_points, c.spellcasting
+    `SELECT cp.user_id, cp.character_id, c.hit_points, c.spellcasting, c.level, c.class
        FROM public.campaign_players cp
        JOIN public.characters c ON c.id = cp.character_id
       WHERE cp.campaign_id = $1 AND cp.status = 'active'`,
@@ -164,15 +174,28 @@ export const initializeLiveStates = async (client, { sessionId, campaignId }) =>
 
   if (players.length === 0) return [];
 
+  // Hit die lookup by class name (lowercase key)
+  const CLASS_HIT_DICE = {
+    barbarian: 'd12', fighter: 'd10', paladin: 'd10', ranger: 'd10',
+    bard: 'd8', cleric: 'd8', druid: 'd8', monk: 'd8', rogue: 'd8', warlock: 'd8',
+    sorcerer: 'd6', wizard: 'd6',
+  };
+
   const inserted = [];
   for (const player of players) {
     const hp = player.hit_points || {};
     const spellSlots = player.spellcasting?.spellSlots ?? {};
+    const level = player.level ?? 1;
+
+    // Determine hit die from class name
+    const classKey = (player.class || '').toLowerCase().replace(/^srd-\d{4}_/, '');
+    const hitDie = CLASS_HIT_DICE[classKey] ?? 'd8';
+    const hitDiceState = { die: hitDie, total: level, remaining: level };
 
     const { rows } = await client.query(
       `INSERT INTO public.session_live_states
-        (session_id, campaign_id, user_id, character_id, hp_current, hp_max, hp_temporary, spell_slots)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+        (session_id, campaign_id, user_id, character_id, hp_current, hp_max, hp_temporary, spell_slots, hit_dice)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
        ON CONFLICT (session_id, character_id) DO NOTHING
        RETURNING *`,
       [
@@ -184,6 +207,7 @@ export const initializeLiveStates = async (client, { sessionId, campaignId }) =>
         hp.max ?? 0,
         hp.temporary ?? 0,
         JSON.stringify(spellSlots),
+        JSON.stringify(hitDiceState),
       ],
     );
     if (rows[0]) inserted.push(rows[0]);
@@ -213,16 +237,19 @@ export const syncToCharacterRecord = async (client, { sessionId, characterId }) 
   if (rows.length === 0) return null;
 
   const ls = rows[0];
+  const xpGained = ls.xp_gained ?? 0;
+
   const { rows: updated } = await client.query(
     `UPDATE public.characters
         SET hit_points = jsonb_build_object(
               'current', $2::int,
               'max', $3::int,
               'temporary', $4::int
-            )
+            ),
+            xp = COALESCE(xp, 0) + $5
       WHERE id = $1
-      RETURNING id, name, hit_points`,
-    [characterId, ls.hp_current, ls.hp_max, ls.hp_temporary],
+      RETURNING id, name, hit_points, xp`,
+    [characterId, ls.hp_current, ls.hp_max, ls.hp_temporary, xpGained],
   );
 
   return updated[0] ?? null;

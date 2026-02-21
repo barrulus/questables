@@ -34,6 +34,15 @@ export const REALTIME_EVENTS = {
   combatEnded: 'combat-ended',
   combatBudgetChanged: 'combat-budget-changed',
   concentrationCheck: 'concentration-check',
+  // WS5: Rest events
+  restStarted: 'rest-started',
+  hitDiceSpent: 'hit-dice-spent',
+  restCompleted: 'rest-completed',
+  // WS6: Death save & levelling events
+  deathSaveRolled: 'death-save-rolled',
+  characterDied: 'character-died',
+  characterStabilized: 'character-stabilized',
+  levelUpAvailable: 'level-up-available',
 };
 
 const CAMPAIGN_ROOM_PREFIX = 'campaign-';

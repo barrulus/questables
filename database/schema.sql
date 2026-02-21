@@ -245,6 +245,7 @@ CREATE TABLE IF NOT EXISTS public.characters (
     bonds TEXT,
     flaws TEXT,
     spellcasting JSONB,
+    xp INTEGER NOT NULL DEFAULT 0,
     created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW() NOT NULL,
     updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW() NOT NULL,
     last_played TIMESTAMP WITH TIME ZONE

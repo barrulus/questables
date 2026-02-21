@@ -159,6 +159,52 @@ export const listNpcRelationships = async (npcId) => {
   return rows;
 };
 
+/**
+ * Write an NPC memory internally (server-side, no DM auth check).
+ * Used by automated systems like social dialogue auto-memory.
+ */
+export const writeNpcMemoryInternal = async (client, {
+  npcId,
+  campaignId,
+  sessionId,
+  summary,
+  sentiment,
+  trustDelta,
+  tags,
+  characterId,
+}) => {
+  // Insert memory
+  const { rows } = await client.query(
+    `INSERT INTO public.npc_memories (
+        npc_id, campaign_id, session_id, narrative_id,
+        memory_summary, sentiment, trust_delta, tags
+     ) VALUES ($1, $2, $3, NULL, $4, $5, $6, $7)
+     RETURNING id, npc_id, campaign_id, session_id, memory_summary, sentiment, trust_delta, tags, created_at`,
+    [
+      npcId,
+      campaignId,
+      sessionId ?? null,
+      summary,
+      sentiment,
+      trustDelta,
+      tags && tags.length > 0 ? tags : null,
+    ],
+  );
+
+  // Upsert trust delta total on the relationship
+  if (characterId) {
+    await client.query(
+      `INSERT INTO public.npc_relationships (npc_id, target_id, target_type, relationship_type, strength)
+       VALUES ($1, $2, 'character', 'acquaintance', $3)
+       ON CONFLICT (npc_id, target_type, target_id) DO UPDATE
+         SET strength = COALESCE(npc_relationships.strength, 0) + $3`,
+      [npcId, characterId, trustDelta],
+    );
+  }
+
+  return rows[0];
+};
+
 export const createNpcSentimentMemory = async ({
   npcId,
   user,

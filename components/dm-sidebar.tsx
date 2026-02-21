@@ -1546,6 +1546,74 @@ export function DMSidebar() {
                         </div>
                       </div>
                     )}
+
+                    {/* Rest controls */}
+                    {gameState.phase !== "rest" && gameState.phase !== "combat" && (
+                      <div className="space-y-2">
+                        <Label>Start Rest</Label>
+                        <div className="flex gap-2">
+                          <Button
+                            variant="outline"
+                            size="sm"
+                            onClick={() => {
+                              void fetchJson(`/api/campaigns/${activeCampaignId}/rest/start`, {
+                                method: "POST",
+                                headers: { "Content-Type": "application/json" },
+                                body: JSON.stringify({ restType: "short" }),
+                              }).catch((err: Error) => {
+                                toast.error(err.message || "Failed to start short rest");
+                              });
+                            }}
+                          >
+                            Short Rest
+                          </Button>
+                          <Button
+                            variant="outline"
+                            size="sm"
+                            onClick={() => {
+                              void fetchJson(`/api/campaigns/${activeCampaignId}/rest/start`, {
+                                method: "POST",
+                                headers: { "Content-Type": "application/json" },
+                                body: JSON.stringify({ restType: "long" }),
+                              }).catch((err: Error) => {
+                                toast.error(err.message || "Failed to start long rest");
+                              });
+                            }}
+                          >
+                            Long Rest
+                          </Button>
+                        </div>
+                      </div>
+                    )}
+
+                    {/* Milestone level-up */}
+                    {players.length > 0 && (
+                      <div className="space-y-2">
+                        <Label>Milestone Level Up</Label>
+                        <div className="flex flex-wrap gap-2">
+                          {players.map((p) => (
+                            <Button
+                              key={p.id}
+                              variant="outline"
+                              size="sm"
+                              onClick={() => {
+                                void fetchJson(`/api/campaigns/${activeCampaignId}/characters/${p.characterId}/milestone-level-up`, {
+                                  method: "POST",
+                                  headers: { "Content-Type": "application/json" },
+                                  body: JSON.stringify({ hpChoice: "average" }),
+                                }).then(() => {
+                                  toast.success(`${p.name} levelled up!`);
+                                }).catch((err: Error) => {
+                                  toast.error(err.message || "Failed to level up");
+                                });
+                              }}
+                            >
+                              {p.name}
+                            </Button>
+                          ))}
+                        </div>
+                      </div>
+                    )}
                   </>
                 )}
               </div>

@@ -246,6 +246,7 @@ All geometry columns use SRID 0 (unitless pixel space from Azgaar's Fantasy Map 
 | bonds | TEXT | |
 | flaws | TEXT | |
 | backstory | TEXT | |
+| xp | INTEGER | Default 0, accumulated experience points |
 
 ### Sessions & Encounters
 
@@ -353,7 +354,7 @@ Server-authoritative mutable character state during a session. Initialised from 
 | hp_temporary | INTEGER | Default 0 |
 | conditions | TEXT[] | Default `{}` |
 | spell_slots | JSONB | Default `{}` |
-| hit_dice | JSONB | Default `{}` |
+| hit_dice | JSONB | `{ die: "d8", total: 5, remaining: 5 }` |
 | class_resources | JSONB | Default `{}` |
 | inspiration | BOOLEAN | Default false |
 | concentration | JSONB | `{ spellName, startedRound }` or null |
@@ -395,7 +396,8 @@ Audit log for all game state mutations.
   "worldTurnPending": false,
   "encounterId": null,
   "phaseEnteredAt": "2026-02-20T00:00:00Z",
-  "combatTurnBudget": null
+  "combatTurnBudget": null,
+  "restContext": null
 }
 ```
 
@@ -409,6 +411,17 @@ When in combat phase, `combatTurnBudget` contains:
   "reactionUsed": false
 }
 ```
+
+When in rest phase, `restContext` contains:
+
+```json
+{
+  "type": "short",
+  "startedAt": "2026-02-20T12:00:00Z"
+}
+```
+
+`type` is `"short"` or `"long"`. Set to `null` when not resting.
 
 ### Chat
 

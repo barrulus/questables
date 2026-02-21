@@ -66,6 +66,10 @@ interface ActionContextValue {
   processingActionId: string | null;
   awaitingRoll: RollRequest | null;
   lastNarration: string | null;
+  activeNpcId: string | null;
+  setActiveNpcId: (id: string | null) => void;
+  levelUpAvailable: { characterId: string; newLevel: number } | null;
+  setLevelUpAvailable: (data: { characterId: string; newLevel: number } | null) => void;
   declareAction: (type: ActionType, payload?: ActionPayload) => void;
   submitAction: () => Promise<void>;
   submitRollResult: (roll: RollSubmission) => Promise<void>;
@@ -90,6 +94,11 @@ export function ActionProvider({ children }: { children: ReactNode }) {
   const [processingActionId, setProcessingActionId] = useState<string | null>(null);
   const [awaitingRoll, setAwaitingRoll] = useState<RollRequest | null>(null);
   const [lastNarration, setLastNarration] = useState<string | null>(null);
+  const [activeNpcId, setActiveNpcId] = useState<string | null>(null);
+  const [levelUpAvailable, setLevelUpAvailable] = useState<{
+    characterId: string;
+    newLevel: number;
+  } | null>(null);
 
   const lastWsMsgCountRef = useRef(0);
 
@@ -123,6 +132,26 @@ export function ActionProvider({ children }: { children: ReactNode }) {
             setProcessingActionId(null);
             setAwaitingRoll(null);
             setPendingAction(null);
+          }
+          break;
+        }
+        case "game-phase-changed": {
+          const data = envelope.data as { newPhase?: string } | undefined;
+          if (data?.newPhase !== "social") {
+            setActiveNpcId(null);
+          }
+          break;
+        }
+        case "level-up-available": {
+          const data = envelope.data as {
+            characterId?: string;
+            newLevel?: number;
+          } | undefined;
+          if (data?.characterId && data?.newLevel) {
+            setLevelUpAvailable({
+              characterId: data.characterId,
+              newLevel: data.newLevel,
+            });
           }
           break;
         }
@@ -206,6 +235,10 @@ export function ActionProvider({ children }: { children: ReactNode }) {
     processingActionId,
     awaitingRoll,
     lastNarration,
+    activeNpcId,
+    setActiveNpcId,
+    levelUpAvailable,
+    setLevelUpAvailable,
     declareAction,
     submitAction,
     submitRollResult,

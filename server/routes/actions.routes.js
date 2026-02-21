@@ -14,13 +14,14 @@ import {
 import {
   buildActionContext,
   invokeDmForAction,
+  invokeDmForSocialAction,
   applyMechanicalOutcome,
 } from '../services/dm-action/service.js';
 import {
-  getLiveState,
   getAllLiveStates,
   patchLiveState,
 } from '../services/live-state/service.js';
+import { writeNpcMemoryInternal } from '../services/npcs/service.js';
 import { consumeAction } from '../services/combat/service.js';
 import { logError, logInfo } from '../utils/logger.js';
 
@@ -71,7 +72,11 @@ router.post(
       const gameState = session.game_state;
 
       // Validate turn ownership (DM can bypass)
+      // Social phase allows any player to act for dialogue actions
+      const socialBypass = gameState?.phase === 'social' &&
+        ['talk_to_npc', 'pass', 'free_action'].includes(actionType);
       if (
+        !socialBypass &&
         viewer.role !== 'dm' && viewer.role !== 'co-dm' && !viewer.isAdmin &&
         gameState?.activePlayerId && gameState.activePlayerId !== req.user.id
       ) {
@@ -185,11 +190,21 @@ router.post(
             gameState,
           });
 
-          const dmResponse = await invokeDmForAction(contextualService, {
-            campaignId,
-            sessionId: session.id,
-            actionContext,
-          });
+          // Use social prompt for social phase dialogue actions
+          const isSocialDialogue = gameState?.phase === 'social' &&
+            actionType === 'talk_to_npc' && actionContext.npcContext;
+
+          const dmResponse = isSocialDialogue
+            ? await invokeDmForSocialAction(contextualService, {
+                campaignId,
+                sessionId: session.id,
+                actionContext,
+              })
+            : await invokeDmForAction(contextualService, {
+                campaignId,
+                sessionId: session.id,
+                actionContext,
+              });
 
           // Check if rolls are required
           const needsRoll = Array.isArray(dmResponse.requiredRolls) && dmResponse.requiredRolls.length > 0;
@@ -202,6 +217,26 @@ router.post(
               mechanicalOutcome: dmResponse.mechanicalOutcome,
               actingCharacterId: characterId,
             });
+          }
+
+          // Auto-write NPC memory after social dialogue
+          if (isSocialDialogue && dmResponse.npcSentimentUpdate && finalStatus === 'completed') {
+            try {
+              await writeNpcMemoryInternal(asyncClient, {
+                npcId: actionPayload.npcId,
+                campaignId,
+                sessionId: session.id,
+                summary: dmResponse.npcSentimentUpdate.memorySummary ?? 'Conversation occurred.',
+                sentiment: dmResponse.npcSentimentUpdate.sentiment ?? 'neutral',
+                trustDelta: dmResponse.npcSentimentUpdate.trustDelta ?? 0,
+                tags: dmResponse.npcSentimentUpdate.tags ?? [],
+                characterId,
+              });
+            } catch (memError) {
+              logError('Failed to write NPC memory after social dialogue', memError, {
+                actionId: action.id, npcId: actionPayload.npcId,
+              });
+            }
           }
 
           // Update the action record

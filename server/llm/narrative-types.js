@@ -12,6 +12,7 @@ export const NARRATIVE_TYPES = Object.freeze({
   PLAYER_ACTION_RESPONSE: 'player_action_response',
   DM_WORLD_TURN: 'dm_world_turn',
   ENEMY_COMBAT_TURN: 'enemy_combat_turn',
+  SOCIAL_DIALOGUE: 'social_dialogue',
 });
 
 export const SUPPORTED_TYPES = new Set(Object.values(NARRATIVE_TYPES));

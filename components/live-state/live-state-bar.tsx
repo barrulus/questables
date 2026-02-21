@@ -1,6 +1,6 @@
 import { useLiveState } from "../../contexts/LiveStateContext";
 import { Badge } from "../ui/badge";
-import { Heart, Shield, Sparkles, CircleDot } from "lucide-react";
+import { Heart, Shield, Sparkles, CircleDot, Skull, Dice5 } from "lucide-react";
 
 function hpColor(current: number, max: number): string {
   if (max === 0) return "bg-muted";
@@ -69,6 +69,34 @@ export function LiveStateBar() {
           </span>
         </div>
       )}
+
+      {/* Death save counters (when unconscious) */}
+      {myLiveState.conditions.includes("unconscious") && (
+        <div className="flex items-center gap-1.5 text-xs">
+          <span className="text-green-500">
+            {myLiveState.death_saves.successes}/3
+          </span>
+          <Heart className="h-3 w-3 text-green-500" />
+          <span className="text-red-500">
+            {myLiveState.death_saves.failures}/3
+          </span>
+          <Skull className="h-3 w-3 text-red-500" />
+        </div>
+      )}
+
+      {/* Hit dice display */}
+      {myLiveState.hit_dice &&
+        typeof myLiveState.hit_dice === "object" &&
+        "remaining" in myLiveState.hit_dice && (
+          <div className="flex items-center gap-1">
+            <Dice5 className="h-3 w-3 text-muted-foreground" />
+            <span className="text-xs text-muted-foreground">
+              {(myLiveState.hit_dice as { remaining: number; total: number; die: string }).remaining}/
+              {(myLiveState.hit_dice as { remaining: number; total: number; die: string }).total}{" "}
+              {(myLiveState.hit_dice as { remaining: number; total: number; die: string }).die}
+            </span>
+          </div>
+        )}
 
       {/* Conditions */}
       {myLiveState.conditions.length > 0 && (

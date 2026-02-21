@@ -284,6 +284,36 @@ export const useWebSocket = (campaignId: string) => {
       setMessages((prev) => [...prev, { type: 'concentration-check', data }]);
     });
 
+    // WS5: Rest events
+    socket.on('rest-started', (data) => {
+      setMessages((prev) => [...prev, { type: 'rest-started', data }]);
+    });
+
+    socket.on('hit-dice-spent', (data) => {
+      setMessages((prev) => [...prev, { type: 'hit-dice-spent', data }]);
+    });
+
+    socket.on('rest-completed', (data) => {
+      setMessages((prev) => [...prev, { type: 'rest-completed', data }]);
+    });
+
+    // WS6: Death save & levelling events
+    socket.on('death-save-rolled', (data) => {
+      setMessages((prev) => [...prev, { type: 'death-save-rolled', data }]);
+    });
+
+    socket.on('character-died', (data) => {
+      setMessages((prev) => [...prev, { type: 'character-died', data }]);
+    });
+
+    socket.on('character-stabilized', (data) => {
+      setMessages((prev) => [...prev, { type: 'character-stabilized', data }]);
+    });
+
+    socket.on('level-up-available', (data) => {
+      setMessages((prev) => [...prev, { type: 'level-up-available', data }]);
+    });
+
     socket.on('error', (error) => {
       console.error('[Socket.io] Server error:', error);
     });

@@ -10,10 +10,13 @@ import { DM_RESPONSE_SCHEMA } from '../../llm/schemas/dm-response-schema.js';
 import {
   buildActionPrompt,
   buildWorldTurnPrompt,
+  buildSocialActionPrompt,
   DM_ACTION_SYSTEM_PROMPT,
   DM_WORLD_TURN_SYSTEM_PROMPT,
+  DM_SOCIAL_SYSTEM_PROMPT,
 } from '../../llm/context/action-prompt-builder.js';
 import { patchLiveState } from '../live-state/service.js';
+import { handleHpZero, handleHealingAtZero } from '../combat/death-saves.js';
 
 /**
  * Build action context by loading player-specific data from the DB.
@@ -73,6 +76,43 @@ export const buildActionContext = async (client, {
     .filter(Boolean)
     .reverse();
 
+  // Load NPC context for social dialogue actions
+  let npcContext = null;
+  if (actionType === 'talk_to_npc' && actionPayload?.npcId) {
+    const { rows: npcRows } = await client.query(
+      `SELECT id, name, race, occupation, personality, appearance, motivations, secrets, description
+         FROM public.npcs WHERE id = $1`,
+      [actionPayload.npcId],
+    );
+    const npc = npcRows[0] ?? null;
+
+    let memories = [];
+    let relationship = null;
+
+    if (npc) {
+      // Last 10 memories for this NPC in this campaign
+      const { rows: memRows } = await client.query(
+        `SELECT memory_summary, sentiment, trust_delta, tags, created_at
+           FROM public.npc_memories
+          WHERE npc_id = $1 AND campaign_id = $2
+          ORDER BY created_at DESC LIMIT 10`,
+        [actionPayload.npcId, campaignId],
+      );
+      memories = memRows.reverse();
+
+      // Relationship with the acting character
+      const { rows: relRows } = await client.query(
+        `SELECT relationship_type, description, strength
+           FROM public.npc_relationships
+          WHERE npc_id = $1 AND target_id = $2 AND target_type = 'character'`,
+        [actionPayload.npcId, characterId],
+      );
+      relationship = relRows[0] ?? null;
+    }
+
+    npcContext = { npc, memories, relationship };
+  }
+
   return {
     character,
     liveState,
@@ -86,6 +126,7 @@ export const buildActionContext = async (client, {
     },
     recentNarrations,
     gameState,
+    npcContext,
   };
 };
 
@@ -141,6 +182,49 @@ export const invokeDmForAction = async (contextualService, {
 };
 
 /**
+ * Invoke the LLM to resolve a social dialogue action with NPC context.
+ */
+export const invokeDmForSocialAction = async (contextualService, {
+  campaignId,
+  sessionId,
+  actionContext,
+  rollResult,
+}) => {
+  const prompt = buildSocialActionPrompt({
+    ...actionContext,
+    rollResult,
+  });
+
+  try {
+    const { result } = await contextualService.generateFromContext({
+      campaignId,
+      sessionId,
+      type: NARRATIVE_TYPES.SOCIAL_DIALOGUE,
+      metadata: { actionType: actionContext.actionType },
+      request: {
+        extraSections: prompt,
+      },
+    });
+
+    if (result.parsed) return result.parsed;
+    if (result.content) {
+      try {
+        return JSON.parse(result.content);
+      } catch {
+        return { narration: result.content };
+      }
+    }
+    return { narration: 'The NPC regards you thoughtfully...' };
+  } catch (error) {
+    logError('Social action LLM invocation failed', error, { campaignId, sessionId });
+    return {
+      narration: 'The NPC pauses, considering their response...',
+      _error: error.message,
+    };
+  }
+};
+
+/**
  * Apply mechanical outcomes from a DM response to live state.
  */
 export const applyMechanicalOutcome = async (client, {
@@ -176,31 +260,56 @@ export const applyMechanicalOutcome = async (client, {
 
       const newHp = Math.max(0, current.hp_current - remaining);
 
-      return patchLiveState(client, {
+      const result = await patchLiveState(client, {
         sessionId,
         characterId: targetId,
         changes: { hp_current: newHp, hp_temporary: newTempHp },
         reason: `damage: ${amount}`,
         actorId: 'system',
       });
+
+      // Check for death at 0 HP
+      if (newHp === 0) {
+        await handleHpZero(client, {
+          sessionId,
+          characterId: targetId,
+          damageAmount: amount,
+          isCritical: mechanicalOutcome.isCritical ?? false,
+        });
+      }
+
+      return result;
     }
 
     case 'healing': {
       const { rows } = await client.query(
-        `SELECT hp_current, hp_max FROM public.session_live_states
+        `SELECT hp_current, hp_max, conditions FROM public.session_live_states
           WHERE session_id = $1 AND character_id = $2`,
         [sessionId, targetId],
       );
       if (rows.length === 0) return null;
 
+      const wasAtZero = rows[0].hp_current === 0;
       const newHp = Math.min(rows[0].hp_max, rows[0].hp_current + amount);
-      return patchLiveState(client, {
+
+      const result = await patchLiveState(client, {
         sessionId,
         characterId: targetId,
         changes: { hp_current: newHp },
         reason: `healing: ${amount}`,
         actorId: 'system',
       });
+
+      // Revive from unconscious if healed above 0
+      if (wasAtZero && newHp > 0 && (rows[0].conditions || []).includes('unconscious')) {
+        await handleHealingAtZero(client, {
+          sessionId,
+          characterId: targetId,
+          healAmount: amount,
+        });
+      }
+
+      return result;
     }
 
     case 'condition_add': {
@@ -251,7 +360,7 @@ export const applyMechanicalOutcome = async (client, {
     }
 
     case 'spell_slot_use': {
-      // Decrement a spell slot level
+      // Decrement a spell slot level — uses { max, used } format from stats-engine
       const { rows } = await client.query(
         `SELECT spell_slots FROM public.session_live_states
           WHERE session_id = $1 AND character_id = $2`,
@@ -261,10 +370,11 @@ export const applyMechanicalOutcome = async (client, {
 
       const slotLevel = mechanicalOutcome.resourceName ?? '1';
       const slots = { ...(rows[0].spell_slots || {}) };
-      if (slots[slotLevel] && typeof slots[slotLevel] === 'object') {
-        const current = slots[slotLevel].current ?? slots[slotLevel].remaining ?? 0;
-        if (current > 0) {
-          slots[slotLevel] = { ...slots[slotLevel], current: current - 1, remaining: current - 1 };
+      const slot = slots[slotLevel];
+      if (slot && typeof slot === 'object') {
+        const available = (slot.max ?? 0) - (slot.used ?? 0);
+        if (available > 0) {
+          slots[slotLevel] = { ...slot, used: (slot.used ?? 0) + 1 };
         }
       }
 

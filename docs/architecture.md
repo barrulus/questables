@@ -102,6 +102,8 @@ server/
 │   ├── auth.routes.js
 │   ├── campaigns.routes.js
 │   ├── game-state.routes.js
+│   ├── rest.routes.js          # Rest phase endpoints (WS5)
+│   ├── levelling.routes.js     # Level-up endpoints (WS6)
 │   └── ...
 ├── services/         # Business logic
 │   ├── campaigns/
@@ -114,11 +116,16 @@ server/
 │   │   └── service.js        # LLM action processing pipeline (WS3)
 │   ├── combat/
 │   │   ├── service.js          # Combat initiation, turn budget, resolution (WS4)
-│   │   └── enemy-turn-service.js # LLM-controlled enemy turns (WS4)
+│   │   ├── enemy-turn-service.js # LLM-controlled enemy turns (WS4)
+│   │   └── death-saves.js      # Death save logic, HP-zero handling (WS6)
 │   ├── live-state/
 │   │   └── service.js        # Session-scoped mutable character state (WS3)
 │   ├── regions/
 │   │   └── trigger-service.js # Map region entry detection (WS3)
+│   ├── rest/
+│   │   └── service.js        # Short/long rest mechanics, hit die spending (WS5)
+│   ├── levelling/
+│   │   └── service.js        # XP thresholds, level-up application (WS6)
 │   ├── srd/
 │   │   ├── service.js
 │   │   └── stats-engine.js
@@ -161,9 +168,13 @@ components/
 ├── action-panel/          # Player action declaration (WS3)
 │   ├── action-panel.tsx     # Main panel (visible on player's turn)
 │   ├── action-grid.tsx      # Action type buttons (move, search, cast, etc.)
-│   └── roll-prompt.tsx      # Dice roll submission UI
+│   ├── roll-prompt.tsx      # Dice roll submission UI
+│   ├── npc-picker.tsx       # NPC selection for social phase (WS5)
+│   ├── social-action-grid.tsx # Social action buttons (WS5)
+│   ├── rest-panel.tsx       # Rest phase UI — hit dice, rest completion (WS5)
+│   └── death-save-panel.tsx # Death save UI — roll saves at 0 HP (WS6)
 ├── live-state/            # Session-scoped character state (WS3)
-│   └── live-state-bar.tsx   # Compact HP bar + conditions display
+│   └── live-state-bar.tsx   # Compact HP bar + conditions + death saves + hit dice display
 ├── chat-channel-tabs.tsx  # Chat channel tab bar (party/whisper/narration/private)
 ├── openlayers-map.tsx     # Main game map
 ├── campaign-prep-map.tsx  # DM preparation map

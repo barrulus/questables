@@ -244,6 +244,59 @@ router.post('/npcs/:npcId/relationships', async (req, res) => {
   }
 });
 
+router.get(
+  '/campaigns/:campaignId/npcs/:npcId/memories',
+  requireAuth,
+  [
+    param('campaignId').isUUID(),
+    param('npcId').isUUID(),
+  ],
+  handleValidationErrors,
+  async (req, res) => {
+    const { campaignId, npcId } = req.params;
+    const { getClient } = await import('../db/pool.js');
+    const { getViewerContextOrThrow } = await import('../services/campaigns/service.js');
+    const client = await getClient({ label: 'npcs.memories.list' });
+
+    try {
+      await getViewerContextOrThrow(client, campaignId, req.user);
+
+      const { rows: memories } = await client.query(
+        `SELECT nm.id, nm.memory_summary, nm.sentiment, nm.trust_delta, nm.tags, nm.created_at
+           FROM public.npc_memories nm
+          WHERE nm.npc_id = $1 AND nm.campaign_id = $2
+          ORDER BY nm.created_at DESC
+          LIMIT 20`,
+        [npcId, campaignId],
+      );
+
+      // Also get relationships for this NPC
+      const { rows: relationships } = await client.query(
+        `SELECT nr.target_id, nr.target_type, nr.relationship_type, nr.strength,
+                CASE
+                  WHEN nr.target_type = 'character' THEN c.name
+                  ELSE NULL
+                END AS target_name
+           FROM public.npc_relationships nr
+           LEFT JOIN public.characters c ON nr.target_type = 'character' AND nr.target_id = c.id
+          WHERE nr.npc_id = $1
+          ORDER BY nr.strength DESC NULLS LAST`,
+        [npcId],
+      );
+
+      res.json({ memories, relationships });
+    } catch (error) {
+      logError('NPC memories list failed', error, { campaignId, npcId });
+      res.status(error.status || 500).json({
+        error: error.code || 'npc_memories_failed',
+        message: error.message || 'Failed to list NPC memories',
+      });
+    } finally {
+      client.release();
+    }
+  },
+);
+
 router.get('/npcs/:npcId/relationships', async (req, res) => {
   const { npcId } = req.params;
 

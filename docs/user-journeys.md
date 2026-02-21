@@ -716,6 +716,68 @@ Budget is tracked per-turn in `game_state.combatTurnBudget` and reset on turn ad
 - `PUT /api/encounter-participants/{participantId}` — Update HP/conditions
 - `POST /api/campaigns/{campaignId}/combat/end` — End combat (DM only), distributes XP, transitions phase
 
+### Social Phase (WS5)
+
+When the DM transitions to social phase, players can interact with NPCs through dialogue:
+
+1. **NPC Selection** — Player selects `talk_to_npc` action → `NpcPicker` component shows campaign NPCs (name, occupation)
+2. **Social Actions** — After selecting an NPC, `SocialActionGrid` replaces the standard action grid:
+   - **Speak** — Free text dialogue input
+   - **Persuade** / **Deceive** / **Intimidate** / **Insight** — Skill-based social actions
+   - **Leave** — Exit social interaction (submits `pass`)
+3. **LLM Resolution** — Server uses `DM_SOCIAL_SYSTEM_PROMPT` to have the LLM respond in-character as the NPC, using personality, memories, and relationship context
+4. **Memory Auto-Write** — After dialogue, the server automatically records an NPC memory with trust delta and sentiment
+5. **Turn Bypass** — During social phase, any player can speak to the NPC without waiting for their turn (for `talk_to_npc`, `pass`, `free_action`)
+
+### Rest Phase (WS5)
+
+**Short Rest:**
+1. DM clicks "Short Rest" in DM sidebar → `POST /rest/start` with `restType: 'short'`
+2. Phase transitions to `rest`, `RestPanel` replaces action grid
+3. Each PC sees their HP bar + hit dice remaining (e.g., "3/5 d8")
+4. Players click "Spend Hit Die" → rolls hit die + CON modifier → heals HP
+5. DM clicks "Complete Rest" → `POST /rest/complete` → phase returns to exploration
+
+**Long Rest:**
+1. DM clicks "Long Rest" → `POST /rest/start` with `restType: 'long'`
+2. Server rolls for random encounter (15% chance on d20 roll 1-3)
+3. `RestPanel` shows "Resting..." with DM "Complete Rest" button
+4. On completion: full HP restored, all spell slots reset, half hit dice regained (min 1), death saves cleared, concentration cleared
+
+### Death Saves (WS6)
+
+When a character drops to 0 HP:
+1. **Instant death check** — if damage exceeds `hp_max`, character dies immediately
+2. **Already unconscious** — taking damage at 0 HP = automatic death save failure (2 on critical hit)
+3. **Newly at 0 HP** — `unconscious` condition added, death saves reset to `{successes: 0, failures: 0}`
+
+On the unconscious character's turn, `DeathSavePanel` replaces the action grid:
+- Shows skull icons (failures) and heart icons (successes), 0-3 each
+- "Roll Death Save" button → rolls d20 client-side → `POST /death-save`
+- **Nat 20** — regain 1 HP, remove unconscious, reset death saves
+- **Nat 1** — 2 failures (may trigger death)
+- **10+** — 1 success (3 successes = stabilized)
+- **2-9** — 1 failure (3 failures = dead)
+
+**Healing at Zero:** When healed above 0 HP, unconscious is removed and death saves reset.
+
+### Levelling (WS6)
+
+**XP-Based Level-Up:**
+1. After combat ends or rest completes, server calls `checkLevelUps()`
+2. If character XP exceeds D&D 5e threshold for next level, `level-up-available` WS event sent privately
+3. `LevelUpModal` appears with:
+   - "Roll Hit Die" (1dN + CON) or "Take Average" (ceil(N/2) + 1 + CON)
+   - New class features at this level
+   - New spell slots if applicable
+   - ASI/Feat notification at levels 4, 8, 12, 16, 19
+4. Player confirms → `POST /level-up` → character level, HP, spell slots updated
+
+**Milestone Level-Up (DM Only):**
+1. DM clicks "Level Up" button next to a player in the DM sidebar
+2. Same modal flow but bypasses XP check
+3. `POST /milestone-level-up` (DM auth required)
+
 ---
 
 ## 10. Narrative System
@@ -858,9 +920,13 @@ ROOT
    │  ├─ Session Notes
    │  └─ Settings
    ├─ Map Panel (OpenLayers with feature layers)
-   ├─ Action Panel (visible on player's turn, phase !== rest)
+   ├─ Action Panel (visible on player's turn)
    │  ├─ Action Grid: Move, Interact, Search, Use Item, Cast Spell, Talk to NPC, Pass, Free Action
    │  │  └─ Combat actions (phase=combat): Attack, Dash, Dodge, Disengage, Help, Hide, Ready
+   │  ├─ NPC Picker: NPC selection grid (social phase only)
+   │  ├─ Social Action Grid: Speak/Persuade/Deceive/Intimidate/Insight/Leave (social + NPC selected)
+   │  ├─ Rest Panel: Hit dice spending (short) / rest completion (long) (rest phase)
+   │  ├─ Death Save Panel: Death save rolls at 0 HP (unconscious + your turn)
    │  ├─ Combat Budget Bar: Action/Bonus Action/Movement/Reaction status (combat only)
    │  ├─ Enemy Turn Indicator: spinner when NPC is acting (combat only)
    │  ├─ Roll Prompt: natural/modifier/total inputs when DM requests a roll
@@ -969,6 +1035,7 @@ ROOT
 | PUT | `/api/campaigns/{id}/game-state/turn-order` | Reorder turns (DM only) |
 | POST | `/api/campaigns/{id}/game-state/skip-turn` | Skip a player's turn (DM only) |
 | POST | `/api/campaigns/{id}/combat/end` | End combat, distribute XP, return to exploration (DM only) |
+| POST | `/api/campaigns/{id}/death-save` | Roll death save for unconscious character, body: `{ characterId, roll }` |
 
 ### Actions & Live State
 | Method | Endpoint | Description |
@@ -993,6 +1060,19 @@ ROOT
 |--------|----------|-------------|
 | POST | `/api/campaigns/{id}/narratives/{type}` | Generate narrative (dm/scene/npc/action/quest) |
 
+### Rest
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| POST | `/api/campaigns/{id}/rest/start` | Start rest (DM only), body: `{ restType: 'short'\|'long' }` |
+| POST | `/api/campaigns/{id}/rest/spend-hit-die` | Spend hit die during short rest, body: `{ characterId }` |
+| POST | `/api/campaigns/{id}/rest/complete` | Complete rest and return to exploration (DM only) |
+
+### Levelling
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| POST | `/api/campaigns/{id}/characters/{charId}/level-up` | Level up character, body: `{ hpChoice: 'roll'\|'average' }` |
+| POST | `/api/campaigns/{id}/characters/{charId}/milestone-level-up` | Milestone level up (DM only) |
+
 ### NPCs
 | Method | Endpoint | Description |
 |--------|----------|-------------|
@@ -1000,6 +1080,7 @@ ROOT
 | POST | `/api/campaigns/{id}/npcs` | Create NPC |
 | PUT | `/api/npcs/{npcId}` | Update NPC |
 | DELETE | `/api/npcs/{npcId}` | Delete NPC |
+| GET | `/api/campaigns/{id}/npcs/{npcId}/memories` | NPC memories and relationships |
 
 ### Campaign Prep
 | Method | Endpoint | Description |
