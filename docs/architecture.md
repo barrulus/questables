@@ -101,10 +101,24 @@ server/
 ├── routes/           # HTTP endpoint definitions
 │   ├── auth.routes.js
 │   ├── campaigns.routes.js
+│   ├── game-state.routes.js
 │   └── ...
 ├── services/         # Business logic
 │   ├── campaigns/
 │   │   └── service.js
+│   ├── game-state/
+│   │   ├── service.js        # Core state machine (phase, turns)
+│   │   ├── transitions.js    # Phase transition rules
+│   │   └── turn-order.js     # Turn order computation
+│   ├── dm-action/
+│   │   └── service.js        # LLM action processing pipeline (WS3)
+│   ├── combat/
+│   │   ├── service.js          # Combat initiation, turn budget, resolution (WS4)
+│   │   └── enemy-turn-service.js # LLM-controlled enemy turns (WS4)
+│   ├── live-state/
+│   │   └── service.js        # Session-scoped mutable character state (WS3)
+│   ├── regions/
+│   │   └── trigger-service.js # Map region entry detection (WS3)
 │   ├── srd/
 │   │   ├── service.js
 │   │   └── stats-engine.js
@@ -112,7 +126,11 @@ server/
 └── llm/              # LLM provider abstraction
     ├── enhanced-llm-service.js
     ├── provider-registry.js
-    └── providers/
+    ├── providers/
+    ├── schemas/
+    │   └── dm-response-schema.js  # JSON schema for structured LLM output (WS3)
+    └── context/
+        └── action-prompt-builder.js # Action + world turn prompt construction (WS3)
 ```
 
 Routes handle HTTP concerns (parsing, validation, status codes). Services contain all business logic and database queries.
@@ -121,7 +139,7 @@ Routes handle HTTP concerns (parsing, validation, status codes). Services contai
 
 ### Key Patterns
 
-1. **Context API** — `UserContext` for auth state, `GameSessionContext` for active campaign/session
+1. **Context API** — `UserContext` for auth state, `GameSessionContext` for active campaign/session, `GameStateContext` for game phase/turn state, `ActionContext` for player action lifecycle, `LiveStateContext` for session-scoped mutable character state
 2. **Reducer pattern** — Character wizard uses `useReducer` for complex multi-step state
 3. **Singleton pattern** — `MapDataLoader` manages spatial data loading
 4. **Factory pattern** — Layer and style factories for OpenLayers configuration
@@ -137,6 +155,16 @@ components/
 ├── character-wizard/      # Character creation wizard (7 steps)
 │   ├── steps/             # Individual wizard steps
 │   └── preview/           # Live character preview panel
+├── game-state/            # Game phase & turn UI
+│   ├── phase-indicator.tsx  # Phase badge (exploration/combat/social/rest)
+│   └── turn-banner.tsx      # Turn status strip with action buttons
+├── action-panel/          # Player action declaration (WS3)
+│   ├── action-panel.tsx     # Main panel (visible on player's turn)
+│   ├── action-grid.tsx      # Action type buttons (move, search, cast, etc.)
+│   └── roll-prompt.tsx      # Dice roll submission UI
+├── live-state/            # Session-scoped character state (WS3)
+│   └── live-state-bar.tsx   # Compact HP bar + conditions display
+├── chat-channel-tabs.tsx  # Chat channel tab bar (party/whisper/narration/private)
 ├── openlayers-map.tsx     # Main game map
 ├── campaign-prep-map.tsx  # DM preparation map
 ├── player-dashboard.tsx   # Player home
@@ -163,6 +191,11 @@ components/
 | Provider-abstracted LLM | Swap Ollama for other providers without changing service code |
 | Ref-based OL callbacks | OpenLayers listeners must be stable references to avoid re-registration |
 | Server-side stat computation | Single source of truth for character stats via `/api/srd/compute-stats` |
+| Server-authoritative game state | Game phase/turn stored as JSONB on sessions, mutated via SELECT FOR UPDATE, logged to audit table |
+| Non-blocking LLM action calls | Action POST returns `{ actionId, status }` immediately; LLM runs async, results broadcast via WebSocket |
+| Server-authoritative live state | `session_live_states` table shadows mutable character fields during session; all mutations go through server PATCH |
+| Structured LLM output | Ollama `format` parameter enforces JSON schema on DM responses (narration, mechanical outcomes, required rolls, phase transitions) |
+| Channel-based chat routing | Private/whisper messages delivered only to sender+target via per-user socket tracking |
 
 ## Related Documentation
 

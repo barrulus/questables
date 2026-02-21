@@ -28,6 +28,12 @@ export const REALTIME_EVENTS = {
   liveStateChanged: 'live-state-changed',
   regionTriggered: 'region-triggered',
   worldTurnNarration: 'world-turn-narration',
+  // WS4: Combat events
+  enemyTurnStarted: 'enemy-turn-started',
+  enemyTurnCompleted: 'enemy-turn-completed',
+  combatEnded: 'combat-ended',
+  combatBudgetChanged: 'combat-budget-changed',
+  concentrationCheck: 'concentration-check',
 };
 
 const CAMPAIGN_ROOM_PREFIX = 'campaign-';
@@ -676,6 +682,75 @@ class WebSocketServer {
       event: 'world-turn-narration',
       sessionId,
     });
+  }
+
+  // ── WS4: Combat Events ────────────────────────────────────────────────
+
+  emitEnemyTurnStarted(campaignId, { sessionId, participantId, gameState }) {
+    const payload = {
+      sessionId,
+      participantId,
+      gameState,
+      emittedAt: new Date().toISOString(),
+    };
+    this.broadcastToCampaign(campaignId, REALTIME_EVENTS.enemyTurnStarted, payload, {
+      category: 'combat',
+      event: 'enemy-turn-started',
+      sessionId,
+      participantId,
+    });
+  }
+
+  emitEnemyTurnCompleted(campaignId, { sessionId, participantId, enemyName, outcome }) {
+    const payload = {
+      sessionId,
+      participantId,
+      enemyName,
+      outcome,
+      emittedAt: new Date().toISOString(),
+    };
+    this.broadcastToCampaign(campaignId, REALTIME_EVENTS.enemyTurnCompleted, payload, {
+      category: 'combat',
+      event: 'enemy-turn-completed',
+      sessionId,
+      participantId,
+    });
+  }
+
+  emitCombatEnded(campaignId, { sessionId, endCondition, xpAwarded, gameState }) {
+    const payload = {
+      sessionId,
+      endCondition,
+      xpAwarded,
+      gameState,
+      emittedAt: new Date().toISOString(),
+    };
+    this.broadcastToCampaign(campaignId, REALTIME_EVENTS.combatEnded, payload, {
+      category: 'combat',
+      event: 'combat-ended',
+      sessionId,
+      endCondition,
+    });
+  }
+
+  emitCombatBudgetChanged(campaignId, targetUserId, { sessionId, combatTurnBudget }) {
+    const payload = {
+      sessionId,
+      combatTurnBudget,
+      emittedAt: new Date().toISOString(),
+    };
+    this.emitToUser(campaignId, targetUserId, REALTIME_EVENTS.combatBudgetChanged, payload);
+  }
+
+  emitConcentrationCheck(campaignId, targetUserId, { sessionId, characterId, rollRequest, concentration }) {
+    const payload = {
+      sessionId,
+      characterId,
+      rollRequest,
+      concentration,
+      emittedAt: new Date().toISOString(),
+    };
+    this.emitToUser(campaignId, targetUserId, REALTIME_EVENTS.concentrationCheck, payload);
   }
 
   // ── Channel-aware Messaging ─────────────────────────────────────────────

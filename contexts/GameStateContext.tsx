@@ -19,6 +19,13 @@ import { apiFetch, readJsonBody, readErrorMessage } from "../utils/api-client";
 
 export type GamePhase = "exploration" | "combat" | "social" | "rest";
 
+export interface CombatTurnBudget {
+  actionUsed: boolean;
+  bonusActionUsed: boolean;
+  movementRemaining: number;
+  reactionUsed: boolean;
+}
+
 export interface GameState {
   phase: GamePhase;
   previousPhase: string | null;
@@ -28,6 +35,7 @@ export interface GameState {
   worldTurnPending: boolean;
   encounterId: string | null;
   phaseEnteredAt: string;
+  combatTurnBudget: CombatTurnBudget | null;
 }
 
 interface GameStateContextValue {
@@ -35,12 +43,15 @@ interface GameStateContextValue {
   sessionId: string | null;
   loading: boolean;
   isMyTurn: boolean;
+  isEnemyTurn: boolean;
   activePlayerName: string | null;
+  combatTurnBudget: CombatTurnBudget | null;
   changePhase: (phase: GamePhase, encounterId?: string) => Promise<void>;
   endTurn: () => Promise<void>;
   executeDmWorldTurn: () => Promise<void>;
   setTurnOrder: (order: string[]) => Promise<void>;
   skipTurn: (targetPlayerId: string) => Promise<void>;
+  endCombat: (endCondition: string) => Promise<void>;
 }
 
 // ---------------------------------------------------------------------------
@@ -144,6 +155,7 @@ export function GameStateProvider({ children }: { children: ReactNode }) {
         case "turn-advanced":
         case "world-turn-completed":
         case "turn-order-changed":
+        case "combat-ended":
           if (data?.gameState) {
             setGameState(data.gameState);
           }
@@ -151,6 +163,15 @@ export function GameStateProvider({ children }: { children: ReactNode }) {
             setSessionId(data.sessionId);
           }
           break;
+        case "combat-budget-changed": {
+          const budgetData = envelope.data as { combatTurnBudget?: CombatTurnBudget } | undefined;
+          if (budgetData?.combatTurnBudget) {
+            setGameState((prev) =>
+              prev ? { ...prev, combatTurnBudget: budgetData.combatTurnBudget! } : prev,
+            );
+          }
+          break;
+        }
       }
     }
 
@@ -163,10 +184,19 @@ export function GameStateProvider({ children }: { children: ReactNode }) {
     return gameState.activePlayerId === user.id;
   }, [gameState, user]);
 
+  const isEnemyTurn = useMemo(() => {
+    if (!gameState?.activePlayerId) return false;
+    return gameState.activePlayerId.startsWith("npc:");
+  }, [gameState?.activePlayerId]);
+
   const activePlayerName = useMemo(() => {
     if (!gameState?.activePlayerId) return null;
+    // For NPC turns, show the NPC participant ID prefix
+    if (gameState.activePlayerId.startsWith("npc:")) return null;
     return playerNames[gameState.activePlayerId] ?? null;
   }, [gameState?.activePlayerId, playerNames]);
+
+  const combatTurnBudget = gameState?.combatTurnBudget ?? null;
 
   // ── API actions ─────────────────────────────────────────────────────
   const changePhase = useCallback(
@@ -235,6 +265,26 @@ export function GameStateProvider({ children }: { children: ReactNode }) {
     [activeCampaignId],
   );
 
+  const endCombat = useCallback(
+    async (endCondition: string) => {
+      if (!activeCampaignId) return;
+      const response = await apiFetch(
+        `/api/campaigns/${activeCampaignId}/combat/end`,
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ endCondition }),
+        },
+      );
+      if (!response.ok) {
+        throw new Error(await readErrorMessage(response, "Failed to end combat"));
+      }
+      const payload = await readJsonBody<{ gameState: GameState }>(response);
+      setGameState(payload.gameState);
+    },
+    [activeCampaignId],
+  );
+
   const skipTurn = useCallback(
     async (targetPlayerId: string) => {
       if (!activeCampaignId) return;
@@ -260,12 +310,15 @@ export function GameStateProvider({ children }: { children: ReactNode }) {
     sessionId,
     loading,
     isMyTurn,
+    isEnemyTurn,
     activePlayerName,
+    combatTurnBudget,
     changePhase,
     endTurn,
     executeDmWorldTurn,
     setTurnOrder: setTurnOrderAction,
     skipTurn,
+    endCombat,
   };
 
   return (

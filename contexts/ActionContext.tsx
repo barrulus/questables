@@ -23,7 +23,14 @@ export type ActionType =
   | "cast_spell"
   | "talk_to_npc"
   | "pass"
-  | "free_action";
+  | "free_action"
+  | "attack"
+  | "dash"
+  | "dodge"
+  | "disengage"
+  | "help"
+  | "hide"
+  | "ready";
 
 export interface ActionPayload {
   [key: string]: unknown;

@@ -17,6 +17,7 @@ export const DM_RESPONSE_SCHEMA = {
           enum: [
             'damage', 'healing', 'condition_add', 'condition_remove',
             'item_gain', 'item_lose', 'resource_use',
+            'spell_slot_use', 'concentration_start', 'concentration_break',
           ],
         },
         targetCharacterId: { type: ['string', 'null'] },

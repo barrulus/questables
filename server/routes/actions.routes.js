@@ -21,6 +21,7 @@ import {
   getAllLiveStates,
   patchLiveState,
 } from '../services/live-state/service.js';
+import { consumeAction } from '../services/combat/service.js';
 import { logError, logInfo } from '../utils/logger.js';
 
 const router = Router();
@@ -28,6 +29,7 @@ const router = Router();
 const VALID_ACTION_TYPES = new Set([
   'move', 'interact', 'search', 'use_item', 'cast_spell',
   'talk_to_npc', 'pass', 'free_action',
+  'attack', 'dash', 'dodge', 'disengage', 'help', 'hide', 'ready',
 ]);
 
 // ── POST /api/campaigns/:id/actions ─────────────────────────────────────
@@ -87,6 +89,12 @@ router.post(
         throw err;
       }
 
+      // In combat phase, validate action against turn budget
+      let updatedBudget = null;
+      if (gameState?.phase === 'combat' && gameState.combatTurnBudget) {
+        updatedBudget = consumeAction(gameState.combatTurnBudget, actionType);
+      }
+
       // Get the player's character
       const { rows: playerRows } = await client.query(
         `SELECT character_id FROM public.campaign_players
@@ -120,7 +128,29 @@ router.post(
       );
 
       const action = actionRows[0];
+
+      // Update combat budget in game state if applicable
+      if (updatedBudget && gameState?.phase === 'combat') {
+        await client.query(
+          `UPDATE public.sessions
+              SET game_state = jsonb_set(game_state, '{combatTurnBudget}', $2::jsonb)
+            WHERE id = $1`,
+          [session.id, JSON.stringify(updatedBudget)],
+        );
+      }
+
       await client.query('COMMIT');
+
+      // Emit budget change via WebSocket
+      if (updatedBudget) {
+        const wsServer = req.app?.locals?.wsServer;
+        if (wsServer) {
+          wsServer.emitCombatBudgetChanged(campaignId, req.user.id, {
+            sessionId: session.id,
+            combatTurnBudget: updatedBudget,
+          });
+        }
+      }
 
       // Return immediately — LLM processing happens async
       res.status(202).json({

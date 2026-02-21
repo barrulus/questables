@@ -1,6 +1,6 @@
 import { useLiveState } from "../../contexts/LiveStateContext";
 import { Badge } from "../ui/badge";
-import { Heart, Shield, Sparkles } from "lucide-react";
+import { Heart, Shield, Sparkles, CircleDot } from "lucide-react";
 
 function hpColor(current: number, max: number): string {
   if (max === 0) return "bg-muted";
@@ -57,6 +57,16 @@ export function LiveStateBar() {
         <div className="flex items-center gap-1">
           <Sparkles className="h-3 w-3 text-yellow-500" />
           <span className="text-xs text-yellow-500">Inspired</span>
+        </div>
+      )}
+
+      {/* Concentration */}
+      {myLiveState.concentration && (
+        <div className="flex items-center gap-1">
+          <CircleDot className="h-3 w-3 text-purple-500" />
+          <span className="text-xs text-purple-500">
+            {myLiveState.concentration.spellName}
+          </span>
         </div>
       )}
 

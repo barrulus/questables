@@ -1,9 +1,9 @@
 import { useGameState } from "../../contexts/GameStateContext";
 import { Button } from "../ui/button";
-import { Clock } from "lucide-react";
+import { Clock, Loader2 } from "lucide-react";
 
 export function TurnBanner() {
-  const { gameState, isMyTurn, activePlayerName, endTurn, executeDmWorldTurn } = useGameState();
+  const { gameState, isMyTurn, isEnemyTurn, activePlayerName, combatTurnBudget, endTurn, executeDmWorldTurn } = useGameState();
 
   if (!gameState) return null;
 
@@ -14,6 +14,7 @@ export function TurnBanner() {
   if (gameState.turnOrder.length === 0) return null;
 
   const showWorldTurn = gameState.worldTurnPending;
+  const isCombat = gameState.phase === "combat";
 
   return (
     <div className="flex items-center justify-between border-b bg-muted/50 px-4 py-1.5 text-sm">
@@ -22,6 +23,11 @@ export function TurnBanner() {
         {showWorldTurn ? (
           <span className="font-medium text-amber-700">
             Waiting for DM world turn...
+          </span>
+        ) : isEnemyTurn ? (
+          <span className="flex items-center gap-1.5 font-medium text-red-600">
+            <Loader2 className="h-3 w-3 animate-spin" />
+            Enemy is acting...
           </span>
         ) : isMyTurn ? (
           <span className="font-semibold text-primary">Your turn!</span>
@@ -35,6 +41,14 @@ export function TurnBanner() {
         <span className="text-xs text-muted-foreground">
           Round {gameState.roundNumber}
         </span>
+        {/* Combat budget summary in banner */}
+        {isCombat && isMyTurn && combatTurnBudget && (
+          <span className="text-xs text-muted-foreground ml-2">
+            {!combatTurnBudget.actionUsed ? "Action ready" : "Action used"}
+            {" | "}
+            {combatTurnBudget.movementRemaining}ft
+          </span>
+        )}
       </div>
       <div className="flex items-center gap-2">
         {showWorldTurn && (

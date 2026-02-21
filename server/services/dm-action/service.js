@@ -250,10 +250,108 @@ export const applyMechanicalOutcome = async (client, {
       });
     }
 
+    case 'spell_slot_use': {
+      // Decrement a spell slot level
+      const { rows } = await client.query(
+        `SELECT spell_slots FROM public.session_live_states
+          WHERE session_id = $1 AND character_id = $2`,
+        [sessionId, targetId],
+      );
+      if (rows.length === 0) return null;
+
+      const slotLevel = mechanicalOutcome.resourceName ?? '1';
+      const slots = { ...(rows[0].spell_slots || {}) };
+      if (slots[slotLevel] && typeof slots[slotLevel] === 'object') {
+        const current = slots[slotLevel].current ?? slots[slotLevel].remaining ?? 0;
+        if (current > 0) {
+          slots[slotLevel] = { ...slots[slotLevel], current: current - 1, remaining: current - 1 };
+        }
+      }
+
+      return patchLiveState(client, {
+        sessionId,
+        characterId: targetId,
+        changes: { spell_slots: slots },
+        reason: `spell slot used: level ${slotLevel}`,
+        actorId: 'system',
+      });
+    }
+
+    case 'concentration_start': {
+      // Set concentration on the live state
+      const spellName = mechanicalOutcome.condition ?? mechanicalOutcome.itemName ?? 'Unknown Spell';
+      await client.query(
+        `UPDATE public.session_live_states
+            SET concentration = $3, updated_at = NOW()
+          WHERE session_id = $1 AND character_id = $2`,
+        [sessionId, targetId, JSON.stringify({ spellName, startedRound: Date.now() })],
+      );
+
+      logInfo('Concentration started', { characterId: targetId, spellName });
+      return { concentration: { spellName } };
+    }
+
+    case 'concentration_break': {
+      // Clear concentration
+      await client.query(
+        `UPDATE public.session_live_states
+            SET concentration = NULL, updated_at = NOW()
+          WHERE session_id = $1 AND character_id = $2`,
+        [sessionId, targetId],
+      );
+
+      logInfo('Concentration broken', { characterId: targetId });
+      return { concentration: null };
+    }
+
     default:
       logWarn('Unhandled mechanical outcome type', { type: mechanicalOutcome.type });
       return null;
   }
+};
+
+/**
+ * Check if a character has concentration and if damage should trigger a CON save.
+ * Returns a roll request object or null.
+ *
+ * @param {import('pg').PoolClient} client
+ * @param {{ sessionId: string, characterId: string, damageAmount: number }} opts
+ * @returns {Promise<object|null>} roll request or null
+ */
+export const checkConcentration = async (client, { sessionId, characterId, damageAmount }) => {
+  const { rows } = await client.query(
+    `SELECT concentration, user_id FROM public.session_live_states
+      WHERE session_id = $1 AND character_id = $2`,
+    [sessionId, characterId],
+  );
+
+  if (rows.length === 0 || !rows[0].concentration) return null;
+
+  const concentration = typeof rows[0].concentration === 'string'
+    ? JSON.parse(rows[0].concentration)
+    : rows[0].concentration;
+
+  if (!concentration?.spellName) return null;
+
+  const dc = Math.max(10, Math.floor(damageAmount / 2));
+
+  logInfo('Concentration check required', {
+    characterId,
+    spellName: concentration.spellName,
+    dc,
+    damageAmount,
+  });
+
+  return {
+    userId: rows[0].user_id,
+    rollRequest: {
+      rollType: 'saving_throw',
+      ability: 'constitution',
+      dc,
+      description: `Concentration save for ${concentration.spellName} (DC ${dc})`,
+    },
+    concentration,
+  };
 };
 
 /**

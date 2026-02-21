@@ -930,7 +930,8 @@ CREATE TABLE IF NOT EXISTS public.encounter_participants (
     hit_points JSONB NOT NULL DEFAULT '{"max": 0, "current": 0, "temporary": 0}'::jsonb,
     armor_class INTEGER NOT NULL DEFAULT 10,
     conditions JSONB DEFAULT '[]'::jsonb,
-    has_acted BOOLEAN DEFAULT false
+    has_acted BOOLEAN DEFAULT false,
+    user_id UUID REFERENCES public.user_profiles(id)
 );
 CREATE INDEX IF NOT EXISTS idx_encounter_participants_encounter_id ON public.encounter_participants(encounter_id);
 
@@ -1133,7 +1134,8 @@ CREATE TABLE IF NOT EXISTS public.session_player_actions (
     round_number INTEGER NOT NULL DEFAULT 1,
     action_type TEXT NOT NULL CHECK (action_type IN (
         'move', 'interact', 'search', 'use_item', 'cast_spell',
-        'talk_to_npc', 'pass', 'free_action'
+        'talk_to_npc', 'pass', 'free_action',
+        'attack', 'dash', 'dodge', 'disengage', 'help', 'hide', 'ready'
     )),
     action_payload JSONB NOT NULL DEFAULT '{}',
     dm_response JSONB,
@@ -1169,6 +1171,7 @@ CREATE TABLE IF NOT EXISTS public.session_live_states (
     inspiration BOOLEAN NOT NULL DEFAULT false,
     death_saves JSONB NOT NULL DEFAULT '{"successes": 0, "failures": 0}'::jsonb,
     xp_gained INTEGER NOT NULL DEFAULT 0,
+    concentration JSONB DEFAULT NULL,
     change_log JSONB NOT NULL DEFAULT '[]'::jsonb,
     created_at TIMESTAMPTZ DEFAULT NOW(),
     updated_at TIMESTAMPTZ DEFAULT NOW(),
@@ -1183,3 +1186,19 @@ FOR EACH ROW EXECUTE FUNCTION public.tg_touch_updated_at();
 
 -- WS3: free_movement flag on sessions
 ALTER TABLE public.sessions ADD COLUMN IF NOT EXISTS free_movement BOOLEAN NOT NULL DEFAULT false;
+
+-- WS4: Combat overhaul migrations
+ALTER TABLE public.encounter_participants ADD COLUMN IF NOT EXISTS user_id UUID REFERENCES public.user_profiles(id);
+ALTER TABLE public.session_live_states ADD COLUMN IF NOT EXISTS concentration JSONB DEFAULT NULL;
+
+-- WS4: Expand action_type CHECK to include combat types
+-- (DROP + ADD since ALTER CHECK is not supported in-place)
+ALTER TABLE public.session_player_actions
+  DROP CONSTRAINT IF EXISTS session_player_actions_action_type_check;
+ALTER TABLE public.session_player_actions
+  ADD CONSTRAINT session_player_actions_action_type_check
+  CHECK (action_type IN (
+    'move', 'interact', 'search', 'use_item', 'cast_spell',
+    'talk_to_npc', 'pass', 'free_action',
+    'attack', 'dash', 'dodge', 'disengage', 'help', 'hide', 'ready'
+  ));

@@ -263,6 +263,27 @@ export const useWebSocket = (campaignId: string) => {
       setMessages((prev) => [...prev, { type: 'world-turn-narration', data }]);
     });
 
+    // WS4: Combat events
+    socket.on('enemy-turn-started', (data) => {
+      setMessages((prev) => [...prev, { type: 'enemy-turn-started', data }]);
+    });
+
+    socket.on('enemy-turn-completed', (data) => {
+      setMessages((prev) => [...prev, { type: 'enemy-turn-completed', data }]);
+    });
+
+    socket.on('combat-ended', (data) => {
+      setMessages((prev) => [...prev, { type: 'combat-ended', data }]);
+    });
+
+    socket.on('combat-budget-changed', (data) => {
+      setMessages((prev) => [...prev, { type: 'combat-budget-changed', data }]);
+    });
+
+    socket.on('concentration-check', (data) => {
+      setMessages((prev) => [...prev, { type: 'concentration-check', data }]);
+    });
+
     socket.on('error', (error) => {
       console.error('[Socket.io] Server error:', error);
     });

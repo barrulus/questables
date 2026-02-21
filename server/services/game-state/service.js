@@ -12,6 +12,7 @@
 import { logInfo } from '../../utils/logger.js';
 import { validatePhaseTransition, VALID_PHASES } from './transitions.js';
 import { buildTurnOrder } from './turn-order.js';
+import { resetTurnBudget } from '../combat/service.js';
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -26,6 +27,7 @@ const DEFAULT_GAME_STATE = {
   worldTurnPending: false,
   encounterId: null,
   phaseEnteredAt: null, // set at write time
+  combatTurnBudget: null, // populated during combat phase
 };
 
 /**
@@ -168,15 +170,20 @@ export const changePhase = async (client, sessionId, { newPhase, encounterId, ac
   const turnOrder = await buildTurnOrder(client, row.campaign_id, sessionId, newPhase, { encounterId });
   const now = new Date().toISOString();
 
+  const firstPlayer = turnOrder[0] ?? null;
+  const firstIsNpc = typeof firstPlayer === 'string' && firstPlayer.startsWith('npc:');
+  const isCombat = newPhase === 'combat';
+
   const newState = {
     phase: newPhase,
     previousPhase: prev.phase,
     turnOrder,
-    activePlayerId: turnOrder[0] ?? null,
+    activePlayerId: firstPlayer,
     roundNumber: 1,
     worldTurnPending: false,
     encounterId: encounterId ?? null,
     phaseEnteredAt: now,
+    combatTurnBudget: isCombat && !firstIsNpc ? resetTurnBudget() : null,
   };
 
   await persistAndLog(client, {
@@ -232,11 +239,17 @@ export const endTurn = async (client, sessionId, { actorId }) => {
   const nextIndex = (currentIndex + 1) % prev.turnOrder.length;
   const roundComplete = nextIndex === 0 && currentIndex >= 0;
 
+  const nextPlayerId = prev.turnOrder[nextIndex];
+  const isCombat = prev.phase === 'combat';
+  const nextIsNpc = typeof nextPlayerId === 'string' && nextPlayerId.startsWith('npc:');
+
   const newState = {
     ...prev,
-    activePlayerId: prev.turnOrder[nextIndex],
+    activePlayerId: nextPlayerId,
     roundNumber: roundComplete ? prev.roundNumber + 1 : prev.roundNumber,
     worldTurnPending: roundComplete,
+    // Reset combat budget on turn advance in combat phase
+    combatTurnBudget: isCombat && !nextIsNpc ? resetTurnBudget() : null,
   };
 
   await persistAndLog(client, {
@@ -246,7 +259,7 @@ export const endTurn = async (client, sessionId, { actorId }) => {
     actorId,
     previousState: prev,
     newState,
-    metadata: { roundComplete },
+    metadata: { roundComplete, nextIsNpc },
   });
 
   logInfo('Turn advanced', {
@@ -256,6 +269,7 @@ export const endTurn = async (client, sessionId, { actorId }) => {
     nextPlayer: newState.activePlayerId,
     roundNumber: newState.roundNumber,
     roundComplete,
+    nextIsNpc,
   });
 
   return { campaignId: row.campaign_id, newState };

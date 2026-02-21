@@ -31,9 +31,9 @@ Events sent from the browser to the server:
 |-------|---------|-------------|
 | `join-campaign` | `{ campaignId }` | Join a campaign room |
 | `leave-campaign` | `{ campaignId }` | Leave a campaign room |
-| `chat-message` | `{ campaignId, content, type, ... }` | Send a chat message |
-| `typing-start` | `{ campaignId }` | User started typing |
-| `typing-stop` | `{ campaignId }` | User stopped typing |
+| `chat-message` | `{ campaignId, content, type, channel_type?, channel_target_user_id?, ... }` | Send a chat message (channel-aware) |
+| `typing-start` | `{ campaignId }` or `{ campaignId, targetUserId }` | User started typing (channel-aware) |
+| `typing-stop` | `{ campaignId }` or `{ campaignId, targetUserId }` | User stopped typing (channel-aware) |
 | `combat-update` | `{ campaignId, combatState }` | Update combat tracker state |
 | `character-update` | `{ campaignId, characterId, data }` | Update character data |
 | `session-update` | `{ campaignId, sessionData }` | Update session state |
@@ -74,6 +74,40 @@ These events are emitted by server-side operations (not triggered by client sock
 | `unplannedEncounterCreated` | `unplanned-encounter-created` | Ad-hoc encounter started |
 | `npcSentimentAdjusted` | `npc-sentiment-adjusted` | NPC trust/sentiment changed |
 | `npcTeleported` | `npc-teleported` | NPC moved to new location |
+| `gamePhaseChanged` | `game-phase-changed` | Game phase transitioned (exploration/combat/social/rest) |
+| `turnAdvanced` | `turn-advanced` | Active player turn advanced |
+| `worldTurnCompleted` | `world-turn-completed` | DM world turn completed, new round begins |
+| `turnOrderChanged` | `turn-order-changed` | Turn order reordered by DM |
+
+### WS3 — Action & Live State Events
+
+| Event Key | Socket Event | Trigger | Delivery |
+|-----------|-------------|---------|----------|
+| `dmNarration` | `dm-narration` | LLM produces narration for a player action | Broadcast to campaign |
+| `rollRequested` | `roll-requested` | LLM requests a roll from a player | Private to rolling player (`emitToUser`) |
+| `actionCompleted` | `action-completed` | Player action fully resolved | Broadcast to campaign |
+| `liveStateChanged` | `live-state-changed` | HP, conditions, or other live state mutated | Broadcast to campaign |
+| `regionTriggered` | `region-triggered` | Player movement enters a map region | Broadcast to campaign |
+| `worldTurnNarration` | `world-turn-narration` | DM world turn LLM narration | Broadcast to campaign |
+
+### WS4 — Combat Events
+
+| Event Key | Socket Event | Trigger | Delivery |
+|-----------|-------------|---------|----------|
+| `enemyTurnStarted` | `enemy-turn-started` | Initiative advances to an NPC combatant | Broadcast to campaign |
+| `enemyTurnCompleted` | `enemy-turn-completed` | LLM-controlled enemy turn finishes | Broadcast to campaign |
+| `combatEnded` | `combat-ended` | DM ends combat (victory/fled/parley) | Broadcast to campaign |
+| `combatBudgetChanged` | `combat-budget-changed` | Player uses combat action that consumes budget | Private to active player (`emitToUser`) |
+| `concentrationCheck` | `concentration-check` | Concentrating character takes damage | Private to affected player (`emitToUser`) |
+
+### Channel-Aware Message Delivery
+
+Chat messages and typing indicators are now channel-aware:
+
+- **party** / **dm_broadcast** messages: broadcast to entire campaign room (existing behaviour)
+- **private** / **dm_whisper** messages: delivered only to sender + target via `emitToUser()` helper
+
+The server maintains a user→socket mapping within each campaign room to enable targeted delivery.
 
 ## Usage Example
 

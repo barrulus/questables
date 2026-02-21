@@ -34,6 +34,7 @@ export interface LiveCharacterState {
   inspiration: boolean;
   death_saves: { successes: number; failures: number };
   xp_gained: number;
+  concentration: { spellName: string; startedRound?: number } | null;
 }
 
 export interface LiveStateChanges {

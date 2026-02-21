@@ -208,6 +208,7 @@ export function DMSidebar() {
     endTurn: endGameTurn,
     executeDmWorldTurn,
     skipTurn: skipGameTurn,
+    endCombat,
   } = useGameState();
 
   const [sessions, setSessions] = useState<SessionSidebarRecord[]>([]);
@@ -1435,27 +1436,31 @@ export function DMSidebar() {
                         <p className="text-sm text-muted-foreground">No turn order (rest phase).</p>
                       ) : (
                         <div className="space-y-1">
-                          {gameState.turnOrder.map((userId, index) => {
-                            const player = players.find((p) => p.id === userId);
-                            const isActive = gameState.activePlayerId === userId;
+                          {gameState.turnOrder.map((turnId, index) => {
+                            const isNpc = turnId.startsWith("npc:");
+                            const player = isNpc ? null : players.find((p) => p.id === turnId);
+                            const displayName = isNpc
+                              ? `NPC (${turnId.replace("npc:", "").slice(0, 8)})`
+                              : (player?.name ?? turnId.slice(0, 8));
+                            const isActive = gameState.activePlayerId === turnId;
                             return (
                               <div
-                                key={userId}
+                                key={turnId}
                                 className={`flex items-center justify-between rounded px-2 py-1 text-sm ${
                                   isActive ? "bg-primary/10 font-semibold" : ""
-                                }`}
+                                }${isNpc ? " text-red-600" : ""}`}
                               >
                                 <span>
-                                  {index + 1}. {player?.name ?? userId.slice(0, 8)}
+                                  {index + 1}. {displayName}
                                   {isActive && " (active)"}
                                 </span>
-                                {isActive && (
+                                {isActive && !isNpc && (
                                   <Button
                                     variant="ghost"
                                     size="sm"
                                     className="h-6 px-2 text-xs"
                                     onClick={() => {
-                                      void skipGameTurn(userId).catch((err: Error) => {
+                                      void skipGameTurn(turnId).catch((err: Error) => {
                                         toast.error(err.message || "Failed to skip turn");
                                       });
                                     }}
@@ -1511,6 +1516,36 @@ export function DMSidebar() {
                         </div>
                       )}
                     </div>
+
+                    {/* End Combat controls */}
+                    {gameState.phase === "combat" && (
+                      <div className="space-y-2">
+                        <Label>End Combat</Label>
+                        <div className="flex flex-wrap gap-2">
+                          {(
+                            [
+                              { value: "victory", label: "Victory" },
+                              { value: "enemies_fled", label: "Enemies Fled" },
+                              { value: "party_fled", label: "Party Fled" },
+                              { value: "parley", label: "Parley" },
+                            ] as const
+                          ).map((opt) => (
+                            <Button
+                              key={opt.value}
+                              variant="outline"
+                              size="sm"
+                              onClick={() => {
+                                void endCombat(opt.value).catch((err: Error) => {
+                                  toast.error(err.message || "Failed to end combat");
+                                });
+                              }}
+                            >
+                              {opt.label}
+                            </Button>
+                          ))}
+                        </div>
+                      </div>
+                    )}
                   </>
                 )}
               </div>

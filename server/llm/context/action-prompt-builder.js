@@ -12,6 +12,13 @@ const ACTION_TYPE_LABELS = {
   talk_to_npc: 'Talk to an NPC',
   pass: 'Pass (do nothing)',
   free_action: 'Free action',
+  attack: 'Attack a target',
+  dash: 'Dash (double movement)',
+  dodge: 'Dodge (impose disadvantage on attacks)',
+  disengage: 'Disengage (avoid opportunity attacks)',
+  help: 'Help an ally (grant advantage)',
+  hide: 'Hide (attempt to become unseen)',
+  ready: 'Ready an action (trigger on condition)',
 };
 
 const formatAbilities = (abilities) => {
@@ -136,6 +143,31 @@ Round ${gameState.roundNumber} has completed. All players have acted. Describe w
 
 export const DM_ACTION_SYSTEM_PROMPT = DM_SYSTEM_PROMPT;
 
+export const DM_COMBAT_SYSTEM_PROMPT = `You are the Dungeon Master for a D&D 5e campaign. You are resolving a combat action.
+
+RULES:
+- Respond ONLY with valid JSON matching the required schema.
+- The "narration" field is always required: a vivid, immersive description of the combat action (2-4 sentences).
+- For attack actions: if the action requires an attack roll, populate "requiredRolls" with rollType "attack_roll" and set DC to the target's AC.
+- For saving throws: populate "requiredRolls" with rollType "saving_throw", the relevant ability, and appropriate DC.
+- If the attack hits or the spell takes effect, populate "mechanicalOutcome" with damage, healing, or condition effects.
+- For concentration spells, include mechanicalOutcome type "concentration_start" with the spell name.
+- Keep damage values realistic for D&D 5e. A longsword does 1d8+STR, a fireball does 8d6, etc.
+- "privateMessage" is for information only the acting player should see.
+- Do NOT invent NPCs, locations, or items not present in the combat context.`;
+
+export const DM_ENEMY_TURN_SYSTEM_PROMPT = `You are the Dungeon Master for a D&D 5e campaign. You are controlling an enemy combatant during their turn in combat.
+
+RULES:
+- Respond ONLY with valid JSON matching the required schema.
+- The "narration" field is always required: describe the enemy's action vividly (2-3 sentences).
+- Choose a tactically reasonable action for the enemy based on their stat block and the combat situation.
+- If attacking, populate "mechanicalOutcome" with type "damage" and a reasonable amount based on the enemy's attacks.
+- If the enemy uses a special ability, describe it in narration and apply appropriate mechanical effects.
+- Target the most tactically logical PC (closest, weakest, most threatening).
+- Keep damage values realistic for the enemy's capabilities.
+- Do NOT have the enemy do something outside their stat block capabilities.`;
+
 export const DM_WORLD_TURN_SYSTEM_PROMPT = `You are the Dungeon Master for a D&D 5e campaign. A full round of player actions has completed. Narrate the world's response.
 
 RULES:
@@ -144,3 +176,111 @@ RULES:
 - If the round's events should trigger a phase transition, populate "phaseTransition".
 - "stateChanges" can note NPC disposition shifts or quest flag updates.
 - Do NOT invent NPCs, locations, or items not present in the scene context.`;
+
+/**
+ * Build the prompt for a combat action resolution.
+ */
+export function buildCombatActionPrompt({
+  character,
+  liveState,
+  actionType,
+  actionPayload,
+  allCombatants,
+  turnOrder,
+  roundNumber,
+  rollResult,
+}) {
+  const sections = [];
+
+  // Character stat block
+  sections.push(`## Acting Character
+Name: ${character.name}
+Class: ${character.class} (Level ${character.level})
+Race: ${character.race}
+Abilities: ${formatAbilities(character.abilities)}
+AC: ${character.armor_class}, Speed: ${character.speed}
+Live State: ${formatLiveState(liveState)}`);
+
+  // Declared action
+  const actionLabel = ACTION_TYPE_LABELS[actionType] || actionType;
+  sections.push(`## Combat Action
+Type: ${actionLabel}
+Details: ${JSON.stringify(actionPayload)}`);
+
+  // Roll result
+  if (rollResult) {
+    sections.push(`## Roll Result
+${JSON.stringify(rollResult)}`);
+  }
+
+  // All combatants
+  if (allCombatants?.length > 0) {
+    const combatantList = allCombatants
+      .map((c) => {
+        const hp = typeof c.hit_points === 'object' ? c.hit_points : {};
+        return `- ${c.name} (${c.participant_type}): HP ${hp.current ?? '?'}/${hp.max ?? '?'}, AC ${c.armor_class}, Initiative ${c.initiative ?? '?'}${c.conditions?.length ? `, Conditions: ${JSON.stringify(c.conditions)}` : ''}`;
+      })
+      .join('\n');
+    sections.push(`## Combatants\n${combatantList}`);
+  }
+
+  // Turn order context
+  if (turnOrder?.length > 0) {
+    sections.push(`## Initiative Order (Round ${roundNumber ?? 1})
+${turnOrder.join(' → ')}`);
+  }
+
+  return sections.join('\n\n');
+}
+
+/**
+ * Build the prompt for an LLM-controlled enemy turn.
+ */
+export function buildEnemyTurnPrompt({
+  enemy,
+  allCombatants,
+  liveStates,
+}) {
+  const sections = [];
+
+  // Enemy stat block
+  const hp = typeof enemy.hit_points === 'object' ? enemy.hit_points : {};
+  sections.push(`## Acting Enemy
+Name: ${enemy.name}
+Type: ${enemy.participant_type}
+HP: ${hp.current ?? '?'}/${hp.max ?? '?'}
+AC: ${enemy.armor_class}
+Conditions: ${enemy.conditions?.length ? JSON.stringify(enemy.conditions) : 'None'}
+${enemy.npc_description ? `Description: ${enemy.npc_description}` : ''}
+${enemy.personality ? `Personality: ${enemy.personality}` : ''}`);
+
+  // All combatants
+  if (allCombatants?.length > 0) {
+    const combatantList = allCombatants
+      .map((c) => {
+        const cHp = typeof c.hit_points === 'object' ? c.hit_points : {};
+        const isEnemy = c.id === enemy.id;
+        return `- ${c.name} (${c.participant_type})${isEnemy ? ' [ACTING]' : ''}: HP ${cHp.current ?? '?'}/${cHp.max ?? '?'}, AC ${c.armor_class}${c.conditions?.length ? `, Conditions: ${JSON.stringify(c.conditions)}` : ''}`;
+      })
+      .join('\n');
+    sections.push(`## All Combatants\n${combatantList}`);
+  }
+
+  // PC live states for more detail
+  if (Array.isArray(liveStates) && liveStates.length > 0) {
+    const pcList = liveStates
+      .map((s) => `- ${s.character_name ?? s.character_id}: HP ${s.hp_current}/${s.hp_max}, AC unknown, Conditions: ${s.conditions?.length ? s.conditions.join(', ') : 'None'}`)
+      .join('\n');
+    sections.push(`## Player Character Details\n${pcList}`);
+  }
+
+  sections.push(`## Instructions
+Choose the most tactically appropriate action for ${enemy.name}. Consider:
+- Which PC is the biggest threat or the most vulnerable?
+- What attacks/abilities does this enemy have?
+- Should the enemy move, attack, use a special ability, or retreat?
+
+Respond with a narration of the enemy's action and any mechanical outcomes (damage dealt, conditions applied, etc.).`);
+
+  return sections.join('\n\n');
+}

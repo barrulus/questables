@@ -15,7 +15,7 @@ CREATE EXTENSION IF NOT EXISTS pgcrypto;  -- UUID generation
 ## Entity Relationship Overview
 
 ```
-user_profiles ─┬── characters ─── encounter_participants
+user_profiles ─┬── characters ─── encounter_participants (+ user_id FK)
                │                        │
                ├── campaign_players ── campaigns ─┬── sessions
                │                                  ├── encounters
@@ -261,6 +261,8 @@ All geometry columns use SRID 0 (unitless pixel space from Azgaar's Fantasy Map 
 | scheduled_at | TIMESTAMPTZ | |
 | started_at | TIMESTAMPTZ | |
 | ended_at | TIMESTAMPTZ | |
+| game_state | JSONB | Phase/turn state (see Game State below) |
+| free_movement | BOOLEAN | Default false; bypasses turn-gated movement |
 
 #### encounters
 
@@ -311,6 +313,103 @@ All geometry columns use SRID 0 (unitless pixel space from Azgaar's Fantasy Map 
 | trust_delta | INTEGER | |
 | tags | TEXT[] | |
 
+### Player Actions & Live State
+
+#### session_player_actions
+
+Stores every declared player action for audit, LLM context, and replay.
+
+| Column | Type | Notes |
+|--------|------|-------|
+| id | UUID | PK |
+| session_id | UUID | FK → sessions |
+| campaign_id | UUID | FK → campaigns |
+| user_id | UUID | FK → user_profiles |
+| character_id | UUID | FK → characters |
+| round_number | INTEGER | Default 1 |
+| action_type | TEXT | `move`, `interact`, `search`, `use_item`, `cast_spell`, `talk_to_npc`, `pass`, `free_action`, `attack`, `dash`, `dodge`, `disengage`, `help`, `hide`, `ready` |
+| action_payload | JSONB | Default `{}` |
+| dm_response | JSONB | Structured LLM response |
+| roll_result | JSONB | Roll submission data |
+| status | TEXT | `pending`, `processing`, `awaiting_roll`, `completed`, `failed` |
+| created_at | TIMESTAMPTZ | |
+| resolved_at | TIMESTAMPTZ | |
+
+Indexes: `(session_id, round_number, created_at DESC)`, `(user_id, session_id)`, partial on `status IN ('pending', 'awaiting_roll')`.
+
+#### session_live_states
+
+Server-authoritative mutable character state during a session. Initialised from character records on session activation, synced back on session end.
+
+| Column | Type | Notes |
+|--------|------|-------|
+| id | UUID | PK |
+| session_id | UUID | FK → sessions |
+| campaign_id | UUID | FK → campaigns |
+| user_id | UUID | FK → user_profiles |
+| character_id | UUID | FK → characters |
+| hp_current | INTEGER | |
+| hp_max | INTEGER | |
+| hp_temporary | INTEGER | Default 0 |
+| conditions | TEXT[] | Default `{}` |
+| spell_slots | JSONB | Default `{}` |
+| hit_dice | JSONB | Default `{}` |
+| class_resources | JSONB | Default `{}` |
+| inspiration | BOOLEAN | Default false |
+| concentration | JSONB | `{ spellName, startedRound }` or null |
+| death_saves | JSONB | `{ successes: 0, failures: 0 }` |
+| xp_gained | INTEGER | Default 0 |
+| change_log | JSONB | Append-only mutation log |
+| created_at | TIMESTAMPTZ | |
+| updated_at | TIMESTAMPTZ | |
+
+Unique constraint: `(session_id, character_id)`. Indexes on `session_id` and `character_id`.
+
+### Game State
+
+#### game_state_log
+
+Audit log for all game state mutations.
+
+| Column | Type | Notes |
+|--------|------|-------|
+| id | BIGSERIAL | PK |
+| session_id | UUID | FK → sessions |
+| campaign_id | UUID | FK → campaigns |
+| event_type | TEXT | `phase_changed`, `turn_advanced`, `world_turn_started`, `world_turn_completed`, `turn_order_set`, `player_skipped` |
+| actor_id | UUID | FK → user_profiles (nullable) |
+| previous_state | JSONB | State before mutation |
+| new_state | JSONB | State after mutation |
+| metadata | JSONB | Additional context |
+| created_at | TIMESTAMPTZ | |
+
+**game_state JSONB shape** (on sessions table):
+
+```json
+{
+  "phase": "exploration",
+  "previousPhase": null,
+  "turnOrder": ["user-id-1", "user-id-2"],
+  "activePlayerId": "user-id-1",
+  "roundNumber": 1,
+  "worldTurnPending": false,
+  "encounterId": null,
+  "phaseEnteredAt": "2026-02-20T00:00:00Z",
+  "combatTurnBudget": null
+}
+```
+
+When in combat phase, `combatTurnBudget` contains:
+
+```json
+{
+  "actionUsed": false,
+  "bonusActionUsed": false,
+  "movementRemaining": 30,
+  "reactionUsed": false
+}
+```
+
 ### Chat
 
 #### chat_messages
@@ -324,6 +423,23 @@ All geometry columns use SRID 0 (unitless pixel space from Azgaar's Fantasy Map 
 | type | TEXT | `message`, `dice-roll`, `system` |
 | content | TEXT | |
 | metadata | JSONB | Dice results, etc. |
+| channel_type | TEXT | `party` (default), `private`, `dm_whisper`, `dm_broadcast` |
+| channel_target_user_id | UUID | FK → user_profiles (for private/whisper) |
+
+#### chat_read_cursors
+
+Tracks per-user unread state per channel.
+
+| Column | Type | Notes |
+|--------|------|-------|
+| id | BIGSERIAL | PK |
+| user_id | UUID | FK → user_profiles |
+| campaign_id | UUID | FK → campaigns |
+| channel_type | TEXT | Channel type |
+| channel_target_user_id | UUID | Nullable (uses COALESCE in unique index) |
+| last_read_at | TIMESTAMPTZ | |
+
+Unique index on `(user_id, campaign_id, channel_type, COALESCE(channel_target_user_id, '00000000-...'))`.
 
 ### SRD (System Reference Document)
 

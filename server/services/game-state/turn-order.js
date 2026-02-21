@@ -2,11 +2,13 @@
  * Turn-order computation helpers for different game phases.
  */
 
+import { buildCombatTurnOrder } from '../combat/service.js';
+
 /**
- * Build the turn order array (user IDs) for a given phase.
+ * Build the turn order array for a given phase.
  *
  * - exploration / social → round-robin from campaign_players ordered by joined_at
- * - combat → initiative order from encounter_participants (if encounterId provided)
+ * - combat → mixed PC/NPC initiative order from encounter_participants
  * - rest → empty (no individual turns)
  *
  * @param {import('pg').PoolClient} client
@@ -14,7 +16,7 @@
  * @param {string} _sessionId - reserved for future use
  * @param {string} phase
  * @param {{ encounterId?: string | null }} options
- * @returns {Promise<string[]>} ordered user IDs
+ * @returns {Promise<string[]>} ordered user IDs (or 'npc:{id}' for NPCs in combat)
  */
 export const buildTurnOrder = async (client, campaignId, _sessionId, phase, { encounterId } = {}) => {
   if (phase === 'rest') {
@@ -22,16 +24,9 @@ export const buildTurnOrder = async (client, campaignId, _sessionId, phase, { en
   }
 
   if (phase === 'combat' && encounterId) {
-    const { rows } = await client.query(
-      `SELECT ep.user_id
-         FROM public.encounter_participants ep
-        WHERE ep.encounter_id = $1
-          AND ep.user_id IS NOT NULL
-        ORDER BY ep.initiative DESC NULLS LAST, ep.created_at ASC`,
-      [encounterId],
-    );
-    if (rows.length > 0) {
-      return rows.map((r) => r.user_id);
+    const order = await buildCombatTurnOrder(client, encounterId);
+    if (order.length > 0) {
+      return order;
     }
     // Fall through to campaign_players if no participants registered yet
   }

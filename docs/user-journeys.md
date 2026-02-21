@@ -63,7 +63,13 @@ type AppState = "landing" | "dashboard" | "game" | "character-create"
   <DatabaseProvider>
     <UserProvider>          ← Auth state, user object, login/logout
       <GameSessionProvider> ← Active campaign, session, viewer role
-        <AppContent />
+        <GameStateProvider> ← Game phase, turn order, active player (WS1)
+          <ActionProvider>    ← Player action lifecycle (WS3)
+            <LiveStateProvider> ← Session-scoped mutable character state (WS3)
+              <AppContent />
+            </LiveStateProvider>
+          </ActionProvider>
+        </GameStateProvider>
       </GameSessionProvider>
     </UserProvider>
   </DatabaseProvider>
@@ -499,7 +505,13 @@ Requires `activeCampaignId` in `GameSessionContext`. If no campaign selected, sh
 ```
 ┌─────────────────────────────────────────────────────────┐
 │ HEADER: [Menu] Campaign Name • System • Setting         │
-│         Status Badge • Session # • DB Status • Username │
+│         Status Badge • Session # • Phase Badge • DB     │
+├─────────────────────────────────────────────────────────┤
+│ TURN BANNER: "[Player]'s turn" / "Your turn!" /         │
+│              "Waiting for DM world turn..." + controls  │
+├─────────────────────────────────────────────────────────┤
+│ LIVE STATE BAR: HP bar (color-coded) • Temp HP • Conditions │
+│                 Inspiration indicator                    │
 ├─────┬───────────────────────────────┬───────────────────┤
 │     │                               │                   │
 │ I   │  EXPANDABLE PANEL             │   CHAT PANEL      │
@@ -513,8 +525,9 @@ Requires `activeCampaignId` in `GameSessionContext`. If no campaign selected, sh
 │ E   │  rivers, markers, cells,      │                   │
 │ B   │  regions, NPC positions       │                   │
 │ A   │                               │                   │
-│ R   │                               │                   │
-│     │                               │                   │
+│ R   ├───────────────────────────────┤                   │
+│     │  ACTION PANEL (on your turn)  │                   │
+│     │  Action grid / Roll prompt    │                   │
 └─────┴───────────────────────────────┴───────────────────┘
 ```
 
@@ -555,10 +568,11 @@ Accordion sections: Basic info, Combat (HP/AC/Initiative/Speed), Abilities (6 sc
 | File | Purpose |
 |------|---------|
 | `components/chat-panel.tsx` | Campaign selector + ChatSystem wrapper |
-| `components/chat-system.tsx` | Core chat UI and logic |
+| `components/chat-system.tsx` | Core chat UI and logic (channel-aware) |
+| `components/chat-channel-tabs.tsx` | Channel tab bar with unread badges |
 | `hooks/useWebSocket.tsx` | WebSocket client hook |
-| `server/websocket-server.js` | Socket.IO server |
-| `server/routes/chat.routes.js` | Message persistence endpoints |
+| `server/websocket-server.js` | Socket.IO server (channel-aware routing) |
+| `server/routes/chat.routes.js` | Message persistence + channel endpoints |
 
 ### Message Types
 
@@ -569,13 +583,27 @@ Accordion sections: Basic info, Combat (HP/AC/Initiative/Speed), Abilities (6 sc
 | `system` | DM announcements |
 | `ooc` | Out-of-character (prefixed `[OOC]`) |
 
+### Communication Channels
+
+| Channel | Participants | Visual Style |
+|---------|-------------|--------------|
+| **Party** | All players + DM | Default |
+| **DM Whisper** | One player + DM | Indigo background |
+| **DM Narration** | DM → all (broadcast) | Amber/parchment, italic |
+| **Private** | Two specific players | Emerald background |
+
+Channel tabs appear above the message list. Unread badges show on inactive tabs when new messages arrive.
+
 ### Chat Features
 
 - Toggle IC (in-character) / OOC mode — shows character name or username
-- Typing indicators via WebSocket (`user-typing`, `user-stopped-typing`)
-- Message history loaded from `GET /api/campaigns/{id}/messages` (paginated)
-- New messages via `POST /api/campaigns/{id}/messages`
+- **Channel tabs** — Party (default), DM Whisper, DM Narration (DM only), dynamic Private tabs
+- **Unread tracking** — Read cursors stored server-side, badges on inactive channel tabs
+- Typing indicators via WebSocket (channel-aware — private typing only sent to target)
+- Message history loaded from `GET /api/campaigns/{id}/messages` (paginated, filterable by channel)
+- New messages via `POST /api/campaigns/{id}/messages` (with channel_type + channel_target_user_id)
 - Delete via `DELETE /api/campaigns/{id}/messages/{messageId}` (owner/DM only)
+- **Visibility enforcement** — private/whisper messages only returned to sender or target
 
 ### Dice Rolling
 
@@ -657,6 +685,27 @@ Auto-reconnect with exponential backoff (up to 5 attempts, max 30s delay). Shows
 - **Real-time sync:** `combat-update` WebSocket events broadcast state to all players
 - **Connection indicator:** Green pulse when connected
 
+### Integrated Combat Phase (WS4)
+
+When the DM transitions to combat phase, the server auto-creates an encounter, populates participants (PCs + enemy NPCs), rolls initiative, and sets turn order. The turn order supports mixed PC/NPC entries.
+
+**Combat Action Economy:**
+
+| Budget Slot | Actions |
+|-------------|---------|
+| Action | Attack, Cast Spell, Dash, Dodge, Disengage, Help, Hide, Ready, Use Item, Pass |
+| Bonus Action | (spell-dependent) |
+| Movement | 30ft default, doubled by Dash |
+| Reaction | Opportunity attacks, etc. |
+
+Budget is tracked per-turn in `game_state.combatTurnBudget` and reset on turn advance.
+
+**Enemy Turns:** When initiative advances to an NPC, the server auto-fires an LLM-controlled enemy turn. Clients see a spinner and narration broadcast. Consecutive NPC turns chain automatically.
+
+**Concentration:** Spells requiring concentration are tracked in `session_live_states.concentration`. When a concentrating character takes damage, the server auto-prompts a CON save (DC = max(10, floor(damage/2))).
+
+**Ending Combat:** DM clicks "End Combat" in the sidebar with an end condition (Victory, Enemies Fled, Party Fled, Parley). XP is calculated from defeated enemies and distributed equally among surviving PCs. Phase returns to exploration (or social for parley).
+
 ### API
 
 - `POST /api/campaigns/{campaignId}/encounters` — Create
@@ -665,6 +714,7 @@ Auto-reconnect with exponential backoff (up to 5 attempts, max 30s delay). Shows
 - `POST /api/encounters/{id}/initiative` — Roll initiatives
 - `PUT /api/encounters/{id}` — Update (rounds, turn order)
 - `PUT /api/encounter-participants/{participantId}` — Update HP/conditions
+- `POST /api/campaigns/{campaignId}/combat/end` — End combat (DM only), distributes XP, transitions phase
 
 ---
 
@@ -796,7 +846,9 @@ ROOT
 │  └─ [Save Draft] / [Back to Dashboard]
 │
 └─ GAME (requires active campaign)
-   ├─ Header: campaign info, status, session badge
+   ├─ Header: campaign info, status, session badge, phase indicator badge
+   ├─ Turn Banner: active player display, End Turn / Complete World Turn buttons
+   ├─ Live State Bar: HP progress bar, temp HP shield, inspiration, concentration, condition badges
    ├─ Icon Sidebar (7 tool buttons)
    │  ├─ DM Sidebar (DM/co-DM/admin only)
    │  ├─ Character Sheet (requires character)
@@ -806,7 +858,17 @@ ROOT
    │  ├─ Session Notes
    │  └─ Settings
    ├─ Map Panel (OpenLayers with feature layers)
+   ├─ Action Panel (visible on player's turn, phase !== rest)
+   │  ├─ Action Grid: Move, Interact, Search, Use Item, Cast Spell, Talk to NPC, Pass, Free Action
+   │  │  └─ Combat actions (phase=combat): Attack, Dash, Dodge, Disengage, Help, Hide, Ready
+   │  ├─ Combat Budget Bar: Action/Bonus Action/Movement/Reaction status (combat only)
+   │  ├─ Enemy Turn Indicator: spinner when NPC is acting (combat only)
+   │  ├─ Roll Prompt: natural/modifier/total inputs when DM requests a roll
+   │  └─ Processing indicator while LLM resolves action
    ├─ Chat Panel (real-time messaging, dice rolling)
+   │  ├─ Channel Tabs: Party | DM Whisper | DM Narration (DM) | Private (dynamic)
+   │  ├─ Unread badges per channel
+   │  └─ Channel-specific message rendering with visual differentiation
    └─ [Exit Game] → dashboard
 ```
 
@@ -897,12 +959,34 @@ ROOT
 | POST | `/api/encounters/{id}/initiative` | Roll initiative |
 | PUT | `/api/encounter-participants/{id}` | Update combatant |
 
+### Game State
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| GET | `/api/campaigns/{id}/game-state` | Current game state (phase, turn, round) |
+| PUT | `/api/campaigns/{id}/game-state/phase` | Change phase (DM only) |
+| POST | `/api/campaigns/{id}/game-state/end-turn` | End current turn (active player or DM) |
+| POST | `/api/campaigns/{id}/game-state/dm-world-turn` | Execute DM world turn (DM only) |
+| PUT | `/api/campaigns/{id}/game-state/turn-order` | Reorder turns (DM only) |
+| POST | `/api/campaigns/{id}/game-state/skip-turn` | Skip a player's turn (DM only) |
+| POST | `/api/campaigns/{id}/combat/end` | End combat, distribute XP, return to exploration (DM only) |
+
+### Actions & Live State
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| POST | `/api/campaigns/{id}/actions` | Submit player action for DM resolution (non-blocking) |
+| POST | `/api/campaigns/{id}/actions/{actionId}/roll-result` | Submit roll result for awaiting action |
+| GET | `/api/campaigns/{id}/actions` | List actions for current session/round |
+| GET | `/api/campaigns/{id}/live-states` | All live states for active session |
+| PATCH | `/api/campaigns/{id}/live-state` | Patch live state (DM any char, player own char) |
+
 ### Chat
 | Method | Endpoint | Description |
 |--------|----------|-------------|
-| POST | `/api/campaigns/{id}/messages` | Send message |
-| GET | `/api/campaigns/{id}/messages` | Load history (paginated) |
+| POST | `/api/campaigns/{id}/messages` | Send message (with channel_type, channel_target_user_id) |
+| GET | `/api/campaigns/{id}/messages` | Load history (filterable by channel_type, channel_target_user_id) |
 | DELETE | `/api/campaigns/{id}/messages/{msgId}` | Delete message |
+| GET | `/api/campaigns/{id}/channels/unread` | Unread counts per channel |
+| POST | `/api/campaigns/{id}/channels/read` | Mark channel as read |
 
 ### Narratives
 | Method | Endpoint | Description |
