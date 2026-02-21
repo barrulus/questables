@@ -4,7 +4,6 @@ import { Button } from "./ui/button";
 import { Progress } from "./ui/progress";
 import { Input } from "./ui/input";
 import { Label } from "./ui/label";
-import { Alert, AlertDescription, AlertTitle } from "./ui/alert";
 import { Separator } from "./ui/separator";
 import { toast } from "sonner";
 import {
@@ -12,12 +11,16 @@ import {
   RefreshCw,
   Loader2,
   Sparkles,
-  AlertCircle,
   Plus,
   Trash2,
+  ChevronDown,
+  ChevronRight,
 } from "lucide-react";
 import type { SpellcastingInfo } from "../utils/database/data-structures";
+import type { SrdSpell } from "../utils/srd/types";
 import { getCharacter, updateCharacter } from "../utils/api/characters";
+import { fetchSpellByKey } from "../utils/api/srd";
+import { SpellDetailCard } from "./compendium/spell-detail-card";
 
 interface SpellbookProps {
   characterId: string;
@@ -30,6 +33,8 @@ export function Spellbook({ characterId, onSpellcastingChange }: SpellbookProps)
   const [updating, setUpdating] = useState(false);
   const [searchTerm, setSearchTerm] = useState("");
   const [newSpellId, setNewSpellId] = useState("");
+  const [spellDetails, setSpellDetails] = useState<Record<string, SrdSpell>>({});
+  const [expandedSpell, setExpandedSpell] = useState<string | null>(null);
 
   const loadCharacterSpellcasting = async () => {
     try {
@@ -51,6 +56,28 @@ export function Spellbook({ characterId, onSpellcastingChange }: SpellbookProps)
       loadCharacterSpellcasting();
     }
   }, [characterId]);
+
+  // Resolve spell details from SRD API
+  useEffect(() => {
+    if (!spellcasting?.spellsKnown?.length) return;
+
+    const controller = new AbortController();
+    const missing = spellcasting.spellsKnown.filter((id) => !spellDetails[id]);
+
+    if (missing.length === 0) return;
+
+    Promise.allSettled(
+      missing.map((key) =>
+        fetchSpellByKey(key, { signal: controller.signal }).then((spell) => {
+          if (spell) {
+            setSpellDetails((prev) => ({ ...prev, [key]: spell }));
+          }
+        }),
+      ),
+    );
+
+    return () => controller.abort();
+  }, [spellcasting?.spellsKnown]);
 
   const updateCharacterSpellcasting = async (
     updates: Partial<SpellcastingInfo>,
@@ -205,16 +232,6 @@ export function Spellbook({ characterId, onSpellcastingChange }: SpellbookProps)
 
   return (
     <div className="space-y-6">
-      <Alert>
-        <AlertCircle className="w-5 h-5 text-muted-foreground" />
-        <AlertTitle>Spell reference data unavailable</AlertTitle>
-        <AlertDescription>
-          Spell metadata is not provided by the backend yet. Known spells are
-          displayed by their recorded identifiers, and new entries can be added
-          manually once the official spell library ships.
-        </AlertDescription>
-      </Alert>
-
       <Card>
         <CardHeader>
           <div className="flex justify-between items-center">
@@ -320,22 +337,43 @@ export function Spellbook({ characterId, onSpellcastingChange }: SpellbookProps)
             </p>
           ) : (
             <div className="grid gap-2">
-              {filteredSpells.map((spellId) => (
-                <div
-                  key={spellId}
-                  className="flex items-center justify-between border rounded px-3 py-2"
-                >
-                  <div className="font-medium">{spellId}</div>
-                  <Button
-                    variant="ghost"
-                    size="sm"
-                    onClick={() => forgetSpell(spellId)}
-                    disabled={updating}
-                  >
-                    <Trash2 className="w-4 h-4" />
-                  </Button>
-                </div>
-              ))}
+              {filteredSpells.map((spellId) => {
+                const detail = spellDetails[spellId];
+                const displayName = detail?.name ?? spellId;
+                const isExpanded = expandedSpell === spellId;
+                return (
+                  <div key={spellId} className="border rounded">
+                    <div className="flex items-center justify-between px-3 py-2">
+                      <button
+                        className="flex items-center gap-2 text-left flex-1 min-w-0"
+                        onClick={() => setExpandedSpell(isExpanded ? null : spellId)}
+                      >
+                        {detail ? (
+                          isExpanded ? <ChevronDown className="w-4 h-4 shrink-0" /> : <ChevronRight className="w-4 h-4 shrink-0" />
+                        ) : null}
+                        <div className="min-w-0">
+                          <div className="font-medium truncate">{displayName}</div>
+                          {detail && (
+                            <div className="text-xs text-muted-foreground">
+                              {detail.level === 0 ? "Cantrip" : `Level ${detail.level}`} {detail.school_key}
+                              {detail.concentration && " · Conc."}
+                            </div>
+                          )}
+                        </div>
+                      </button>
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        onClick={() => forgetSpell(spellId)}
+                        disabled={updating}
+                      >
+                        <Trash2 className="w-4 h-4" />
+                      </Button>
+                    </div>
+                    {isExpanded && detail && <SpellDetailCard spell={detail} />}
+                  </div>
+                );
+              })}
             </div>
           )}
 

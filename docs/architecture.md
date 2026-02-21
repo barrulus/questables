@@ -74,7 +74,7 @@ The frontend operates as a single-page application with four top-level states:
 │Icon│     Map (center)      │   Chat     │
 │Side│                       │   Panel    │
 │bar │                       │            │
-│    │    OpenLayers Map     │  Messages  │
+│    │    OpenLayers Map      │  Messages  │
 │    │    with layers        │  Dice Rolls│
 │    │                       │            │
 │    ├──────────────────────┤│            │
@@ -104,6 +104,8 @@ server/
 │   ├── game-state.routes.js
 │   ├── rest.routes.js          # Rest phase endpoints (WS5)
 │   ├── levelling.routes.js     # Level-up endpoints (WS6)
+│   ├── shop.routes.js          # NPC shop CRUD, inventory, purchase endpoints
+│   ├── loot.routes.js          # Loot table CRUD, roll endpoint
 │   └── ...
 ├── services/         # Business logic
 │   ├── campaigns/
@@ -126,6 +128,10 @@ server/
 │   │   └── service.js        # Short/long rest mechanics, hit die spending (WS5)
 │   ├── levelling/
 │   │   └── service.js        # XP thresholds, level-up application (WS6)
+│   ├── shop/
+│   │   └── service.js        # NPC shop CRUD, inventory, purchases
+│   ├── loot/
+│   │   └── service.js        # Loot table CRUD, weighted random rolling
 │   ├── srd/
 │   │   ├── service.js
 │   │   └── stats-engine.js
@@ -173,6 +179,15 @@ components/
 │   ├── social-action-grid.tsx # Social action buttons (WS5)
 │   ├── rest-panel.tsx       # Rest phase UI — hit dice, rest completion (WS5)
 │   └── death-save-panel.tsx # Death save UI — roll saves at 0 HP (WS6)
+├── compendium/            # SRD Compendium browser + shop/loot management
+│   ├── compendium-panel.tsx   # Tabbed container (Items/Spells/Shops/Loot)
+│   ├── item-browser.tsx       # Searchable/filterable SRD item list
+│   ├── spell-browser.tsx      # Searchable/filterable SRD spell list
+│   ├── item-detail-card.tsx   # Rich item detail view
+│   ├── spell-detail-card.tsx  # Rich spell detail view
+│   ├── shop-view.tsx          # Player-facing shop browser with purchase
+│   ├── shop-editor.tsx        # DM shop CRUD + LLM auto-stock
+│   └── loot-table-editor.tsx  # DM loot table builder with weighted rolls
 ├── live-state/            # Session-scoped character state (WS3)
 │   └── live-state-bar.tsx   # Compact HP bar + conditions + death saves + hit dice display
 ├── chat-channel-tabs.tsx  # Chat channel tab bar (party/whisper/narration/private)

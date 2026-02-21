@@ -34,14 +34,25 @@
 │   ├── npc-manager.tsx          # NPC management
 │   ├── objectives-panel.tsx     # Quest objectives tree
 │   ├── narrative-console.tsx    # LLM narrative generation
+│   ├── compendium/              # SRD Compendium browser
+│   │   ├── compendium-panel.tsx     # Tabbed container (Items/Spells/Shops/Loot)
+│   │   ├── item-browser.tsx         # SRD item search + filter + pagination
+│   │   ├── spell-browser.tsx        # SRD spell search + filter + pagination
+│   │   ├── item-detail-card.tsx     # Rich item detail view
+│   │   ├── spell-detail-card.tsx    # Rich spell detail view
+│   │   ├── shop-view.tsx            # Player shop browser + purchase
+│   │   ├── shop-editor.tsx          # DM shop CRUD + auto-stock
+│   │   └── loot-table-editor.tsx    # DM loot table builder + rolling
 │   ├── inventory.tsx            # Character inventory
-│   ├── spellbook.tsx            # Spell management
+│   ├── spellbook.tsx            # Spell management (SRD detail resolution)
 │   └── map-data-loader.tsx      # Singleton for loading map data
 ├── contexts/
 │   ├── UserContext.tsx           # Authentication state
 │   └── GameSessionContext.tsx    # Active campaign/session
 ├── utils/
 │   ├── api-client.ts            # HTTP client with auth headers
+│   ├── api/srd.ts               # SRD API (items, spells, search, pagination)
+│   ├── api/loot.ts              # Loot table API (CRUD, roll)
 │   ├── srd/types.ts             # SRD TypeScript interfaces
 │   ├── srd/constants.ts         # D&D constants
 │   ├── world-map-cache.ts       # Map data caching

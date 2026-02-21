@@ -37,19 +37,19 @@ This plan is structured as **four workstreams** executed in dependency order, wi
 |---|---|---|
 | ~~**Game phase state machine**~~ | ✅ Implemented (WS1) — 4 phases, server-authoritative JSONB on sessions, validated transitions, real-time sync | §1, §3–6 |
 | ~~**Turn order system (exploration)**~~ | ✅ Implemented (WS1) — Round-robin in exploration/social, initiative in combat, DM world turn detection | §3 |
-| **Player action declaration** | No UI for declaring turn actions (move, search, interact, use item, cast spell); movement is the only action | §3, §8 |
-| **DM action processing loop** | LLM is a passive text generator, not an active adjudicator receiving actions and returning structured outcomes | §8, §14 |
-| **Phase transitions** | No triggers to move between phases (encounter on map region entry, NPC dialogue → social, rest initiation) | §13 |
+| ~~**Player action declaration**~~ | ✅ Implemented (WS3) — ActionPanel + ActionGrid UI, turn-gated action submission, non-blocking LLM resolution pipeline | §3, §8 |
+| ~~**DM action processing loop**~~ | ✅ Implemented (WS3) — Structured LLM output via Ollama `format` parameter, mechanical outcome application, roll resolution flow | §8, §14 |
+| ~~**Phase transitions**~~ | ✅ Implemented (WS3/WS4/WS5) — Region entry triggers, DM manual transitions, combat initiation/end, rest start/complete, social phase entry | §13 |
 | ~~**Communication channels**~~ | ✅ Implemented (WS2) — 4 channel types (party, private, dm_whisper, dm_broadcast), per-user WebSocket routing, unread tracking | §7 |
-| ~~**DM world turn**~~ | ✅ Partially implemented (WS1) — worldTurnPending detection, executeDmWorldTurn API. Automation (NPC patrols, encounters) deferred to WS3. | §3 |
-| **Combat action economy** | Tracker handles initiative and HP, but no action/bonus action/movement/reaction structure | §4.2, §4.4 |
-| **Combat resolution flow** | No XP distribution, loot phase, or map state updates after combat ends | §4.3 |
-| **Rest mechanics** | No short/long rest flow, no hit dice spending, no spell slot recovery, no random encounter interruption | §6 |
-| **Death & dying** | No death saves, stabilisation, or instant death logic | §11 |
-| **Levelling** | No XP threshold detection, level-up flow, or ASI/feat selection | §10 |
-| **Live player state during play** | Character sheet is read-only display; no real-time spell slot, HP, condition, or resource tracking during gameplay | §9 |
-| **Encounter triggers from map** | Regions exist but don't trigger encounters or phase changes when players enter them | §3 |
-| **Structured LLM response format** | Narrative system returns raw text; no structured output (mechanical outcomes, state changes, required rolls, phase transitions) | §14 |
+| ~~**DM world turn**~~ | ✅ Implemented (WS3) — worldTurnPending detection, executeDmWorldTurn API, LLM-driven world turn narration with NPC patrols and encounter checks | §3 |
+| ~~**Combat action economy**~~ | ✅ Implemented (WS4) — Action/bonus action/movement/reaction budget per turn, combat-specific action types, budget tracking in game_state JSONB | §4.2, §4.4 |
+| ~~**Combat resolution flow**~~ | ✅ Implemented (WS4) — XP distribution from defeated enemies, end combat with condition (victory/fled/parley), phase transition back to exploration | §4.3 |
+| ~~**Rest mechanics**~~ | ✅ Implemented (WS5) — Short rest with hit die spending, long rest with full restoration, random encounter interruption rolls, spell slot/HP/hit dice recovery | §6 |
+| ~~**Death & dying**~~ | ✅ Implemented (WS6) — Death saves (nat 20/1 rules), instant death check, unconscious state, stabilisation, healing at zero, DeathSavePanel UI | §11 |
+| ~~**Levelling**~~ | ✅ Implemented (WS6) — XP threshold detection, level-up modal (roll/average HP), milestone level-up for DMs, spell slot/hit dice scaling | §10 |
+| ~~**Live player state during play**~~ | ✅ Implemented (WS3) — session_live_states table, real-time HP/conditions/spell slots/hit dice/concentration/death saves tracking, LiveStateBar UI | §9 |
+| ~~**Encounter triggers from map**~~ | ✅ Implemented (WS3) — Region entry detection via PostGIS intersection, encounter/narrative/travel region types trigger phase transitions | §3 |
+| ~~**Structured LLM response format**~~ | ✅ Implemented (WS3) — JSON schema enforced via Ollama `format` parameter, structured narration + mechanical outcomes + required rolls + phase transitions | §14 |
 
 ---
 

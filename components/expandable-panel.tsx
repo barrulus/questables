@@ -14,6 +14,7 @@ import { apiFetch, readJsonBody } from "../utils/api-client";
 import { OfflineModeWrapper } from './database-status';
 import { NarrativeConsole } from "./narrative-console";
 import { DMSidebar } from "./dm-sidebar";
+import { CompendiumPanel } from "./compendium/compendium-panel";
 import {
   User,
   Package,
@@ -23,6 +24,7 @@ import {
   ScrollText,
   Cog,
   Crown,
+  Library,
   Loader2,
 } from "lucide-react";
 
@@ -125,6 +127,8 @@ export function ExpandablePanel({ activePanel, onClose }: ExpandablePanelProps) 
             <Spellbook characterId={campaignCharacterId} onSpellcastingChange={refreshCharacter} />
           </OfflineModeWrapper>
         );
+      case "compendium":
+        return <CompendiumPanel />;
       case "narratives":
         return <NarrativeConsole />;
       case "journals":
@@ -152,6 +156,7 @@ export function ExpandablePanel({ activePanel, onClose }: ExpandablePanelProps) 
       case "character": return "Active Character";
       case "inventory": return "Inventory";
       case "spells": return "Spellbook";
+      case "compendium": return "Compendium";
       case "narratives": return "Narrative Console";
       case "journals": return "Session Notes";
       case "settings": return "Settings";
@@ -165,6 +170,7 @@ export function ExpandablePanel({ activePanel, onClose }: ExpandablePanelProps) 
       case "character": return <User className="w-5 h-5" />;
       case "inventory": return <Package className="w-5 h-5" />;
       case "spells": return <BookOpen className="w-5 h-5" />;
+      case "compendium": return <Library className="w-5 h-5" />;
       case "narratives": return <Sparkles className="w-5 h-5" />;
       case "journals": return <ScrollText className="w-5 h-5" />;
       case "settings": return <Cog className="w-5 h-5" />;

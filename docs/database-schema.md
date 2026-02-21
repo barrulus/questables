@@ -39,6 +39,8 @@ srd_classes ─── srd_subclasses
                 srd_class_saving_throws
 srd_spells ──── srd_spell_classes
 srd_items
+npc_shops ─── npc_shop_inventory
+loot_tables ── loot_table_entries
 srd_backgrounds
 srd_feats
 srd_conditions
@@ -519,6 +521,66 @@ Class keys use slugified names matching `srd_classes.key` (e.g., `wizard`).
 #### srd_backgrounds, srd_feats, srd_conditions
 
 Similar structure with `key`, `name`, `desc_text`, and type-specific JSONB fields.
+
+### NPC Shops
+
+#### npc_shops
+
+| Column | Type | Notes |
+|--------|------|-------|
+| id | UUID | PK |
+| campaign_id | UUID | FK → campaigns |
+| name | TEXT | Shop name (e.g., "Grimtooth's Armory") |
+| description | TEXT | Flavor text |
+| npc_id | UUID | FK → npcs (optional) |
+| shop_type | TEXT | `general`, `weapons`, `armor`, `magic`, `potions`, `scrolls` |
+| price_modifier | NUMERIC(4,2) | Default 1.00 (1.5 = 50% markup) |
+| is_active | BOOLEAN | Default true; players only see active shops |
+| location_text | TEXT | Display location |
+
+#### npc_shop_inventory
+
+| Column | Type | Notes |
+|--------|------|-------|
+| id | UUID | PK |
+| shop_id | UUID | FK → npc_shops |
+| item_key | TEXT | References srd_items.key |
+| document_source | TEXT | Default `srd-2024` |
+| stock_quantity | INTEGER | NULL = unlimited |
+| price_override | NUMERIC(10,2) | NULL = use SRD cost × shop modifier |
+| is_available | BOOLEAN | Default true |
+| notes | TEXT | DM notes |
+
+Unique constraint: `(shop_id, item_key, document_source)`.
+
+### Loot Tables
+
+#### loot_tables
+
+| Column | Type | Notes |
+|--------|------|-------|
+| id | UUID | PK |
+| campaign_id | UUID | FK → campaigns |
+| name | TEXT | Table name |
+| description | TEXT | |
+| table_type | TEXT | `custom`, `individual`, `hoard` |
+| cr_min | INTEGER | Suggested CR range min |
+| cr_max | INTEGER | Suggested CR range max |
+
+#### loot_table_entries
+
+| Column | Type | Notes |
+|--------|------|-------|
+| id | UUID | PK |
+| loot_table_id | UUID | FK → loot_tables |
+| item_key | TEXT | NULL if currency-only |
+| document_source | TEXT | Default `srd-2024` |
+| weight | INTEGER | Probability weight (default 1) |
+| quantity_min | INTEGER | Default 1 |
+| quantity_max | INTEGER | Default 1 |
+| currency_amount | TEXT | Dice expression (e.g., "2d6 gp") |
+
+Index: `(loot_table_id)`.
 
 ### LLM
 

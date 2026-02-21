@@ -194,8 +194,10 @@ router.get('/backgrounds/:key', async (req, res) => {
 // GET /api/srd/spells
 router.get('/spells', async (req, res) => {
   try {
-    const { level, ritual, source } = req.query;
+    const { level, ritual, source, q, school, concentration } = req.query;
     const classFilter = req.query.class;
+    const limit = Math.min(parseInt(req.query.limit) || 200, 500);
+    const offset = Math.max(parseInt(req.query.offset) || 0, 0);
     const conditions = [];
     const params = [];
     let paramIdx = 1;
@@ -203,6 +205,12 @@ router.get('/spells', async (req, res) => {
     if (source) {
       conditions.push(`s.document_source = $${paramIdx++}`);
       params.push(source);
+    }
+
+    if (q) {
+      conditions.push(`(s.name ILIKE $${paramIdx} OR s.desc_text ILIKE $${paramIdx})`);
+      paramIdx++;
+      params.push(`%${q}%`);
     }
 
     if (level !== undefined) {
@@ -215,20 +223,41 @@ router.get('/spells', async (req, res) => {
       params.push(ritual === 'true');
     }
 
+    if (concentration !== undefined) {
+      conditions.push(`s.concentration = $${paramIdx++}`);
+      params.push(concentration === 'true');
+    }
+
+    if (school) {
+      conditions.push(`s.school_key = $${paramIdx++}`);
+      params.push(school);
+    }
+
     if (classFilter) {
       conditions.push(`EXISTS (SELECT 1 FROM srd_spell_classes sc WHERE sc.spell_key = s.key AND sc.class_key = $${paramIdx} AND sc.document_source = s.document_source)`);
       paramIdx++;
       params.push(classFilter);
     }
 
+    let countSql = 'SELECT COUNT(*) FROM srd_spells s';
     let sql = 'SELECT s.* FROM srd_spells s';
-    if (conditions.length > 0) {
-      sql += ' WHERE ' + conditions.join(' AND ');
-    }
-    sql += ' ORDER BY s.level ASC, s.name ASC';
+    const whereClause = conditions.length > 0 ? ' WHERE ' + conditions.join(' AND ') : '';
+    countSql += whereClause;
+    sql += whereClause;
+    sql += ` ORDER BY s.level ASC, s.name ASC LIMIT $${paramIdx++} OFFSET $${paramIdx++}`;
+    params.push(limit, offset);
 
-    const result = await dbQuery(sql, params, { label: 'srd.spells.list' });
-    res.json({ spells: result.rows });
+    const [countResult, result] = await Promise.all([
+      dbQuery(countSql, params.slice(0, -2), { label: 'srd.spells.count' }),
+      dbQuery(sql, params, { label: 'srd.spells.list' }),
+    ]);
+
+    res.json({
+      spells: result.rows,
+      total: parseInt(countResult.rows[0].count),
+      limit,
+      offset,
+    });
   } catch (error) {
     logError('SRD spells list failed', error);
     res.status(500).json({ error: 'Failed to fetch spells' });
@@ -271,7 +300,9 @@ router.get('/spells/:key', async (req, res) => {
 // GET /api/srd/items
 router.get('/items', async (req, res) => {
   try {
-    const { category, source } = req.query;
+    const { category, source, q, rarity } = req.query;
+    const limit = Math.min(parseInt(req.query.limit) || 200, 500);
+    const offset = Math.max(parseInt(req.query.offset) || 0, 0);
     const conditions = [];
     const params = [];
     let paramIdx = 1;
@@ -281,22 +312,126 @@ router.get('/items', async (req, res) => {
       params.push(source);
     }
 
+    if (q) {
+      conditions.push(`(name ILIKE $${paramIdx} OR desc_text ILIKE $${paramIdx})`);
+      paramIdx++;
+      params.push(`%${q}%`);
+    }
+
     if (category) {
       conditions.push(`category_key = $${paramIdx++}`);
       params.push(category);
     }
 
-    let sql = 'SELECT * FROM srd_items';
-    if (conditions.length > 0) {
-      sql += ' WHERE ' + conditions.join(' AND ');
+    if (rarity) {
+      conditions.push(`rarity_key = $${paramIdx++}`);
+      params.push(rarity);
     }
-    sql += ' ORDER BY name ASC';
 
-    const result = await dbQuery(sql, params, { label: 'srd.items.list' });
-    res.json({ items: result.rows });
+    let countSql = 'SELECT COUNT(*) FROM srd_items';
+    let sql = 'SELECT * FROM srd_items';
+    const whereClause = conditions.length > 0 ? ' WHERE ' + conditions.join(' AND ') : '';
+    countSql += whereClause;
+    sql += whereClause;
+    sql += ` ORDER BY name ASC LIMIT $${paramIdx++} OFFSET $${paramIdx++}`;
+    params.push(limit, offset);
+
+    const [countResult, result] = await Promise.all([
+      dbQuery(countSql, params.slice(0, -2), { label: 'srd.items.count' }),
+      dbQuery(sql, params, { label: 'srd.items.list' }),
+    ]);
+
+    res.json({
+      items: result.rows,
+      total: parseInt(countResult.rows[0].count),
+      limit,
+      offset,
+    });
   } catch (error) {
     logError('SRD items list failed', error);
     res.status(500).json({ error: 'Failed to fetch items' });
+  }
+});
+
+// GET /api/srd/compendium/search — Unified search across items + spells (for LLM and browser)
+router.get('/compendium/search', async (req, res) => {
+  try {
+    const { q, type } = req.query;
+    const limit = Math.min(parseInt(req.query.limit) || 20, 50);
+
+    if (!q || typeof q !== 'string' || q.trim().length === 0) {
+      return res.status(400).json({ error: 'Query parameter "q" is required' });
+    }
+
+    const searchTerm = `%${q.trim()}%`;
+    const results = [];
+
+    if (!type || type === 'spell' || type === 'any') {
+      const spellResult = await dbQuery(
+        `SELECT key, name, level, school_key, casting_time, range_text, duration, concentration,
+                damage_roll, damage_types, saving_throw_ability, desc_text
+           FROM srd_spells
+          WHERE name ILIKE $1 OR desc_text ILIKE $1
+          ORDER BY CASE WHEN name ILIKE $2 THEN 0 ELSE 1 END, level ASC, name ASC
+          LIMIT $3`,
+        [searchTerm, `${q.trim()}%`, limit],
+        { label: 'srd.compendium.search.spells' },
+      );
+      for (const row of spellResult.rows) {
+        const parts = [`Level ${row.level} ${row.school_key || 'spell'}`];
+        if (row.damage_roll) parts.push(`${row.damage_roll} ${(row.damage_types || []).join('/')} damage`);
+        if (row.saving_throw_ability) parts.push(`${row.saving_throw_ability} save`);
+        if (row.concentration) parts.push('concentration');
+        results.push({
+          type: 'spell',
+          key: row.key,
+          name: row.name,
+          summary: parts.join('. ') + '.',
+          cost_gp: null,
+          level: row.level,
+        });
+      }
+    }
+
+    if (!type || type === 'item' || type === 'any') {
+      const itemResult = await dbQuery(
+        `SELECT key, name, category_key, rarity_key, cost, weight, requires_attunement, desc_text
+           FROM srd_items
+          WHERE name ILIKE $1 OR desc_text ILIKE $1
+          ORDER BY CASE WHEN name ILIKE $2 THEN 0 ELSE 1 END, name ASC
+          LIMIT $3`,
+        [searchTerm, `${q.trim()}%`, limit],
+        { label: 'srd.compendium.search.items' },
+      );
+      for (const row of itemResult.rows) {
+        const parts = [];
+        if (row.rarity_key && row.rarity_key !== 'common') parts.push(row.rarity_key);
+        if (row.category_key) parts.push(row.category_key.replace(/-/g, ' '));
+        if (row.weight) parts.push(`${row.weight} lb`);
+        if (row.requires_attunement) parts.push('requires attunement');
+        results.push({
+          type: 'item',
+          key: row.key,
+          name: row.name,
+          summary: parts.join('. ') + (parts.length ? '.' : ''),
+          cost_gp: row.cost ? parseFloat(row.cost) : null,
+          level: null,
+        });
+      }
+    }
+
+    // Sort: exact name matches first, then alphabetical
+    results.sort((a, b) => {
+      const aExact = a.name.toLowerCase() === q.trim().toLowerCase() ? 0 : 1;
+      const bExact = b.name.toLowerCase() === q.trim().toLowerCase() ? 0 : 1;
+      if (aExact !== bExact) return aExact - bExact;
+      return a.name.localeCompare(b.name);
+    });
+
+    res.json({ results: results.slice(0, limit) });
+  } catch (error) {
+    logError('SRD compendium search failed', error);
+    res.status(500).json({ error: 'Failed to search compendium' });
   }
 });
 

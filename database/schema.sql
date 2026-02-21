@@ -1203,3 +1203,63 @@ ALTER TABLE public.session_player_actions
     'talk_to_npc', 'pass', 'free_action',
     'attack', 'dash', 'dodge', 'disengage', 'help', 'hide', 'ready'
   ));
+
+-- =============================================================================
+-- NPC SHOPS
+-- =============================================================================
+CREATE TABLE IF NOT EXISTS public.npc_shops (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  campaign_id UUID NOT NULL REFERENCES public.campaigns(id) ON DELETE CASCADE,
+  name TEXT NOT NULL,
+  description TEXT,
+  npc_id UUID REFERENCES public.npcs(id) ON DELETE SET NULL,
+  shop_type TEXT NOT NULL DEFAULT 'general',
+  price_modifier NUMERIC(4,2) NOT NULL DEFAULT 1.00,
+  is_active BOOLEAN NOT NULL DEFAULT true,
+  location_text TEXT,
+  created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW() NOT NULL,
+  updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW() NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_npc_shops_campaign ON public.npc_shops(campaign_id);
+
+CREATE TABLE IF NOT EXISTS public.npc_shop_inventory (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  shop_id UUID NOT NULL REFERENCES public.npc_shops(id) ON DELETE CASCADE,
+  item_key TEXT NOT NULL,
+  document_source TEXT NOT NULL DEFAULT 'srd-2024',
+  stock_quantity INT,
+  price_override NUMERIC(10,2),
+  is_available BOOLEAN NOT NULL DEFAULT true,
+  notes TEXT,
+  created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW() NOT NULL,
+  UNIQUE(shop_id, item_key, document_source)
+);
+CREATE INDEX IF NOT EXISTS idx_shop_inv_shop ON public.npc_shop_inventory(shop_id);
+
+-- =============================================================================
+-- LOOT TABLES
+-- =============================================================================
+CREATE TABLE IF NOT EXISTS public.loot_tables (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  campaign_id UUID REFERENCES public.campaigns(id) ON DELETE CASCADE,
+  name TEXT NOT NULL,
+  description TEXT,
+  table_type TEXT NOT NULL DEFAULT 'custom',
+  cr_min INT,
+  cr_max INT,
+  created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW() NOT NULL,
+  updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW() NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS public.loot_table_entries (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  loot_table_id UUID NOT NULL REFERENCES public.loot_tables(id) ON DELETE CASCADE,
+  item_key TEXT,
+  document_source TEXT DEFAULT 'srd-2024',
+  weight INT NOT NULL DEFAULT 1,
+  quantity_min INT NOT NULL DEFAULT 1,
+  quantity_max INT NOT NULL DEFAULT 1,
+  currency_amount TEXT,
+  created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW() NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_loot_entries_table ON public.loot_table_entries(loot_table_id);

@@ -38,6 +38,8 @@ export const REALTIME_EVENTS = {
   restStarted: 'rest-started',
   hitDiceSpent: 'hit-dice-spent',
   restCompleted: 'rest-completed',
+  // Shop events
+  shopPurchase: 'shop-purchase',
   // WS6: Death save & levelling events
   deathSaveRolled: 'death-save-rolled',
   characterDied: 'character-died',

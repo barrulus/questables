@@ -18,7 +18,8 @@ Complete mapping of every screen, form, state transition, and user flow in Quest
 10. [Encounters & Combat](#9-encounters--combat)
 11. [Narrative System](#10-narrative-system)
 12. [NPC Management](#11-npc-management)
-13. [Map Upload](#12-map-upload-wizard)
+13. [SRD Compendium](#12-srd-compendium)
+14. [Map Upload](#13-map-upload-wizard)
 14. [Navigation Tree](#complete-navigation-tree)
 15. [API Endpoint Reference](#api-endpoint-reference)
 
@@ -541,6 +542,7 @@ Default split: 60% map / 40% chat (resizable).
 | User | `character` | All (requires active character) |
 | Package | `inventory` | All (requires active character) |
 | Book | `spells` | All (requires active character) |
+| Library | `compendium` | All |
 | Sparkles | `narratives` | All |
 | Scroll | `journals` | All |
 | Cog | `settings` | All |
@@ -830,7 +832,72 @@ Uses configured LLM provider (Ollama by default). Features: response caching, pr
 
 ---
 
-## 12. Map Upload Wizard
+## 12. SRD Compendium
+
+### Files
+
+| File | Purpose |
+|------|---------|
+| `components/compendium/compendium-panel.tsx` | Tabbed container (Items/Spells/Shops/Loot) |
+| `components/compendium/item-browser.tsx` | Searchable/filterable SRD item list |
+| `components/compendium/spell-browser.tsx` | Searchable/filterable SRD spell list |
+| `components/compendium/item-detail-card.tsx` | Rich item detail view |
+| `components/compendium/spell-detail-card.tsx` | Rich spell detail view |
+| `components/compendium/shop-view.tsx` | Player-facing shop browser with purchase |
+| `components/compendium/shop-editor.tsx` | DM shop CRUD + LLM auto-stock |
+| `components/compendium/loot-table-editor.tsx` | DM loot table builder with weighted rolls |
+| `utils/api/srd.ts` | SRD API client (items, spells, search) |
+| `utils/api/loot.ts` | Loot table API client |
+| `server/routes/srd.routes.js` | SRD endpoints with search and pagination |
+| `server/routes/shop.routes.js` | Shop CRUD, inventory, purchase endpoints |
+| `server/routes/loot.routes.js` | Loot table CRUD, roll endpoint |
+| `server/services/shop/service.js` | Shop business logic |
+| `server/services/loot/service.js` | Loot table business logic |
+
+### Compendium Browser
+
+Accessed via the Library icon in the icon sidebar. Four tabs:
+
+- **Items** — Search SRD items by name, filter by category (10 types) and rarity (6 tiers). Paginated results with expandable detail cards.
+- **Spells** — Search SRD spells by name, filter by level/school/class. Expandable cards with casting info, damage, components.
+- **Shops** — Player view: browse active campaign shops, purchase items. DM view: create/edit shops, add items via SRD search, toggle active state, LLM auto-stock.
+- **Loot** (DM only) — Create loot tables with weighted item entries and currency entries. Roll on tables with configurable count.
+
+### NPC Shop — Player Purchase Flow
+
+1. Player opens Compendium → Shops tab
+2. Active shops listed with name, type, location
+3. Click "Browse Shop" → inventory with prices (SRD cost × shop modifier)
+4. Click buy button → `POST /shops/:shopId/purchase`
+5. Server validates stock, computes price, deducts gold from character inventory
+6. `shop-purchase` WebSocket event broadcast to campaign
+
+### NPC Shop — DM Auto-Stock
+
+1. DM creates shop (name, type, price modifier, location)
+2. Opens shop detail → clicks "Auto-Stock" button
+3. `POST /shops/:shopId/auto-stock` calls LLM with shop context
+4. LLM suggests 15-25 level-appropriate items for the shop type
+5. Server validates suggestions against SRD item database
+6. Valid items added to shop inventory automatically
+
+### Loot Table — Roll Flow
+
+1. DM creates loot table with CR range
+2. Adds item entries (from SRD search) and currency entries
+3. Each entry has a probability weight
+4. Clicks "Roll 1/3/5" → weighted random selection
+5. Results displayed with item names and quantities
+
+### Spellbook Enhancement
+
+The Spellbook panel (`components/spellbook.tsx`) resolves spell details from the SRD API via `fetchSpellByKey()`. Each spell in the character's known spells list shows:
+- Resolved name, level, and school
+- Expandable detail card with full spell statistics (casting time, range, components, duration, damage, save info, description)
+
+---
+
+## 13. Map Upload Wizard
 
 **File:** `components/map-upload-wizard/`
 
@@ -916,6 +983,7 @@ ROOT
    │  ├─ Character Sheet (requires character)
    │  ├─ Inventory (requires character)
    │  ├─ Spells (requires character)
+   │  ├─ Compendium (Items/Spells/Shops/Loot tabs)
    │  ├─ Narratives
    │  ├─ Session Notes
    │  └─ Settings
@@ -1072,6 +1140,41 @@ ROOT
 |--------|----------|-------------|
 | POST | `/api/campaigns/{id}/characters/{charId}/level-up` | Level up character, body: `{ hpChoice: 'roll'\|'average' }` |
 | POST | `/api/campaigns/{id}/characters/{charId}/milestone-level-up` | Milestone level up (DM only) |
+
+### SRD Compendium
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| GET | `/api/srd/items?q=&category=&rarity=&limit=&offset=` | Search items with pagination |
+| GET | `/api/srd/spells?q=&school=&level=&class=&concentration=&limit=&offset=` | Search spells with pagination |
+| GET | `/api/srd/spells/{key}` | Get spell by key |
+| GET | `/api/srd/compendium/search?q=&type=&limit=` | Unified search across items + spells |
+
+### Shops
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| POST | `/api/campaigns/{id}/shops` | Create shop (DM only) |
+| GET | `/api/campaigns/{id}/shops` | List shops (DM sees all, players see active only) |
+| GET | `/api/campaigns/{id}/shops/{shopId}` | Get shop with inventory |
+| PUT | `/api/campaigns/{id}/shops/{shopId}` | Update shop (DM only) |
+| DELETE | `/api/campaigns/{id}/shops/{shopId}` | Delete shop (DM only) |
+| POST | `/api/campaigns/{id}/shops/{shopId}/inventory` | Add item to shop (DM only) |
+| PUT | `/api/campaigns/{id}/shops/{shopId}/inventory/{entryId}` | Update inventory entry (DM only) |
+| DELETE | `/api/campaigns/{id}/shops/{shopId}/inventory/{entryId}` | Remove item from shop (DM only) |
+| POST | `/api/campaigns/{id}/shops/{shopId}/purchase` | Purchase item (player), body: `{ characterId, itemKey, quantity }` |
+| POST | `/api/campaigns/{id}/shops/{shopId}/auto-stock` | LLM auto-stock shop (DM only) |
+
+### Loot Tables
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| POST | `/api/campaigns/{id}/loot-tables` | Create loot table (DM only) |
+| GET | `/api/campaigns/{id}/loot-tables` | List loot tables (DM only) |
+| GET | `/api/campaigns/{id}/loot-tables/{tableId}` | Get loot table with entries (DM only) |
+| PUT | `/api/campaigns/{id}/loot-tables/{tableId}` | Update loot table (DM only) |
+| DELETE | `/api/campaigns/{id}/loot-tables/{tableId}` | Delete loot table (DM only) |
+| POST | `/api/campaigns/{id}/loot-tables/{tableId}/entries` | Add entry (DM only) |
+| PUT | `/api/campaigns/{id}/loot-tables/{tableId}/entries/{entryId}` | Update entry (DM only) |
+| DELETE | `/api/campaigns/{id}/loot-tables/{tableId}/entries/{entryId}` | Remove entry (DM only) |
+| POST | `/api/campaigns/{id}/loot-tables/{tableId}/roll` | Roll on table (DM only), body: `{ count }` |
 
 ### NPCs
 | Method | Endpoint | Description |

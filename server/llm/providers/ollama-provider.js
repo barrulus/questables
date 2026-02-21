@@ -111,6 +111,10 @@ export class OllamaProvider extends EnhancedLLMProvider {
     return this.#generate(NARRATIVE_TYPES.OBJECTIVE_RUMOURS, options);
   }
 
+  async generateShopAutoStock(options) {
+    return this.#generate(NARRATIVE_TYPES.SHOP_AUTO_STOCK, options);
+  }
+
   async #generate(type, options = {}) {
     this.assertPrompt(options);
 

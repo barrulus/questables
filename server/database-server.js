@@ -34,6 +34,8 @@ import { registerGameStateRoutes } from './routes/game-state.routes.js';
 import { registerActionRoutes } from './routes/actions.routes.js';
 import { registerRestRoutes } from './routes/rest.routes.js';
 import { registerLevellingRoutes } from './routes/levelling.routes.js';
+import { registerShopRoutes } from './routes/shop.routes.js';
+import { registerLootRoutes } from './routes/loot.routes.js';
 import { ensureLLMService } from './llm/request-helpers.js';
 import {
   logInfo,
@@ -408,6 +410,8 @@ registerGameStateRoutes(app);
 registerActionRoutes(app);
 registerRestRoutes(app);
 registerLevellingRoutes(app);
+registerShopRoutes(app);
+registerLootRoutes(app);
 
 const loadProviderConfigurations = async () => {
   try {

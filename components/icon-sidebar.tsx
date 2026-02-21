@@ -9,6 +9,7 @@ import {
   Settings,
   ScrollText,
   Crown,
+  Library,
 } from "lucide-react";
 import { useGameSession } from "../contexts/GameSessionContext";
 import { useUser } from "../contexts/UserContext";
@@ -46,6 +47,11 @@ export function IconSidebar({ activePanel, onPanelChange }: IconSidebarProps) {
         id: "spells",
         icon: <BookOpen className="w-5 h-5" />,
         label: "Spells",
+      },
+      {
+        id: "compendium",
+        icon: <Library className="w-5 h-5" />,
+        label: "Compendium",
       },
       {
         id: "narratives",

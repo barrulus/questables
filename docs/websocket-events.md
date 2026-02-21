@@ -108,6 +108,12 @@ These events are emitted by server-side operations (not triggered by client sock
 | `hitDiceSpent` | `hit-dice-spent` | Player spends a hit die during short rest | Broadcast to campaign |
 | `restCompleted` | `rest-completed` | DM completes a rest, restoration applied | Broadcast to campaign |
 
+### Shop Events
+
+| Event Key | Socket Event | Trigger | Delivery |
+|-----------|-------------|---------|----------|
+| `shopPurchase` | `shop-purchase` | Player purchases an item from an NPC shop | Broadcast to campaign |
+
 ### WS6 — Death Save & Levelling Events
 
 | Event Key | Socket Event | Trigger | Delivery |

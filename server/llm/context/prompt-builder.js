@@ -12,6 +12,7 @@ const typeInstruction = {
   [NARRATIVE_TYPES.OBJECTIVE_COMBAT]: 'Summarise likely combat encounters for the specified objective. Provide 1-2 markdown sections covering enemy composition, tactics, and environmental hazards strictly derived from the context.',
   [NARRATIVE_TYPES.OBJECTIVE_NPCS]: 'List notable NPCs relevant to the specified objective. Use bullet points with name, disposition, and a sentence of guidance. Only mention NPCs present in the supplied context.',
   [NARRATIVE_TYPES.OBJECTIVE_RUMOURS]: 'Generate 2-3 rumours that characters could learn about the specified objective. Each rumour should be a single sentence, tagged with its reliability (truthful, partial, false) and rooted in the campaign context.',
+  [NARRATIVE_TYPES.SHOP_AUTO_STOCK]: 'You are stocking an NPC shop with appropriate items for the campaign context. Return a JSON array of item suggestions. Each entry must have: "itemKey" (a plausible SRD item key like "longsword", "potion-of-healing"), "quantity" (1-10), and "reason" (a brief justification). Choose 15-25 items appropriate for the shop type and party level. Only suggest items that would realistically be sold in this type of shop. Output ONLY the JSON array, no other text.',
 };
 
 const typeLabel = {
@@ -25,6 +26,7 @@ const typeLabel = {
   [NARRATIVE_TYPES.OBJECTIVE_COMBAT]: 'Objective Combat Planning',
   [NARRATIVE_TYPES.OBJECTIVE_NPCS]: 'Objective NPC Brief',
   [NARRATIVE_TYPES.OBJECTIVE_RUMOURS]: 'Objective Rumours',
+  [NARRATIVE_TYPES.SHOP_AUTO_STOCK]: 'Shop Auto-Stock',
 };
 
 const sanitize = (value) => {

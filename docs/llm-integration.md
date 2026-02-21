@@ -90,6 +90,7 @@ VALUES ('ollama', 'ollama', 'http://localhost:11434', 'qwen3:8b', true);
 | NPC Dialogue | `POST .../narratives/npc` | In-character NPC responses | DM/co-DM |
 | Action Outcome | `POST .../narratives/action` | Narrate results of player actions | Any participant |
 | Quest Outline | `POST .../narratives/quest` | AI-generated quest structure | DM/co-DM |
+| Shop Auto-Stock | `POST .../shops/:shopId/auto-stock` | LLM-generated shop inventory suggestions | DM/co-DM |
 
 ### Contextual Service
 
@@ -113,6 +114,19 @@ NPC dialogue requests have special behavior:
    - Trust delta (clamped -10 to 10)
    - Tags for categorization
 4. `npc_relationships` updated atomically
+
+## Shop Auto-Stock
+
+The `SHOP_AUTO_STOCK` narrative type enables LLM-powered shop inventory generation:
+
+1. DM opens a shop in the Shop Editor and clicks "Auto-Stock"
+2. `POST /api/campaigns/:id/shops/:shopId/auto-stock` sends shop details (name, type, location, price modifier) to the LLM via `generateFromContext`
+3. The LLM prompt instructs it to return a JSON array of 15-25 item suggestions with `itemKey`, `quantity`, and `reason`
+4. Server validates each suggested `itemKey` against the `srd_items` table
+5. Valid items are added to the shop inventory via `addShopItem`
+6. Response includes `addedCount` vs `suggestedCount` for transparency
+
+The prompt includes full campaign context (party levels, setting, NPCs) so the LLM can suggest level-appropriate items for the shop type.
 
 ## Caching
 
