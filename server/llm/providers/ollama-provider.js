@@ -204,7 +204,16 @@ export class OllamaProvider extends EnhancedLLMProvider {
         generationDurationMs: toMilliseconds(response?.eval_duration),
       };
 
-      const content = typeof response?.response === 'string' ? response.response.trim() : '';
+      const rawResponse = response?.response;
+      logInfo('Ollama raw response type', {
+        type: typeof rawResponse,
+        isNull: rawResponse === null,
+        isUndefined: rawResponse === undefined,
+        preview: typeof rawResponse === 'string' ? rawResponse.slice(0, 200) : JSON.stringify(rawResponse)?.slice(0, 200),
+      });
+      const content = typeof rawResponse === 'string' ? rawResponse.trim()
+        : typeof rawResponse === 'object' && rawResponse !== null ? JSON.stringify(rawResponse)
+        : '';
 
       // Attempt JSON parse when structured output was requested
       let parsed = null;
