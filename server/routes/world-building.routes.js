@@ -9,7 +9,7 @@ import { Router } from 'express';
 import { body, param } from 'express-validator';
 import { requireAuth } from '../auth-middleware.js';
 import { handleValidationErrors } from '../validation/common.js';
-import { ensureDmControl } from '../services/campaigns/service.js';
+import { ensureDmControl, resolveCampaignViewerContext } from '../services/campaigns/service.js';
 import { getClient } from '../db/pool.js';
 import { logError, logInfo } from '../utils/logger.js';
 import {
@@ -43,7 +43,8 @@ router.post(
 
     const client = await getClient({ label: 'world-build.generate' });
     try {
-      await ensureDmControl(client, campaignId, req.user);
+      const viewer = await resolveCampaignViewerContext(client, campaignId, req.user.id);
+      ensureDmControl(viewer, 'Only the campaign director can manage world lore.');
 
       // Get the campaign's world map
       const { rows } = await client.query(
@@ -139,7 +140,8 @@ router.put(
 
     const client = await getClient({ label: 'world-build.update' });
     try {
-      await ensureDmControl(client, campaignId, req.user);
+      const viewer = await resolveCampaignViewerContext(client, campaignId, req.user.id);
+      ensureDmControl(viewer, 'Only the campaign director can manage world lore.');
 
       const existing = await getWorldLoreById(loreId);
       if (!existing || existing.campaign_id !== campaignId) {
@@ -184,7 +186,8 @@ router.delete(
 
     const client = await getClient({ label: 'world-build.delete' });
     try {
-      await ensureDmControl(client, campaignId, req.user);
+      const viewer = await resolveCampaignViewerContext(client, campaignId, req.user.id);
+      ensureDmControl(viewer, 'Only the campaign director can manage world lore.');
       const deleted = await deleteWorldLore(loreId);
       if (!deleted) {
         return res.status(404).json({ error: 'Lore entry not found' });
