@@ -490,6 +490,10 @@ const bootstrapLLMServices = async () => {
 
     app.locals.llmService = enhancedLLMService;
     app.locals.llmRegistry = llmRegistry;
+
+    // Enable automatic lore extraction after LLM narration
+    const { setLLMService } = await import('./services/chat/dm-narrator.js');
+    setLLMService(enhancedLLMService);
     app.locals.llmProviderConfigs = providers.map((provider) => {
       const sanitizedProvider = { ...provider };
       delete sanitizedProvider.apiKey;

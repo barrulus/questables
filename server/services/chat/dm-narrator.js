@@ -7,6 +7,15 @@
  */
 import { query } from '../../db/pool.js';
 import { logInfo, logError } from '../../utils/logger.js';
+import { extractAndPersistLore } from '../world-building/lore-extractor.js';
+
+// Module-level LLM service ref — set once at startup via setLLMService()
+let _llmService = null;
+
+/** Call once at startup to enable automatic lore extraction after narration. */
+export function setLLMService(service) {
+  _llmService = service;
+}
 
 /**
  * Post a narration from the LLM Dungeon Master into the Adventure (dm_broadcast) channel.
@@ -31,6 +40,7 @@ export async function postNarrationToChat({
   locX = null,
   locY = null,
   insideBurgId = null,
+  llmService = null,
 }) {
   try {
     // Look up the campaign DM to use as sender
@@ -111,6 +121,21 @@ export async function postNarrationToChat({
       messageType,
       messageId: message?.id,
     });
+
+    // Fire-and-forget: extract lore facts from the narration
+    const svc = llmService || _llmService;
+    if (svc && content && messageType !== 'system_event' && messageType !== 'roll_request') {
+      extractAndPersistLore({
+        campaignId,
+        narrationContent: content,
+        llmService: svc,
+        locX,
+        locY,
+        insideBurgId,
+      }).catch((err) => {
+        logError('Lore extraction failed (non-blocking)', { campaignId, error: err.message });
+      });
+    }
 
     return message;
   } catch (error) {
