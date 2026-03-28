@@ -1,10 +1,10 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Accordion, AccordionContent, AccordionItem, AccordionTrigger } from "./ui/accordion";
 import { toast } from "sonner";
-import { Loader2, MapPin, Sparkles, Compass, Target, Users, FileText, Swords, SkipForward, Play, Megaphone, Send, RotateCcw } from "lucide-react";
+import { Loader2, Sparkles, Compass, FileText, Megaphone, Send, RotateCcw } from "lucide-react";
 import { useGameSession } from "../contexts/GameSessionContext";
 import { useUser } from "../contexts/UserContext";
-import { useGameState, type GamePhase } from "../contexts/GameStateContext";
+import { useGameState } from "../contexts/GameStateContext";
 import {
   fetchJson,
   apiFetch,
@@ -35,7 +35,11 @@ import { ScrollArea } from "./ui/scroll-area";
 import { Alert, AlertDescription, AlertTitle } from "./ui/alert";
 import { Badge } from "./ui/badge";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "./ui/tabs";
-import { RadioGroup, RadioGroupItem } from "./ui/radio-group";
+// RadioGroup moved to extracted teleport panels
+import { GameStatePanel } from "./dm-sidebar-game-state";
+import { TeleportPlayerPanel } from "./dm-sidebar-teleport-player";
+import { TeleportNpcPanel } from "./dm-sidebar-teleport-npc";
+import { NpcSentimentPanel } from "./dm-sidebar-npc-sentiment";
 
 interface SessionSidebarRecord {
   id: string;
@@ -87,13 +91,6 @@ const ENCOUNTER_DIFFICULTIES: { value: EncounterDifficulty; label: string }[] = 
   { value: "deadly", label: "Deadly" },
 ];
 
-const SENTIMENT_OPTIONS: { value: "auto" | NpcSentiment; label: string }[] = [
-  { value: "auto", label: "Auto-detect from delta" },
-  { value: "positive", label: "Positive" },
-  { value: "neutral", label: "Neutral" },
-  { value: "mixed", label: "Mixed" },
-  { value: "negative", label: "Negative" },
-];
 
 const NONE_VALUE = "__none__";
 const NO_SESSION_VALUE = "__no_session__";
@@ -193,12 +190,6 @@ const describeError = (error: unknown, fallback: string): string => {
   return fallback;
 };
 
-const GAME_PHASES: { value: GamePhase; label: string }[] = [
-  { value: "exploration", label: "Exploration" },
-  { value: "combat", label: "Combat" },
-  { value: "social", label: "Social" },
-  { value: "rest", label: "Rest" },
-];
 
 export function DMSidebar() {
   const { activeCampaignId, latestSession } = useGameSession();
@@ -1333,246 +1324,39 @@ export function DMSidebar() {
           <AccordionItem value="npc-sentiment">
             <AccordionTrigger>NPC Sentiment</AccordionTrigger>
             <AccordionContent>
-              <div className="space-y-4">
-              <div className="space-y-2">
-                <Label htmlFor="dm-sidebar-sentiment-npc">NPC</Label>
-                <Select value={sentimentNpcId} onValueChange={setSentimentNpcId}>
-                  <SelectTrigger id="dm-sidebar-sentiment-npc">
-                    <SelectValue placeholder={npcsLoading ? "Loading NPCs…" : "Select an NPC"} />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value={NONE_VALUE}>Select an NPC</SelectItem>
-                    {npcOptions.map((option) => (
-                      <SelectItem key={option.value} value={option.value}>
-                        {option.label}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-                {npcsError && <p className="text-xs text-destructive">{npcsError}</p>}
-              </div>
-
-              <div className="grid gap-4 grid-cols-1 sm:grid-cols-3">
-                <div className="space-y-2">
-                  <Label htmlFor="dm-sidebar-sentiment-delta">Trust delta</Label>
-                  <Input
-                    id="dm-sidebar-sentiment-delta"
-                    type="number"
-                    min={-10}
-                    max={10}
-                    value={sentimentDelta}
-                    onChange={(event) => setSentimentDelta(event.target.value)}
-                  />
-                </div>
-                <div className="space-y-2">
-                  <Label htmlFor="dm-sidebar-sentiment-choice">Sentiment</Label>
-                  <Select value={sentimentChoice} onValueChange={(value) => setSentimentChoice(value as "auto" | NpcSentiment)}>
-                    <SelectTrigger id="dm-sidebar-sentiment-choice">
-                      <SelectValue />
-                    </SelectTrigger>
-                    <SelectContent>
-                      {SENTIMENT_OPTIONS.map((option) => (
-                        <SelectItem key={option.value} value={option.value}>
-                          {option.label}
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
-                </div>
-                <div className="space-y-2">
-                  <Label htmlFor="dm-sidebar-sentiment-session">Session link</Label>
-                  <Select
-                    value={sentimentSessionId}
-                    onValueChange={(value) => {
-                      sentimentSessionTouchedRef.current = true;
-                      setSentimentSessionId(value);
-                    }}
-                  >
-                    <SelectTrigger id="dm-sidebar-sentiment-session">
-                      <SelectValue />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value={NONE_VALUE}>No session link</SelectItem>
-                      {sessionOptions.map((option) => (
-                        <SelectItem key={option.value} value={option.value}>
-                          {option.label}
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
-                </div>
-              </div>
-
-              <div className="space-y-2">
-                <Label htmlFor="dm-sidebar-sentiment-summary">Summary</Label>
-                <Textarea
-                  id="dm-sidebar-sentiment-summary"
-                  rows={3}
-                  value={sentimentSummary}
-                  onChange={(event) => setSentimentSummary(event.target.value)}
-                  placeholder="The guardian now trusts the party after they safeguarded the village."
-                />
-              </div>
-
-              <div className="space-y-2">
-                <Label htmlFor="dm-sidebar-sentiment-tags">Tags (comma separated)</Label>
-                <Input
-                  id="dm-sidebar-sentiment-tags"
-                  value={sentimentTags}
-                  onChange={(event) => setSentimentTags(event.target.value)}
-                  placeholder="reassurance, trust"
-                />
-              </div>
-
-              <div className="flex flex-wrap gap-2">
-                <Button onClick={handleSentimentSubmit} disabled={sentimentPending}>
-                  {sentimentPending ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Users className="mr-2 h-4 w-4" />}Log sentiment
-                </Button>
-              </div>
-
-              {sentimentFeedback && (
-                <Alert>
-                  <AlertTitle>Sentiment recorded</AlertTitle>
-                  <AlertDescription>
-                    Memory {sentimentFeedback.id} stored with delta {sentimentFeedback.trust_delta} ({sentimentFeedback.sentiment}).
-                  </AlertDescription>
-                </Alert>
-              )}
-
-              {sentimentError && (
-                <Alert variant="destructive">
-                  <AlertTitle>Sentiment logging failed</AlertTitle>
-                  <AlertDescription>{sentimentError}</AlertDescription>
-                </Alert>
-              )}
-              </div>
+              <NpcSentimentPanel
+                noneValue={NONE_VALUE}
+                npcId={sentimentNpcId} onNpcIdChange={setSentimentNpcId}
+                npcOptions={npcOptions} npcsLoading={npcsLoading} npcsError={npcsError}
+                delta={sentimentDelta} onDeltaChange={setSentimentDelta}
+                choice={sentimentChoice} onChoiceChange={setSentimentChoice}
+                sessionId={sentimentSessionId}
+                onSessionIdChange={(value, touched) => { if (touched) sentimentSessionTouchedRef.current = true; setSentimentSessionId(value); }}
+                sessionOptions={sessionOptions}
+                summary={sentimentSummary} onSummaryChange={setSentimentSummary}
+                tags={sentimentTags} onTagsChange={setSentimentTags}
+                pending={sentimentPending} feedback={sentimentFeedback} error={sentimentError}
+                onSubmit={handleSentimentSubmit}
+              />
             </AccordionContent>
           </AccordionItem>
 
           <AccordionItem value="teleport-player">
             <AccordionTrigger>Teleport Player</AccordionTrigger>
             <AccordionContent>
-              <div className="space-y-4">
-              <div className="space-y-2">
-                <Label htmlFor="dm-sidebar-player-select">Campaign player</Label>
-                <Select value={teleportPlayerId} onValueChange={setTeleportPlayerId}>
-                  <SelectTrigger id="dm-sidebar-player-select">
-                    <SelectValue placeholder={playersLoading ? "Loading roster…" : "Select a player"} />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value={NONE_VALUE}>Select a player</SelectItem>
-                    {playerOptions.map((option) => (
-                      <SelectItem key={option.value} value={option.value}>
-                        {option.label}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-                {playersError && <p className="text-xs text-destructive">{playersError}</p>}
-              </div>
-
-              <div className="space-y-2">
-                <Label>Destination</Label>
-                <RadioGroup
-                  value={teleportPlayerMode}
-                  onValueChange={(value) => setTeleportPlayerMode(value as "spawn" | "coordinates")}
-                  className="flex flex-col gap-2 md:flex-row md:items-center"
-                >
-                  <label className="flex items-center gap-2 text-sm">
-                    <RadioGroupItem value="spawn" id="dm-sidebar-player-spawn" disabled={spawns.length === 0} />
-                    <span>Saved spawn point</span>
-                  </label>
-                  <label className="flex items-center gap-2 text-sm">
-                    <RadioGroupItem value="coordinates" id="dm-sidebar-player-coordinates" />
-                    <span>Manual coordinates</span>
-                  </label>
-                </RadioGroup>
-              </div>
-
-              {teleportPlayerMode === "spawn" ? (
-                <div className="space-y-2">
-                  <Label htmlFor="dm-sidebar-player-spawn-select">Spawn point</Label>
-                  <Select
-                    value={teleportSpawnId}
-                    onValueChange={(value) => {
-                      teleportSpawnTouchedRef.current = true;
-                      setTeleportSpawnId(value);
-                    }}
-                    disabled={spawns.length === 0}
-                  >
-                    <SelectTrigger id="dm-sidebar-player-spawn-select">
-                      <SelectValue placeholder={spawnsLoading ? "Loading spawns…" : "Select a spawn"} />
-                    </SelectTrigger>
-                    <SelectContent>
-                      {spawnOptions.map((option) => (
-                        <SelectItem key={option.value} value={option.value}>
-                          {option.label}
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
-                  {spawnsError && <p className="text-xs text-destructive">{spawnsError}</p>}
-                  {spawns.length === 0 && (
-                    <p className="text-xs text-muted-foreground">
-                      No spawn points defined. Switch to manual coordinates to teleport players.
-                    </p>
-                  )}
-                </div>
-              ) : (
-                <div className="grid gap-4 grid-cols-2">
-                  <div className="space-y-2">
-                    <Label htmlFor="dm-sidebar-player-x">X coordinate</Label>
-                    <Input
-                      id="dm-sidebar-player-x"
-                      value={teleportPlayerX}
-                      onChange={(event) => setTeleportPlayerX(event.target.value)}
-                      placeholder="123.45"
-                    />
-                  </div>
-                  <div className="space-y-2">
-                    <Label htmlFor="dm-sidebar-player-y">Y coordinate</Label>
-                    <Input
-                      id="dm-sidebar-player-y"
-                      value={teleportPlayerY}
-                      onChange={(event) => setTeleportPlayerY(event.target.value)}
-                      placeholder="678.90"
-                    />
-                  </div>
-                </div>
-              )}
-
-              <div className="space-y-2">
-                <Label htmlFor="dm-sidebar-player-reason">Audit reason (optional)</Label>
-                <Input
-                  id="dm-sidebar-player-reason"
-                  value={teleportPlayerReason}
-                  onChange={(event) => setTeleportPlayerReason(event.target.value)}
-                  placeholder="DM reposition during encounter"
-                />
-              </div>
-
-              <div className="flex flex-wrap gap-2">
-                <Button onClick={handleTeleportPlayer} disabled={teleportPlayerPending}>
-                  {teleportPlayerPending ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Target className="mr-2 h-4 w-4" />}Teleport player
-                </Button>
-              </div>
-
-              {teleportPlayerFeedback && (
-                <Alert>
-                  <AlertTitle>Player teleported</AlertTitle>
-                  <AlertDescription>
-                    Position {(teleportPlayerFeedback.geometry?.coordinates ?? []).join(", ")} · Reason: {teleportPlayerFeedback.reason ?? "unspecified"}
-                  </AlertDescription>
-                </Alert>
-              )}
-
-              {teleportPlayerError && (
-                <Alert variant="destructive">
-                  <AlertTitle>Player teleport failed</AlertTitle>
-                  <AlertDescription>{teleportPlayerError}</AlertDescription>
-                </Alert>
-              )}
-              </div>
+              <TeleportPlayerPanel
+                noneValue={NONE_VALUE}
+                playerId={teleportPlayerId} onPlayerIdChange={setTeleportPlayerId}
+                playerOptions={playerOptions} playersLoading={playersLoading} playersError={playersError}
+                mode={teleportPlayerMode} onModeChange={setTeleportPlayerMode}
+                spawnId={teleportSpawnId} onSpawnIdChange={(v) => { teleportSpawnTouchedRef.current = true; setTeleportSpawnId(v); }}
+                spawnOptions={spawnOptions} spawns={spawns} spawnsLoading={spawnsLoading} spawnsError={spawnsError}
+                x={teleportPlayerX} onXChange={setTeleportPlayerX}
+                y={teleportPlayerY} onYChange={setTeleportPlayerY}
+                reason={teleportPlayerReason} onReasonChange={setTeleportPlayerReason}
+                pending={teleportPlayerPending} feedback={teleportPlayerFeedback} error={teleportPlayerError}
+                onTeleport={handleTeleportPlayer}
+              />
             </AccordionContent>
           </AccordionItem>
 
@@ -1580,219 +1364,18 @@ export function DMSidebar() {
             <AccordionTrigger>Game State</AccordionTrigger>
             <AccordionContent>
               <div className="space-y-4">
-                {!gameState ? (
-                  <p className="text-sm text-muted-foreground">
-                    No active game state. Activate a session to initialize game state.
-                  </p>
-                ) : (
-                  <>
-                    <div className="space-y-2">
-                      <Label>Current Phase: <span className="font-semibold capitalize">{gameState.phase}</span></Label>
-                      <div className="flex flex-wrap gap-2">
-                        {GAME_PHASES.filter((p) => p.value !== gameState.phase).map((p) => (
-                          <Button
-                            key={p.value}
-                            variant="outline"
-                            size="sm"
-                            onClick={() => {
-                              void changeGamePhase(p.value).catch((err: Error) => {
-                                toast.error(err.message || "Failed to change phase");
-                              });
-                            }}
-                          >
-                            <Swords className="mr-1 h-3 w-3" />
-                            {p.label}
-                          </Button>
-                        ))}
-                      </div>
-                    </div>
-
-                    <div className="space-y-2">
-                      <Label>Turn Order (Round {gameState.roundNumber})</Label>
-                      {gameState.turnOrder.length === 0 ? (
-                        <p className="text-sm text-muted-foreground">No turn order (rest phase).</p>
-                      ) : (
-                        <div className="space-y-1">
-                          {gameState.turnOrder.map((turnId, index) => {
-                            const isNpc = turnId.startsWith("npc:");
-                            const player = isNpc ? null : players.find((p) => p.id === turnId);
-                            const displayName = isNpc
-                              ? `NPC (${turnId.replace("npc:", "").slice(0, 8)})`
-                              : (player?.name ?? turnId.slice(0, 8));
-                            const isActive = gameState.activePlayerId === turnId;
-                            return (
-                              <div
-                                key={turnId}
-                                className={`flex items-center justify-between rounded px-2 py-1 text-sm ${
-                                  isActive ? "bg-primary/10 font-semibold" : ""
-                                }${isNpc ? " text-red-600" : ""}`}
-                              >
-                                <span>
-                                  {index + 1}. {displayName}
-                                  {isActive && " (active)"}
-                                </span>
-                                {isActive && !isNpc && (
-                                  <Button
-                                    variant="ghost"
-                                    size="sm"
-                                    className="h-6 px-2 text-xs"
-                                    onClick={() => {
-                                      void skipGameTurn(turnId).catch((err: Error) => {
-                                        toast.error(err.message || "Failed to skip turn");
-                                      });
-                                    }}
-                                  >
-                                    <SkipForward className="mr-1 h-3 w-3" />
-                                    Skip
-                                  </Button>
-                                )}
-                              </div>
-                            );
-                          })}
-                        </div>
-                      )}
-                    </div>
-
-                    <div className="flex flex-wrap gap-2">
-                      {gameState.activePlayerId && !gameState.worldTurnPending && (
-                        <Button
-                          variant="outline"
-                          size="sm"
-                          onClick={() => {
-                            void endGameTurn().catch((err: Error) => {
-                              toast.error(err.message || "Failed to end turn");
-                            });
-                          }}
-                        >
-                          <Play className="mr-1 h-3 w-3" />
-                          End Turn
-                        </Button>
-                      )}
-                      {gameState.worldTurnPending && (
-                        <div className="flex items-center gap-2">
-                          <Button
-                            size="sm"
-                            onClick={() => {
-                              void executeDmWorldTurn().catch((err: Error) => {
-                                toast.error(err.message || "Failed to execute world turn");
-                              });
-                            }}
-                          >
-                            <Sparkles className="mr-1 h-3 w-3" />
-                            {worldTurnWithLLM ? "Execute World Turn (LLM)" : "Execute World Turn"}
-                          </Button>
-                          <label className="flex items-center gap-1 text-xs text-muted-foreground cursor-pointer">
-                            <input
-                              type="checkbox"
-                              checked={worldTurnWithLLM}
-                              onChange={(e) => setWorldTurnWithLLM(e.target.checked)}
-                              className="h-3 w-3"
-                            />
-                            LLM
-                          </label>
-                        </div>
-                      )}
-                    </div>
-
-                    {/* End Combat controls */}
-                    {gameState.phase === "combat" && (
-                      <div className="space-y-2">
-                        <Label>End Combat</Label>
-                        <div className="flex flex-wrap gap-2">
-                          {(
-                            [
-                              { value: "victory", label: "Victory" },
-                              { value: "enemies_fled", label: "Enemies Fled" },
-                              { value: "party_fled", label: "Party Fled" },
-                              { value: "parley", label: "Parley" },
-                            ] as const
-                          ).map((opt) => (
-                            <Button
-                              key={opt.value}
-                              variant="outline"
-                              size="sm"
-                              onClick={() => {
-                                void endCombat(opt.value).catch((err: Error) => {
-                                  toast.error(err.message || "Failed to end combat");
-                                });
-                              }}
-                            >
-                              {opt.label}
-                            </Button>
-                          ))}
-                        </div>
-                      </div>
-                    )}
-
-                    {/* Rest controls */}
-                    {gameState.phase !== "rest" && gameState.phase !== "combat" && (
-                      <div className="space-y-2">
-                        <Label>Start Rest</Label>
-                        <div className="flex gap-2">
-                          <Button
-                            variant="outline"
-                            size="sm"
-                            onClick={() => {
-                              void fetchJson(`/api/campaigns/${activeCampaignId}/rest/start`, {
-                                method: "POST",
-                                headers: { "Content-Type": "application/json" },
-                                body: JSON.stringify({ restType: "short" }),
-                              }).catch((err: Error) => {
-                                toast.error(err.message || "Failed to start short rest");
-                              });
-                            }}
-                          >
-                            Short Rest
-                          </Button>
-                          <Button
-                            variant="outline"
-                            size="sm"
-                            onClick={() => {
-                              void fetchJson(`/api/campaigns/${activeCampaignId}/rest/start`, {
-                                method: "POST",
-                                headers: { "Content-Type": "application/json" },
-                                body: JSON.stringify({ restType: "long" }),
-                              }).catch((err: Error) => {
-                                toast.error(err.message || "Failed to start long rest");
-                              });
-                            }}
-                          >
-                            Long Rest
-                          </Button>
-                        </div>
-                      </div>
-                    )}
-
-                    {/* Milestone level-up */}
-                    {players.length > 0 && (
-                      <div className="space-y-2">
-                        <Label>Milestone Level Up</Label>
-                        <div className="flex flex-wrap gap-2">
-                          {players.map((p) => (
-                            <Button
-                              key={p.id}
-                              variant="outline"
-                              size="sm"
-                              onClick={() => {
-                                void fetchJson(`/api/campaigns/${activeCampaignId}/characters/${p.characterId}/milestone-level-up`, {
-                                  method: "POST",
-                                  headers: { "Content-Type": "application/json" },
-                                  body: JSON.stringify({ hpChoice: "average" }),
-                                }).then(() => {
-                                  toast.success(`${p.name} levelled up!`);
-                                }).catch((err: Error) => {
-                                  toast.error(err.message || "Failed to level up");
-                                });
-                              }}
-                            >
-                              {p.name}
-                            </Button>
-                          ))}
-                        </div>
-                      </div>
-                    )}
-                  </>
-                )}
+                <GameStatePanel
+                  gameState={gameState}
+                  players={players}
+                  activeCampaignId={activeCampaignId}
+                  worldTurnWithLLM={worldTurnWithLLM}
+                  onWorldTurnWithLLMChange={setWorldTurnWithLLM}
+                  changeGamePhase={changeGamePhase}
+                  endGameTurn={endGameTurn}
+                  executeDmWorldTurn={executeDmWorldTurn}
+                  skipGameTurn={skipGameTurn}
+                  endCombat={endCombat}
+                />
               </div>
             </AccordionContent>
           </AccordionItem>
@@ -1800,116 +1383,19 @@ export function DMSidebar() {
           <AccordionItem value="teleport-npc">
             <AccordionTrigger>Teleport NPC</AccordionTrigger>
             <AccordionContent>
-              <div className="space-y-4">
-              <div className="space-y-2">
-                <Label htmlFor="dm-sidebar-npc-select">NPC</Label>
-                <Select value={teleportNpcId} onValueChange={setTeleportNpcId}>
-                  <SelectTrigger id="dm-sidebar-npc-select">
-                    <SelectValue placeholder={npcsLoading ? "Loading NPCs…" : "Select an NPC"} />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value={NONE_VALUE}>Select an NPC</SelectItem>
-                    {npcOptions.map((option) => (
-                      <SelectItem key={option.value} value={option.value}>
-                        {option.label}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-              </div>
-
-              <div className="space-y-2">
-                <Label>Destination</Label>
-                <RadioGroup
-                  value={teleportNpcMode}
-                  onValueChange={(value) => setTeleportNpcMode(value as "location" | "coordinates")}
-                  className="flex flex-col gap-2 md:flex-row md:items-center"
-                >
-                  <label className="flex items-center gap-2 text-sm">
-                    <RadioGroupItem value="location" id="dm-sidebar-npc-location" />
-                    <span>Campaign location</span>
-                  </label>
-                  <label className="flex items-center gap-2 text-sm">
-                    <RadioGroupItem value="coordinates" id="dm-sidebar-npc-coordinates" />
-                    <span>Manual coordinates</span>
-                  </label>
-                </RadioGroup>
-              </div>
-
-              {teleportNpcMode === "location" ? (
-                <div className="space-y-2">
-                  <Label htmlFor="dm-sidebar-npc-location-select">Location</Label>
-                  <Select value={teleportNpcLocationId} onValueChange={setTeleportNpcLocationId}>
-                    <SelectTrigger id="dm-sidebar-npc-location-select">
-                      <SelectValue placeholder={locationsLoading ? "Loading locations…" : "Select a location"} />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value={NONE_VALUE}>Select a location</SelectItem>
-                      {locationOptions.map((option) => (
-                        <SelectItem key={option.value} value={option.value}>
-                          {option.label}
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
-                </div>
-              ) : (
-                <div className="grid gap-4 grid-cols-2">
-                  <div className="space-y-2">
-                    <Label htmlFor="dm-sidebar-npc-x">X coordinate</Label>
-                    <Input
-                      id="dm-sidebar-npc-x"
-                      value={teleportNpcX}
-                      onChange={(event) => setTeleportNpcX(event.target.value)}
-                      placeholder="42.5"
-                    />
-                  </div>
-                  <div className="space-y-2">
-                    <Label htmlFor="dm-sidebar-npc-y">Y coordinate</Label>
-                    <Input
-                      id="dm-sidebar-npc-y"
-                      value={teleportNpcY}
-                      onChange={(event) => setTeleportNpcY(event.target.value)}
-                      placeholder="99.1"
-                    />
-                  </div>
-                </div>
-              )}
-
-              <div className="space-y-2">
-                <Label htmlFor="dm-sidebar-npc-reason">Audit reason (optional)</Label>
-                <Input
-                  id="dm-sidebar-npc-reason"
-                  value={teleportNpcReason}
-                  onChange={(event) => setTeleportNpcReason(event.target.value)}
-                  placeholder="Relocate closer to the party"
-                />
-              </div>
-
-              <div className="flex flex-wrap gap-2">
-                <Button onClick={handleTeleportNpc} disabled={teleportNpcPending}>
-                  {teleportNpcPending ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <MapPin className="mr-2 h-4 w-4" />}Teleport NPC
-                </Button>
-              </div>
-
-              {teleportNpcFeedback && (
-                <Alert>
-                  <AlertTitle>NPC teleported</AlertTitle>
-                  <AlertDescription>
-                    {teleportNpcFeedback.currentLocationId
-                      ? `Now located at ${teleportNpcFeedback.currentLocationId}.`
-                      : `World position ${(teleportNpcFeedback.worldPosition?.coordinates ?? []).join(", ")}.`}
-                  </AlertDescription>
-                </Alert>
-              )}
-
-              {teleportNpcError && (
-                <Alert variant="destructive">
-                  <AlertTitle>NPC teleport failed</AlertTitle>
-                  <AlertDescription>{teleportNpcError}</AlertDescription>
-                </Alert>
-              )}
-              </div>
+              <TeleportNpcPanel
+                noneValue={NONE_VALUE}
+                npcId={teleportNpcId} onNpcIdChange={setTeleportNpcId}
+                npcOptions={npcOptions} npcsLoading={npcsLoading}
+                mode={teleportNpcMode} onModeChange={setTeleportNpcMode}
+                locationId={teleportNpcLocationId} onLocationIdChange={setTeleportNpcLocationId}
+                locationOptions={locationOptions} locationsLoading={locationsLoading}
+                x={teleportNpcX} onXChange={setTeleportNpcX}
+                y={teleportNpcY} onYChange={setTeleportNpcY}
+                reason={teleportNpcReason} onReasonChange={setTeleportNpcReason}
+                pending={teleportNpcPending} feedback={teleportNpcFeedback} error={teleportNpcError}
+                onTeleport={handleTeleportNpc}
+              />
             </AccordionContent>
           </AccordionItem>
         </Accordion>

@@ -27,14 +27,9 @@ import type {
   SpellcastingInfo,
 } from "../utils/database/data-structures";
 
-import { Card, CardContent, CardHeader, CardTitle } from "./ui/card";
 import { Button } from "./ui/button";
 import { Input } from "./ui/input";
-import { Label } from "./ui/label";
 import { ScrollArea } from "./ui/scroll-area";
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "./ui/tabs";
-import { Dialog, DialogContent, DialogHeader, DialogTitle } from "./ui/dialog";
-import { Textarea } from "./ui/textarea";
 import {
   Select,
   SelectContent,
@@ -52,8 +47,9 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from "./ui/alert-dialog";
-import { Badge } from "./ui/badge";
 import { cn } from "./ui/utils";
+import { CharacterDetailView } from "./character-detail-view";
+import { CharacterEditDialog, type CharacterFormState } from "./character-edit-dialog";
 
 export interface CharacterManagerCommand {
   type: "create" | "edit";
@@ -77,23 +73,6 @@ const abilityKeys = [
   "charisma",
 ] as const;
 
-const abilityLabels: Record<typeof abilityKeys[number], string> = {
-  strength: "Strength",
-  dexterity: "Dexterity",
-  constitution: "Constitution",
-  intelligence: "Intelligence",
-  wisdom: "Wisdom",
-  charisma: "Charisma",
-};
-
-const abilityAbbreviations: Record<typeof abilityKeys[number], string> = {
-  strength: "STR",
-  dexterity: "DEX",
-  constitution: "CON",
-  intelligence: "INT",
-  wisdom: "WIS",
-  charisma: "CHA",
-};
 
 const defaultAbilities: Record<typeof abilityKeys[number], number> = {
   strength: 10,
@@ -159,27 +138,6 @@ const createEmptyEquipment = (): Equipment => ({
   weapons: {},
   accessories: {},
 });
-
-interface CharacterFormState {
-  id?: string;
-  name: string;
-  className: string;
-  level: number;
-  race: string;
-  background: string;
-  armorClass: number;
-  speed: number;
-  proficiencyBonus: number;
-  hitPointsCurrent: number;
-  hitPointsMax: number;
-  hitPointsTemporary: number;
-  abilities: Record<typeof abilityKeys[number], number>;
-  backstory: string;
-  personality: string;
-  ideals: string;
-  bonds: string;
-  flaws: string;
-}
 
 const emptyFormState: CharacterFormState = {
   name: "",
@@ -382,8 +340,6 @@ const toUpdateRequest = (payload: CharacterMutationPayload): CharacterUpdateRequ
   request.userId = payload.userId;
   return request;
 };
-
-const getAbilityModifier = (score: number) => Math.floor((score - 10) / 2);
 
 const formatDate = (value?: string | Date | null) => {
   if (!value) return "";
@@ -793,245 +749,7 @@ export function CharacterManager({ command, onCharactersChanged, onFormClosed }:
     );
   };
 
-  const renderDetail = () => {
-    if (!selectedCharacter) {
-      return (
-        <div className="flex flex-1 flex-col items-center justify-center gap-3 text-center text-muted-foreground">
-          <Users className="h-10 w-10 opacity-40" />
-          <p>Select a character to view details</p>
-        </div>
-      );
-    }
-
-    const hitPoints = getHitPoints(selectedCharacter);
-    const abilities = getAbilities(selectedCharacter);
-    const skills = (selectedCharacter.skills as Record<string, number> | undefined) ?? {};
-    const inventory = Array.isArray(selectedCharacter.inventory)
-      ? (selectedCharacter.inventory as InventoryItem[])
-      : [];
-    const equipment =
-      (selectedCharacter.equipment as Equipment | undefined) ?? createEmptyEquipment();
-    const spellcasting =
-      (selectedCharacter.spellcasting as SpellcastingInfo | undefined) ?? undefined;
-
-    return (
-      <div className="flex h-full flex-col">
-        <div className="border-b px-5 py-4">
-          <div className="flex items-center justify-between">
-            <div>
-              <h3 className="text-lg font-semibold">{selectedCharacter.name}</h3>
-              <p className="text-sm text-muted-foreground">
-                Level {selectedCharacter.level} {selectedCharacter.race} {selectedCharacter.class}
-              </p>
-            </div>
-            <div className="text-right text-xs text-muted-foreground">
-              <div>Created {formatDate((selectedCharacter.created_at as string | undefined) ?? (selectedCharacter.createdAt as string | undefined)) || "unknown"}</div>
-              <div>Last updated {formatDate((selectedCharacter.updated_at as string | undefined) ?? (selectedCharacter.updatedAt as string | undefined)) || "unknown"}</div>
-            </div>
-          </div>
-        </div>
-        <ScrollArea className="flex-1">
-          <div className="space-y-6 p-5">
-            <Card>
-              <CardHeader>
-                <CardTitle>Overview</CardTitle>
-              </CardHeader>
-              <CardContent className="grid gap-4 md:grid-cols-2">
-                <div>
-                  <Label className="text-xs uppercase text-muted-foreground">Hit Points</Label>
-                  <div className="text-sm font-medium">
-                    {hitPoints.current} / {hitPoints.max}
-                    {hitPoints.temporary ? ` (+${hitPoints.temporary} temporary)` : ""}
-                  </div>
-                </div>
-                <div>
-                  <Label className="text-xs uppercase text-muted-foreground">Armor Class</Label>
-                  <div className="text-sm font-medium">{getArmorClass(selectedCharacter)}</div>
-                </div>
-                <div>
-                  <Label className="text-xs uppercase text-muted-foreground">Speed</Label>
-                  <div className="text-sm font-medium">{getSpeed(selectedCharacter)} ft.</div>
-                </div>
-                <div>
-                  <Label className="text-xs uppercase text-muted-foreground">Proficiency Bonus</Label>
-                  <div className="text-sm font-medium">+{getProficiencyBonus(selectedCharacter)}</div>
-                </div>
-              </CardContent>
-            </Card>
-
-            <Card>
-              <CardHeader>
-                <CardTitle>Ability Scores</CardTitle>
-              </CardHeader>
-              <CardContent>
-                <div className="grid gap-3 md:grid-cols-3">
-                  {abilityKeys.map((ability) => (
-                    <div key={ability} className="rounded border p-3 text-center">
-                      <div className="text-xs font-semibold uppercase text-muted-foreground">
-                        {abilityAbbreviations[ability]}
-                      </div>
-                      <div className="text-2xl font-bold">
-                        {getAbilityModifier(abilities[ability]) >= 0 ? "+" : ""}
-                        {getAbilityModifier(abilities[ability])}
-                      </div>
-                      <div className="text-xs text-muted-foreground">
-                        ({abilities[ability]})
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              </CardContent>
-            </Card>
-
-            {selectedCharacter.backstory && (
-              <Card>
-                <CardHeader>
-                  <CardTitle>Backstory</CardTitle>
-                </CardHeader>
-                <CardContent>
-                  <p className="whitespace-pre-wrap text-sm leading-relaxed">
-                    {selectedCharacter.backstory}
-                  </p>
-                </CardContent>
-              </Card>
-            )}
-
-            {Object.keys(skills).length > 0 && (
-              <Card>
-                <CardHeader>
-                  <CardTitle>Skill Proficiencies</CardTitle>
-                </CardHeader>
-                <CardContent>
-                  <div className="flex flex-wrap gap-2">
-                    {Object.keys(skills).map((skill) => (
-                      <Badge key={skill} variant="secondary">
-                        {skill}
-                      </Badge>
-                    ))}
-                  </div>
-                </CardContent>
-              </Card>
-            )}
-
-            {inventory.length > 0 && (
-              <Card>
-                <CardHeader>
-                  <CardTitle>Inventory</CardTitle>
-                </CardHeader>
-                <CardContent className="space-y-2">
-                  {inventory.map((item) => (
-                    <div key={item.id} className="rounded border p-3 text-sm">
-                      <div className="flex items-center justify-between">
-                        <span className="font-medium">{item.name}</span>
-                        <span className="text-xs text-muted-foreground">
-                          Qty {item.quantity ?? 1}
-                        </span>
-                      </div>
-                      {item.description && (
-                        <p className="mt-1 text-xs text-muted-foreground">
-                          {item.description}
-                        </p>
-                      )}
-                    </div>
-                  ))}
-                </CardContent>
-              </Card>
-            )}
-
-            {equipment && Object.keys(equipment).length > 0 && (
-              <Card>
-                <CardHeader>
-                  <CardTitle>Equipment</CardTitle>
-                </CardHeader>
-                <CardContent className="space-y-3 text-sm">
-                  {equipment.armor && (
-                    <div>
-                      <div className="font-semibold">Armor</div>
-                      <div className="text-muted-foreground">{equipment.armor.name}</div>
-                    </div>
-                  )}
-                  {equipment.shield && (
-                    <div>
-                      <div className="font-semibold">Shield</div>
-                      <div className="text-muted-foreground">{equipment.shield.name}</div>
-                    </div>
-                  )}
-                  {equipment.weapons && Object.keys(equipment.weapons).length > 0 && (
-                    <div>
-                      <div className="font-semibold">Weapons</div>
-                      <ul className="ml-4 list-disc space-y-1 text-muted-foreground">
-                        {Object.values(equipment.weapons)
-                          .filter(Boolean)
-                          .map((weapon) =>
-                            weapon ? (
-                              <li key={weapon.id}>{weapon.name}</li>
-                            ) : null,
-                          )}
-                      </ul>
-                    </div>
-                  )}
-                  {equipment.accessories && Object.keys(equipment.accessories).length > 0 && (
-                    <div>
-                      <div className="font-semibold">Accessories</div>
-                      <ul className="ml-4 list-disc space-y-1 text-muted-foreground">
-                        {Object.values(equipment.accessories)
-                          .filter(Boolean)
-                          .map((item) =>
-                            item ? (
-                              <li key={item.id}>{item.name}</li>
-                            ) : null,
-                          )}
-                      </ul>
-                    </div>
-                  )}
-                </CardContent>
-              </Card>
-            )}
-
-            {spellcasting && (
-              <Card>
-                <CardHeader>
-                  <CardTitle>Spellcasting</CardTitle>
-                </CardHeader>
-                <CardContent className="space-y-3 text-sm">
-                  <div className="grid gap-3 md:grid-cols-3">
-                    <div>
-                      <div className="text-xs uppercase text-muted-foreground">Ability</div>
-                      <div className="font-medium">{spellcasting.spellcastingAbility}</div>
-                    </div>
-                    <div>
-                      <div className="text-xs uppercase text-muted-foreground">Spell Attack Bonus</div>
-                      <div className="font-medium">+{spellcasting.spellAttackBonus}</div>
-                    </div>
-                    <div>
-                      <div className="text-xs uppercase text-muted-foreground">Spell Save DC</div>
-                      <div className="font-medium">{spellcasting.spellSaveDC}</div>
-                    </div>
-                  </div>
-                  {spellcasting.cantripsKnown?.length ? (
-                    <div>
-                      <div className="font-semibold">Cantrips</div>
-                      <div className="text-muted-foreground">
-                        {spellcasting.cantripsKnown.join(", ")}
-                      </div>
-                    </div>
-                  ) : null}
-                  {spellcasting.spellsKnown?.length ? (
-                    <div>
-                      <div className="font-semibold">Spells Known</div>
-                      <div className="text-muted-foreground">
-                        {spellcasting.spellsKnown.join(", ")}
-                      </div>
-                    </div>
-                  ) : null}
-                </CardContent>
-              </Card>
-            )}
-          </div>
-        </ScrollArea>
-      </div>
-    );
-  };
+  // Detail view extracted to CharacterDetailView component
 
   return (
     <div className="flex h-full flex-col">
@@ -1081,295 +799,20 @@ export function CharacterManager({ command, onCharactersChanged, onFormClosed }:
           {renderCharacterList()}
         </div>
         <div className="hidden flex-1 md:flex">
-          {renderDetail()}
+          <CharacterDetailView character={selectedCharacter} />
         </div>
       </div>
 
-      <Dialog open={formOpen} onOpenChange={handleFormClose}>
-        <DialogContent className="max-h-[90vh] overflow-y-auto sm:max-w-2xl">
-          <DialogHeader>
-            <DialogTitle>
-              {formMode === "create" ? "Create Character" : "Edit Character"}
-            </DialogTitle>
-          </DialogHeader>
-          <div className="space-y-6">
-            <Tabs defaultValue="core" className="w-full">
-              <TabsList className="grid w-full grid-cols-3">
-                <TabsTrigger value="core">Core</TabsTrigger>
-                <TabsTrigger value="stats">Stats</TabsTrigger>
-                <TabsTrigger value="story">Story</TabsTrigger>
-              </TabsList>
-              <TabsContent value="core" className="space-y-4">
-                <div className="grid gap-4 md:grid-cols-2">
-                  <div>
-                    <Label htmlFor="name">Name *</Label>
-                    <Input
-                      id="name"
-                      value={formState.name}
-                      onChange={(event) =>
-                        setFormState((prev) => ({ ...prev, name: event.target.value }))
-                      }
-                    />
-                  </div>
-                  <div>
-                    <Label htmlFor="class">Class *</Label>
-                    <Input
-                      id="class"
-                      value={formState.className}
-                      onChange={(event) =>
-                        setFormState((prev) => ({
-                          ...prev,
-                          className: event.target.value,
-                        }))
-                      }
-                    />
-                  </div>
-                  <div>
-                    <Label htmlFor="race">Race *</Label>
-                    <Input
-                      id="race"
-                      value={formState.race}
-                      onChange={(event) =>
-                        setFormState((prev) => ({
-                          ...prev,
-                          race: event.target.value,
-                        }))
-                      }
-                    />
-                  </div>
-                  <div>
-                    <Label htmlFor="background">Background</Label>
-                    <Input
-                      id="background"
-                      value={formState.background}
-                      onChange={(event) =>
-                        setFormState((prev) => ({
-                          ...prev,
-                          background: event.target.value,
-                        }))
-                      }
-                    />
-                  </div>
-                  <div>
-                    <Label htmlFor="level">Level</Label>
-                    <Input
-                      id="level"
-                      type="number"
-                      min={1}
-                      max={20}
-                      value={formState.level}
-                      onChange={(event) =>
-                        setFormState((prev) => ({
-                          ...prev,
-                          level: Number(event.target.value) || 1,
-                        }))
-                      }
-                    />
-                  </div>
-                  <div>
-                    <Label htmlFor="armorClass">Armor Class</Label>
-                    <Input
-                      id="armorClass"
-                      type="number"
-                      value={formState.armorClass}
-                      onChange={(event) =>
-                        setFormState((prev) => ({
-                          ...prev,
-                          armorClass: Number(event.target.value) || 10,
-                        }))
-                      }
-                    />
-                  </div>
-                  <div>
-                    <Label htmlFor="speed">Speed</Label>
-                    <Input
-                      id="speed"
-                      type="number"
-                      value={formState.speed}
-                      onChange={(event) =>
-                        setFormState((prev) => ({
-                          ...prev,
-                          speed: Number(event.target.value) || 30,
-                        }))
-                      }
-                    />
-                  </div>
-                  <div>
-                    <Label htmlFor="proficiency">Proficiency Bonus</Label>
-                    <Input
-                      id="proficiency"
-                      type="number"
-                      value={formState.proficiencyBonus}
-                      onChange={(event) =>
-                        setFormState((prev) => ({
-                          ...prev,
-                          proficiencyBonus: Number(event.target.value) || 2,
-                        }))
-                      }
-                    />
-                  </div>
-                </div>
-              </TabsContent>
-              <TabsContent value="stats" className="space-y-4">
-                <div className="grid gap-4 md:grid-cols-3">
-                  <div>
-                    <Label htmlFor="hpCurrent">Current HP</Label>
-                    <Input
-                      id="hpCurrent"
-                      type="number"
-                      value={formState.hitPointsCurrent}
-                      onChange={(event) =>
-                        setFormState((prev) => ({
-                          ...prev,
-                          hitPointsCurrent: Number(event.target.value) || 0,
-                        }))
-                      }
-                    />
-                  </div>
-                  <div>
-                    <Label htmlFor="hpMax">Maximum HP</Label>
-                    <Input
-                      id="hpMax"
-                      type="number"
-                      value={formState.hitPointsMax}
-                      onChange={(event) =>
-                        setFormState((prev) => ({
-                          ...prev,
-                          hitPointsMax: Number(event.target.value) || 0,
-                        }))
-                      }
-                    />
-                  </div>
-                  <div>
-                    <Label htmlFor="hpTemp">Temporary HP</Label>
-                    <Input
-                      id="hpTemp"
-                      type="number"
-                      value={formState.hitPointsTemporary}
-                      onChange={(event) =>
-                        setFormState((prev) => ({
-                          ...prev,
-                          hitPointsTemporary: Number(event.target.value) || 0,
-                        }))
-                      }
-                    />
-                  </div>
-                </div>
-                <div>
-                  <Label>Ability Scores</Label>
-                  <div className="mt-2 grid gap-4 md:grid-cols-3">
-                    {abilityKeys.map((ability) => (
-                      <div key={ability}>
-                        <Label className="text-xs uppercase text-muted-foreground">
-                          {abilityLabels[ability]}
-                        </Label>
-                        <Input
-                          type="number"
-                          min={1}
-                          max={30}
-                          value={formState.abilities[ability]}
-                          onChange={(event) =>
-                            setFormState((prev) => ({
-                              ...prev,
-                              abilities: {
-                                ...prev.abilities,
-                                [ability]: Number(event.target.value) || 10,
-                              },
-                            }))
-                          }
-                        />
-                      </div>
-                    ))}
-                  </div>
-                </div>
-              </TabsContent>
-              <TabsContent value="story" className="space-y-4">
-                <div>
-                  <Label htmlFor="backstory">Backstory</Label>
-                  <Textarea
-                    id="backstory"
-                    rows={4}
-                    value={formState.backstory}
-                    onChange={(event) =>
-                      setFormState((prev) => ({
-                        ...prev,
-                        backstory: event.target.value,
-                      }))
-                    }
-                  />
-                </div>
-                <div>
-                  <Label htmlFor="personality">Personality</Label>
-                  <Textarea
-                    id="personality"
-                    rows={3}
-                    value={formState.personality}
-                    onChange={(event) =>
-                      setFormState((prev) => ({
-                        ...prev,
-                        personality: event.target.value,
-                      }))
-                    }
-                  />
-                </div>
-                <div className="grid gap-4 md:grid-cols-2">
-                  <div>
-                    <Label htmlFor="ideals">Ideals</Label>
-                    <Textarea
-                      id="ideals"
-                      rows={3}
-                      value={formState.ideals}
-                      onChange={(event) =>
-                        setFormState((prev) => ({
-                          ...prev,
-                          ideals: event.target.value,
-                        }))
-                      }
-                    />
-                  </div>
-                  <div>
-                    <Label htmlFor="bonds">Bonds</Label>
-                    <Textarea
-                      id="bonds"
-                      rows={3}
-                      value={formState.bonds}
-                      onChange={(event) =>
-                        setFormState((prev) => ({
-                          ...prev,
-                          bonds: event.target.value,
-                        }))
-                      }
-                    />
-                  </div>
-                </div>
-                <div>
-                  <Label htmlFor="flaws">Flaws</Label>
-                  <Textarea
-                    id="flaws"
-                    rows={3}
-                    value={formState.flaws}
-                    onChange={(event) =>
-                      setFormState((prev) => ({
-                        ...prev,
-                        flaws: event.target.value,
-                      }))
-                    }
-                  />
-                </div>
-              </TabsContent>
-            </Tabs>
-            <div className="flex justify-end gap-2">
-              <Button variant="outline" onClick={() => handleFormClose(false)} disabled={operationPending}>
-                Cancel
-              </Button>
-              <Button onClick={handleSave} disabled={operationPending}>
-                {operationPending && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
-                {formMode === "create" ? "Create" : "Save"}
-              </Button>
-            </div>
-          </div>
-        </DialogContent>
-      </Dialog>
+      <CharacterEditDialog
+        open={formOpen}
+        onOpenChange={handleFormClose}
+        formState={formState}
+        onFormStateChange={setFormState}
+        mode={formMode}
+        saving={operationPending}
+        onSave={handleSave}
+        onCancel={() => handleFormClose(false)}
+      />
 
       <AlertDialog open={Boolean(deleteTarget)} onOpenChange={() => setDeleteTarget(null)}>
         <AlertDialogContent>
