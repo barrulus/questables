@@ -204,13 +204,17 @@ export class OllamaProvider extends EnhancedLLMProvider {
         generationDurationMs: toMilliseconds(response?.eval_duration),
       };
 
-      const rawResponse = response?.response;
-      logInfo('Ollama raw response type', {
-        type: typeof rawResponse,
-        isNull: rawResponse === null,
-        isUndefined: rawResponse === undefined,
-        preview: typeof rawResponse === 'string' ? rawResponse.slice(0, 200) : JSON.stringify(rawResponse)?.slice(0, 200),
-      });
+      // qwen3 + Ollama quirk: when `format` (JSON schema) is used with a thinking model,
+      // the structured output lands in `thinking` and `response` is empty.
+      // Fall back to `thinking` when `response` is empty.
+      let rawResponse = response?.response;
+      if ((!rawResponse || (typeof rawResponse === 'string' && rawResponse.trim() === '')) && response?.thinking) {
+        logInfo('Ollama: response empty, using thinking field as fallback', {
+          provider: this.name, type, requestId,
+          thinkingLength: response.thinking.length,
+        });
+        rawResponse = response.thinking;
+      }
       const content = typeof rawResponse === 'string' ? rawResponse.trim()
         : typeof rawResponse === 'object' && rawResponse !== null ? JSON.stringify(rawResponse)
         : '';
