@@ -27,6 +27,9 @@ export const createChatMessage = async ({
   diceRoll,
   channelType,
   channelTargetUserId,
+  locX,
+  locY,
+  insideBurgId,
 }) => {
   const { rows } = await query(
     `WITH inserted AS (
@@ -39,8 +42,11 @@ export const createChatMessage = async ({
          character_id,
          dice_roll,
          channel_type,
-         channel_target_user_id
-       ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+         channel_target_user_id,
+         loc_x,
+         loc_y,
+         inside_burg_id
+       ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
        RETURNING *
      )
      SELECT inserted.*, up.username, c.name AS character_name
@@ -57,6 +63,9 @@ export const createChatMessage = async ({
       diceRoll ? JSON.stringify(diceRoll) : null,
       channelType ?? 'party',
       channelTargetUserId ?? null,
+      locX ?? null,
+      locY ?? null,
+      insideBurgId ?? null,
     ],
     { label: 'chat.messages.create' },
   );

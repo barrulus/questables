@@ -442,7 +442,7 @@ FOR EACH ROW EXECUTE FUNCTION public.tg_touch_updated_at();
 CREATE TABLE IF NOT EXISTS public.campaign_world_lore (
     id UUID DEFAULT uuid_generate_v4() PRIMARY KEY,
     campaign_id UUID NOT NULL REFERENCES public.campaigns(id) ON DELETE CASCADE,
-    section TEXT NOT NULL CHECK (section IN ('geopolitical', 'history', 'cultures', 'religions', 'regions', 'factions', 'custom')),
+    section TEXT NOT NULL CHECK (section IN ('geopolitical', 'history', 'cultures', 'religions', 'regions', 'factions', 'custom', 'npc', 'location', 'event', 'political', 'cultural', 'religious')),
     subsection TEXT,               -- state name, culture name, faction name, etc.
     content TEXT NOT NULL,
     cd_direction TEXT,             -- the CD's prompt/direction that generated this content
@@ -1042,6 +1042,9 @@ CREATE TABLE IF NOT EXISTS public.chat_messages (
     channel_type TEXT NOT NULL DEFAULT 'party'
       CHECK (channel_type IN ('party', 'private', 'dm_whisper', 'dm_broadcast', 'director_whisper')),
     channel_target_user_id UUID REFERENCES public.user_profiles(id),
+    loc_x DOUBLE PRECISION,
+    loc_y DOUBLE PRECISION,
+    inside_burg_id UUID REFERENCES public.maps_burgs(id) ON DELETE SET NULL,
     created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW() NOT NULL
 );
 CREATE INDEX IF NOT EXISTS idx_chat_messages_campaign_id ON public.chat_messages(campaign_id);

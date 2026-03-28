@@ -17,7 +17,7 @@ import {
   markChannelRead,
 } from '../services/chat/service.js';
 import { shouldInterceptAsAction, interceptChatAction } from '../services/chat/action-interceptor.js';
-import { getClient } from '../db/pool.js';
+import { getClient, query } from '../db/pool.js';
 
 const router = Router();
 
@@ -131,6 +131,23 @@ router.post('/api/campaigns/:campaignId/messages', requireAuth, requireCampaignP
       return res.status(400).json({ error: 'Message content cannot be empty after sanitization' });
     }
 
+    // Look up sender's current position for location tagging
+    let locX = null, locY = null, insideBurgId = null;
+    try {
+      const { rows: posRows } = await query(
+        `SELECT ST_X(loc_current) AS x, ST_Y(loc_current) AS y, inside_burg_id
+           FROM campaign_players
+          WHERE campaign_id = $1 AND user_id = $2 AND loc_current IS NOT NULL
+          LIMIT 1`,
+        [campaignId, senderId],
+      );
+      if (posRows.length) {
+        locX = posRows[0].x;
+        locY = posRows[0].y;
+        insideBurgId = posRows[0].inside_burg_id;
+      }
+    } catch { /* non-critical — message still created without location */ }
+
     const message = await createChatMessage({
       campaignId,
       content: sanitizedContent,
@@ -141,6 +158,9 @@ router.post('/api/campaigns/:campaignId/messages', requireAuth, requireCampaignP
       diceRoll: dice_roll,
       channelType: channel_type ?? 'party',
       channelTargetUserId: channel_target_user_id ?? null,
+      locX,
+      locY,
+      insideBurgId,
     });
 
     incrementCounter('chat.messages.sent');

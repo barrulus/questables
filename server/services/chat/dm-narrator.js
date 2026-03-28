@@ -28,6 +28,9 @@ export async function postNarrationToChat({
   messageType = 'narration',
   sessionId = null,
   wsServer = null,
+  locX = null,
+  locY = null,
+  insideBurgId = null,
 }) {
   try {
     // Look up the campaign DM to use as sender
@@ -54,8 +57,11 @@ export async function postNarrationToChat({
            message_type,
            sender_id,
            sender_name,
-           channel_type
-         ) VALUES ($1, $2, $3, $4, $5, 'Dungeon Master', 'dm_broadcast')
+           channel_type,
+           loc_x,
+           loc_y,
+           inside_burg_id
+         ) VALUES ($1, $2, $3, $4, $5, 'Dungeon Master', 'dm_broadcast', $6, $7, $8)
          RETURNING *
        )
        SELECT inserted.*, up.username, NULL::text AS character_name
@@ -67,6 +73,9 @@ export async function postNarrationToChat({
         content,
         messageType,
         dmUserId,
+        locX,
+        locY,
+        insideBurgId,
       ],
       { label: 'dm-narrator.post' },
     );
