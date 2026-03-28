@@ -4,24 +4,21 @@ import { Button } from "./ui/button";
 import { Badge } from "./ui/badge";
 import { Input } from "./ui/input";
 import { Avatar, AvatarFallback, AvatarImage } from "./ui/avatar";
-import { Progress } from "./ui/progress";
+// Progress moved to player-character-grid
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "./ui/tabs";
-import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "./ui/dialog";
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "./ui/select";
+import { PlayerCharacterGrid } from "./player-character-grid";
+import { JoinCampaignDialog, SwitchCharacterDialog } from "./player-campaign-dialogs";
 import { toast } from "sonner";
 import {
   AlertCircle,
   Calendar,
   Edit,
-  Heart,
   Loader2,
   LogOut,
   MapIcon,
   Info,
   Play,
-  Plus,
   Search,
-  Shield,
   Star,
   User,
   UserPlus,
@@ -265,36 +262,6 @@ const mapPlayerToken = (raw: RawPlayerToken): PlayerTokenSummary | null => {
   };
 };
 
-const formatDateTime = (value?: string | null) => {
-  if (!value) {
-    return null;
-  }
-  const date = new Date(value);
-  if (Number.isNaN(date.getTime())) {
-    return null;
-  }
-  return date.toLocaleString();
-};
-
-const formatCoordinates = (coordinates: PlayerTokenSummary["coordinates"]) => {
-  if (!coordinates) {
-    return "No location recorded";
-  }
-  return `${coordinates.x.toFixed(1)}, ${coordinates.y.toFixed(1)}`;
-};
-
-const getVisibilityBadgeVariant = (
-  visibilityState: PlayerTokenSummary["visibilityState"]
-): "secondary" | "outline" | "destructive" => {
-  switch (visibilityState) {
-    case "stealthed":
-      return "outline";
-    case "hidden":
-      return "destructive";
-    default:
-      return "secondary";
-  }
-};
 
 const mapCharacter = (raw: RawCharacter): PlayerCharacter => {
   const defaultHitPoints: HitPoints = { current: 0, max: 0 };
@@ -384,11 +351,6 @@ const formatDate = (value?: string | null) => {
   return date.toLocaleDateString();
 };
 
-const formatPercentage = (current: number, max: number) => {
-  if (!max || max <= 0) return 0;
-  const pct = (current / max) * 100;
-  return Math.min(100, Math.max(0, Math.round(pct)));
-};
 
 export function PlayerDashboard({ user, onEnterGame, onLogout, onCreateCharacter }: PlayerDashboardProps) {
   const [characters, setCharacters] = useState<PlayerCharacter[]>([]);
@@ -788,147 +750,13 @@ export function PlayerDashboard({ user, onEnterGame, onLogout, onCreateCharacter
           </TabsList>
 
           <TabsContent value="characters" className="space-y-6">
-            <div className="flex items-center justify-between">
-              <h2 className="text-xl font-semibold">Your Characters</h2>
-              <Button onClick={handleOpenCharacterCreator}>
-                <Plus className="w-4 h-4 mr-1" />
-                Create Character
-              </Button>
-            </div>
-
-            {characters.length === 0 ? (
-              <Card className="border-dashed">
-                <CardContent className="py-10 text-center space-y-3">
-                  <Info className="w-10 h-10 mx-auto text-muted-foreground" />
-                  <div>
-                    <p className="font-medium">No characters yet</p>
-                    <p className="text-sm text-muted-foreground">Create a character to start joining campaigns.</p>
-                  </div>
-                  <Button onClick={handleOpenCharacterCreator}>
-                    <Plus className="w-4 h-4 mr-1" />
-                    Create Character
-                  </Button>
-                </CardContent>
-              </Card>
-            ) : (
-              <div className="grid md:grid-cols-2 lg:grid-cols-3 gap-6">
-                {characters.map((character) => {
-                  const campaignsForCharacter = characterCampaignMap[character.id] ?? [];
-                  const healthPercentage = formatPercentage(character.hitPoints.current, character.hitPoints.max);
-
-                  return (
-                    <Card key={character.id} className="hover:shadow-md transition-shadow">
-                      <CardHeader className="pb-3">
-                        <div className="flex items-center gap-3">
-                          <Avatar className="w-12 h-12">
-                            <AvatarImage src={character.avatarUrl} />
-                            <AvatarFallback>{character.name.slice(0, 2)}</AvatarFallback>
-                          </Avatar>
-                          <div className="flex-1">
-                            <CardTitle className="text-lg">{character.name}</CardTitle>
-                            <CardDescription>
-                              Level {character.level} {character.race} {character.class}
-                            </CardDescription>
-                          </div>
-                        </div>
-                      </CardHeader>
-                      <CardContent className="space-y-4">
-                        <div className="grid grid-cols-2 gap-4 text-sm">
-                          <div className="flex items-center gap-2">
-                            <Heart className="w-4 h-4 text-red-500" />
-                            <span>{character.hitPoints.current}/{character.hitPoints.max} HP</span>
-                          </div>
-                          <div className="flex items-center gap-2">
-                            <Shield className="w-4 h-4 text-blue-500" />
-                            <span>AC {character.armorClass}</span>
-                          </div>
-                        </div>
-
-                        <div>
-                          <div className="flex justify-between text-sm mb-1">
-                            <span>Health</span>
-                            <span>{healthPercentage}%</span>
-                          </div>
-                          <Progress value={healthPercentage} />
-                        </div>
-
-                        <div className="flex justify-between text-xs text-muted-foreground">
-                          <span>Background: {character.background || "—"}</span>
-                          <span>Last played: {formatDate(character.lastPlayed)}</span>
-                        </div>
-
-                        <div className="text-xs">
-                          <span className="font-medium text-muted-foreground">Campaigns:</span>{" "}
-                          {campaignsForCharacter.length > 0 ? (
-                            campaignsForCharacter.map((campaign, index) => (
-                              <span key={campaign.id}>
-                                {campaign.name}
-                                {index < campaignsForCharacter.length - 1 ? ", " : ""}
-                              </span>
-                            ))
-                          ) : (
-                            <span className="text-muted-foreground">Not assigned</span>
-                          )}
-                        </div>
-
-                        <div className="text-xs space-y-2">
-                          <span className="font-medium text-muted-foreground">Player Tokens:</span>
-                          {character.playerTokens.length > 0 ? (
-                            <div className="space-y-2">
-                              {character.playerTokens.map((token) => {
-                                const lastUpdated = formatDateTime(token.lastLocatedAt);
-                                return (
-                                  <div
-                                    key={`${token.playerId}:${token.campaignId}`}
-                                    className="rounded-md border border-muted-foreground/10 bg-muted/20 px-2 py-1"
-                                  >
-                                    <div className="flex items-center justify-between gap-2">
-                                      <span className="font-medium">{token.campaignName}</span>
-                                      <Badge
-                                        className="capitalize"
-                                        variant={getVisibilityBadgeVariant(token.visibilityState)}
-                                      >
-                                        {token.visibilityState}
-                                      </Badge>
-                                    </div>
-                                    <div className="mt-1 flex flex-wrap items-center justify-between gap-2 text-[0.7rem] text-muted-foreground">
-                                      <span>{formatCoordinates(token.coordinates)}</span>
-                                      <span>{lastUpdated ? `Updated ${lastUpdated}` : "No movement recorded"}</span>
-                                    </div>
-                                  </div>
-                                );
-                              })}
-                            </div>
-                          ) : (
-                            <span className="text-muted-foreground">No tokens recorded</span>
-                          )}
-                        </div>
-
-                        <div className="flex gap-2">
-                          <Button
-                            variant="outline"
-                            size="sm"
-                            className="flex-1"
-                            onClick={() => handleEditCharacter(character.id)}
-                          >
-                            <Edit className="w-4 h-4 mr-1" />
-                            Edit
-                          </Button>
-                          <Button
-                            size="sm"
-                            className="flex-1"
-                            onClick={() => setActiveTab("campaigns")}
-                          >
-                            <Users className="w-4 h-4 mr-1" />
-                            View Campaigns
-                          </Button>
-                        </div>
-                      </CardContent>
-                    </Card>
-                  );
-                })}
-              </div>
-            )}
+            <PlayerCharacterGrid
+              characters={characters}
+              characterCampaignMap={characterCampaignMap}
+              onCreateCharacter={handleOpenCharacterCreator}
+              onEditCharacter={handleEditCharacter}
+              onViewCampaigns={() => setActiveTab("campaigns")}
+            />
           </TabsContent>
 
           <TabsContent value="campaigns" className="space-y-6">
@@ -1155,99 +983,30 @@ export function PlayerDashboard({ user, onEnterGame, onLogout, onCreateCharacter
         </Tabs>
       </div>
 
-      <Dialog open={Boolean(joinState.campaign)} onOpenChange={(open) => (!open ? handleCloseJoinDialog() : undefined)}>
-        {joinState.campaign && (
-          <DialogContent>
-            <DialogHeader>
-              <DialogTitle>Select a character</DialogTitle>
-              <DialogDescription>
-                Choose which character you want to bring into {joinState.campaign.name}.
-              </DialogDescription>
-            </DialogHeader>
+      <JoinCampaignDialog
+        open={Boolean(joinState.campaign)}
+        onOpenChange={(open) => (!open ? handleCloseJoinDialog() : undefined)}
+        campaignName={joinState.campaign?.name ?? ""}
+        characters={characters}
+        selectedCharacterId={joinState.selectedCharacterId}
+        onCharacterSelect={(value) => setJoinState((current) => ({ ...current, selectedCharacterId: value }))}
+        submitting={joinState.submitting}
+        onConfirm={handleConfirmJoin}
+        onCancel={handleCloseJoinDialog}
+      />
 
-            <div className="space-y-4">
-              <div>
-                <p className="text-sm text-muted-foreground mb-2">Character</p>
-                <Select
-                  value={joinState.selectedCharacterId ?? ""}
-                  onValueChange={(value) =>
-                    setJoinState((current) => ({ ...current, selectedCharacterId: value }))
-                  }
-                >
-                  <SelectTrigger className="w-full">
-                    <SelectValue placeholder="Select a character" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {characters.map((character) => (
-                      <SelectItem key={character.id} value={character.id}>
-                        {character.name} — Level {character.level} {character.class}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-              </div>
-            </div>
-
-            <DialogFooter>
-              <Button variant="outline" onClick={handleCloseJoinDialog} disabled={joinState.submitting}>
-                Cancel
-              </Button>
-              <Button onClick={handleConfirmJoin} disabled={!joinState.selectedCharacterId || joinState.submitting}>
-                {joinState.submitting && <Loader2 className="w-4 h-4 mr-2 animate-spin" />}
-                Confirm Join
-              </Button>
-            </DialogFooter>
-          </DialogContent>
-        )}
-      </Dialog>
-
-      <Dialog open={Boolean(switchState.campaignId)} onOpenChange={(open) => (!open ? handleCloseSwitchDialog() : undefined)}>
-        {switchState.campaignId && (
-          <DialogContent>
-            <DialogHeader>
-              <DialogTitle>Switch Character</DialogTitle>
-              <DialogDescription>
-                Choose a different character for {switchState.campaignName}.
-              </DialogDescription>
-            </DialogHeader>
-
-            <div className="space-y-4">
-              <div>
-                <p className="text-sm text-muted-foreground mb-2">Character</p>
-                <Select
-                  value={switchState.selectedCharacterId ?? ""}
-                  onValueChange={(value) =>
-                    setSwitchState((current) => ({ ...current, selectedCharacterId: value }))
-                  }
-                >
-                  <SelectTrigger className="w-full">
-                    <SelectValue placeholder="Select a character" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {characters
-                      .filter((c) => c.id !== switchState.currentCharacterId)
-                      .map((character) => (
-                        <SelectItem key={character.id} value={character.id}>
-                          {character.name} — Level {character.level} {character.class}
-                        </SelectItem>
-                      ))}
-                  </SelectContent>
-                </Select>
-              </div>
-            </div>
-
-            <DialogFooter>
-              <Button variant="outline" onClick={handleCloseSwitchDialog} disabled={switchState.submitting}>
-                Cancel
-              </Button>
-              <Button onClick={handleConfirmSwitch} disabled={!switchState.selectedCharacterId || switchState.submitting}>
-                {switchState.submitting && <Loader2 className="w-4 h-4 mr-2 animate-spin" />}
-                Switch Character
-              </Button>
-            </DialogFooter>
-          </DialogContent>
-        )}
-      </Dialog>
+      <SwitchCharacterDialog
+        open={Boolean(switchState.campaignId)}
+        onOpenChange={(open) => (!open ? handleCloseSwitchDialog() : undefined)}
+        campaignName={switchState.campaignName ?? ""}
+        characters={characters}
+        currentCharacterId={switchState.currentCharacterId}
+        selectedCharacterId={switchState.selectedCharacterId}
+        onCharacterSelect={(value) => setSwitchState((current) => ({ ...current, selectedCharacterId: value }))}
+        submitting={switchState.submitting}
+        onConfirm={handleConfirmSwitch}
+        onCancel={handleCloseSwitchDialog}
+      />
 
       {characterManagerOpen && (
         <div className="hidden">
