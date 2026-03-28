@@ -347,6 +347,19 @@ export async function generateWorldLore({
       content = raw;
     }
   }
+  // Clean up common LLM artifacts
+  content = content
+    .replace(/<start_of_image>/g, '')          // gemma3 multimodal tokens
+    .replace(/<end_of_image>/g, '')
+    .replace(/<strong>(.*?)<\/strong>/g, '**$1**')  // HTML bold → markdown
+    .replace(/<em>(.*?)<\/em>/g, '*$1*')            // HTML italic → markdown
+    .replace(/<h([1-6])>(.*?)<\/h\1>/g, (_, level, text) => '#'.repeat(Number(level)) + ' ' + text)  // HTML headers → markdown
+    .replace(/<br\s*\/?>/g, '\n')              // HTML line breaks
+    .replace(/<\/?p>/g, '\n')                  // HTML paragraphs
+    .replace(/<[^>]+>/g, '')                   // strip any remaining HTML tags
+    .replace(/\n{3,}/g, '\n\n')               // collapse excessive newlines
+    .trim();
+
   logInfo('World lore content extracted', { contentLength: content.length, hadParsed: !!result.parsed });
 
   return { content, section, subsection };
