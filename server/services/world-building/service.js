@@ -304,7 +304,8 @@ export async function generateWorldLore({
 
   logInfo('Generating world lore', { campaignId, section, subsection, promptLength: prompt.length });
 
-  const result = await llmService.generate(NARRATIVE_TYPES.WORLD_BUILDING, {
+  const result = await llmService.generate({
+    type: NARRATIVE_TYPES.WORLD_BUILDING,
     prompt,
     systemPrompt,
   });
