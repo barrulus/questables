@@ -3,7 +3,7 @@
 
 import './config/load-env.js';
 import express from 'express';
-import { logInfo, logError } from './utils/logger.js';
+// logInfo, logError imported below with other logger utilities
 import { pool, query as dbQuery } from './db/pool.js';
 import cors from 'cors';
 import multer from 'multer';
