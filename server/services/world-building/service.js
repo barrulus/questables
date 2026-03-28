@@ -288,11 +288,39 @@ export async function generateWorldLore({
   const worldData = await aggregateWorldData(worldMapId);
   const mapDataSection = formatWorldDataForPrompt(worldData);
 
+  // Load existing lore sections for cross-reference context
+  const existingLore = await listWorldLore(campaignId);
+  const otherSections = existingLore.filter(
+    (entry) => entry.section !== section || (subsection && entry.subsection !== subsection),
+  );
+
   // Build the prompt
   const promptParts = [
     `## Map Data\n${mapDataSection}`,
-    `## Task\n${sectionPrompt}`,
   ];
+
+  // Inject existing lore as context so the LLM builds coherently
+  if (otherSections.length > 0) {
+    const loreContext = otherSections.map((entry) => {
+      const label = entry.subsection
+        ? `${entry.section} > ${entry.subsection}`
+        : entry.section;
+      // Truncate long sections to keep prompt manageable
+      const text = entry.content.length > 1500
+        ? entry.content.slice(0, 1500) + '\n[...truncated]'
+        : entry.content;
+      return `### ${label}\n${text}`;
+    }).join('\n\n');
+
+    promptParts.push(
+      `## Existing World Lore (maintain consistency with these)\n` +
+      `The following sections have already been written for this world. ` +
+      `You MUST use the same names, terminology, factions, and historical events. ` +
+      `Do not contradict or re-invent established lore.\n\n${loreContext}`,
+    );
+  }
+
+  promptParts.push(`## Task\n${sectionPrompt}`);
 
   if (subsection) {
     promptParts.push(`## Focus\nFocus specifically on: **${subsection}**`);
