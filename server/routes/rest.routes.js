@@ -13,6 +13,7 @@ import {
 } from '../services/campaigns/service.js';
 import { changePhase } from '../services/game-state/service.js';
 import { spendHitDie, completeRest, rollRestEncounter } from '../services/rest/service.js';
+import { getActiveSession } from '../services/sessions/service.js';
 import { getAllLiveStates } from '../services/live-state/service.js';
 import { checkLevelUps } from '../services/levelling/service.js';
 import { logError } from '../utils/logger.js';
@@ -41,18 +42,14 @@ router.post(
       ensureDmControl(viewer, 'Only the DM can start a rest.');
 
       // Get active session
-      const { rows: sessionRows } = await client.query(
-        `SELECT id FROM public.sessions
-          WHERE campaign_id = $1 AND status = 'active'
-          ORDER BY session_number DESC LIMIT 1`,
-        [campaignId],
-      );
-      if (sessionRows.length === 0) {
+      const activeSession = await getActiveSession(client, campaignId);
+      if (!activeSession) {
         const err = new Error('No active session');
         err.status = 400;
         err.code = 'no_active_session';
         throw err;
       }
+      const sessionRows = [activeSession];
 
       const sessionId = sessionRows[0].id;
 

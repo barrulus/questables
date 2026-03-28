@@ -1061,8 +1061,18 @@ export function DMSidebar() {
             </AccordionContent>
           </AccordionItem>
 
+          {/* ── Legacy Controls (pre-LLM-as-DM) ─────────────────── */}
+          {/* These sections predate the autonomous LLM DM system.
+              Session Focus/Context are superseded by geographic context auto-loading.
+              Unplanned Encounter is superseded by proactive encounter generation.
+              Kept as CD override tools for edge cases. */}
+
           <AccordionItem value="session-focus">
-            <AccordionTrigger>Session Focus</AccordionTrigger>
+            <AccordionTrigger>
+              <span className="flex items-center gap-1.5">
+                Session Focus <Badge variant="outline" className="text-[9px] ml-1">Legacy</Badge>
+              </span>
+            </AccordionTrigger>
             <AccordionContent>
               <div className="space-y-4">
               <div className="space-y-2">
@@ -1144,7 +1154,11 @@ export function DMSidebar() {
           </AccordionItem>
 
           <AccordionItem value="session-context">
-            <AccordionTrigger>Session Context</AccordionTrigger>
+            <AccordionTrigger>
+              <span className="flex items-center gap-1.5">
+                Session Context <Badge variant="outline" className="text-[9px] ml-1">Legacy</Badge>
+              </span>
+            </AccordionTrigger>
             <AccordionContent>
               <div className="space-y-4">
               <Tabs value={contextMode} onValueChange={(value) => setContextMode(value as "replace" | "append")}> 
@@ -1216,7 +1230,11 @@ export function DMSidebar() {
           </AccordionItem>
 
           <AccordionItem value="unplanned-encounter">
-            <AccordionTrigger>Unplanned Encounter</AccordionTrigger>
+            <AccordionTrigger>
+              <span className="flex items-center gap-1.5">
+                Manual Encounter <Badge variant="outline" className="text-[9px] ml-1">Legacy</Badge>
+              </span>
+            </AccordionTrigger>
             <AccordionContent>
               <div className="space-y-4">
               <div className="grid gap-4 grid-cols-1 sm:grid-cols-2">

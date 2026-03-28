@@ -10,6 +10,7 @@ import { handleValidationErrors } from '../validation/common.js';
 import {
   getViewerContextOrThrow,
 } from '../services/campaigns/service.js';
+import { getActiveSession } from '../services/sessions/service.js';
 import {
   buildActionContext,
   invokeDmForAction,
@@ -55,20 +56,13 @@ router.post(
       const viewer = await getViewerContextOrThrow(client, campaignId, req.user);
 
       // Get active session
-      const { rows: sessionRows } = await client.query(
-        `SELECT id, game_state, free_movement FROM public.sessions
-          WHERE campaign_id = $1 AND status = 'active'
-          ORDER BY session_number DESC LIMIT 1`,
-        [campaignId],
-      );
-      if (sessionRows.length === 0) {
+      const session = await getActiveSession(client, campaignId);
+      if (!session) {
         const err = new Error('No active session');
         err.status = 400;
         err.code = 'no_active_session';
         throw err;
       }
-
-      const session = sessionRows[0];
       const gameState = session.game_state;
 
       // Validate turn ownership (DM can bypass)
