@@ -21,7 +21,7 @@ router.post('/providers', async (req, res) => {
     res.status(201).json(provider);
   } catch (error) {
     logError('Failed to create LLM provider', error, { userId: req.user?.id });
-    res.status(error.statusCode || 500).json({
+    res.status(error.status || 500).json({
       error: error.code || 'provider_create_failed',
       message: error.message || 'Failed to create LLM provider',
     });
@@ -36,7 +36,7 @@ router.patch('/providers/:name', async (req, res) => {
     res.json(provider);
   } catch (error) {
     logError('Failed to update LLM provider', error, { name: req.params.name, userId: req.user?.id });
-    res.status(error.statusCode || 500).json({
+    res.status(error.status || 500).json({
       error: error.code || 'provider_update_failed',
       message: error.message || 'Failed to update LLM provider',
     });
@@ -51,7 +51,7 @@ router.delete('/providers/:name', async (req, res) => {
     res.json({ deleted: true, name: deleted.name });
   } catch (error) {
     logError('Failed to delete LLM provider', error, { name: req.params.name, userId: req.user?.id });
-    res.status(error.statusCode || 500).json({
+    res.status(error.status || 500).json({
       error: error.code || 'provider_delete_failed',
       message: error.message || 'Failed to delete LLM provider',
     });
@@ -66,7 +66,7 @@ router.post('/providers/:name/default', async (req, res) => {
     res.json(provider);
   } catch (error) {
     logError('Failed to set default LLM provider', error, { name: req.params.name, userId: req.user?.id });
-    res.status(error.statusCode || 500).json({
+    res.status(error.status || 500).json({
       error: error.code || 'provider_default_failed',
       message: error.message || 'Failed to set default LLM provider',
     });
@@ -80,7 +80,7 @@ router.get('/providers/:name/models', async (req, res) => {
     res.json({ models });
   } catch (error) {
     logError('Failed to list available models', error, { name: req.params.name, userId: req.user?.id });
-    res.status(error.statusCode || 500).json({
+    res.status(error.status || 500).json({
       error: error.code || 'models_list_failed',
       message: error.message || 'Failed to list available models',
     });

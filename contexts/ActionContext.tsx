@@ -93,7 +93,7 @@ export function ActionProvider({ children }: { children: ReactNode }) {
   const [pendingAction, setPendingAction] = useState<PendingAction | null>(null);
   const [processingActionId, setProcessingActionId] = useState<string | null>(null);
   const [awaitingRoll, setAwaitingRoll] = useState<RollRequest | null>(null);
-  const [lastNarration, setLastNarration] = useState<string | null>(null);
+  const [lastNarration, _setLastNarration] = useState<string | null>(null);
   const [activeNpcId, setActiveNpcId] = useState<string | null>(null);
   const [levelUpAvailable, setLevelUpAvailable] = useState<{
     characterId: string;
@@ -111,13 +111,7 @@ export function ActionProvider({ children }: { children: ReactNode }) {
       if (!envelope) continue;
 
       switch (envelope.type) {
-        case "dm-narration": {
-          const data = envelope.data as { narration?: string } | undefined;
-          if (data?.narration) {
-            setLastNarration(data.narration);
-          }
-          break;
-        }
+        // Note: dm-narration event removed — narration now flows through chat messages (dm_broadcast channel)
         case "roll-requested": {
           const data = envelope.data as RollRequest | undefined;
           if (data?.actionId) {

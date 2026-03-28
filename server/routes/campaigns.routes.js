@@ -2612,7 +2612,7 @@ router.get(
       res.json(settings);
     } catch (error) {
       logError('Failed to fetch campaign LLM settings', error, { campaignId: req.params.campaignId });
-      res.status(error.statusCode || 500).json({
+      res.status(error.status || 500).json({
         error: error.code || 'llm_settings_fetch_failed',
         message: error.message || 'Failed to fetch LLM settings',
       });
@@ -2631,7 +2631,7 @@ router.put(
       res.json(updated);
     } catch (error) {
       logError('Failed to update campaign LLM settings', error, { campaignId: req.params.campaignId });
-      res.status(error.statusCode || 500).json({
+      res.status(error.status || 500).json({
         error: error.code || 'llm_settings_update_failed',
         message: error.message || 'Failed to update LLM settings',
       });
@@ -2651,7 +2651,7 @@ router.get(
       res.json({ history });
     } catch (error) {
       logError('Failed to fetch prompt version history', error, { campaignId: req.params.campaignId });
-      res.status(error.statusCode || 500).json({
+      res.status(error.status || 500).json({
         error: error.code || 'prompt_history_fetch_failed',
         message: error.message || 'Failed to fetch prompt version history',
       });

@@ -809,6 +809,8 @@ CREATE TABLE IF NOT EXISTS public.npc_relationships (
     trust_delta_total INTEGER DEFAULT 0,
     UNIQUE(npc_id, target_type, target_id)
 );
+CREATE INDEX IF NOT EXISTS idx_npc_relationships_npc_id ON public.npc_relationships(npc_id);
+CREATE INDEX IF NOT EXISTS idx_npc_relationships_target ON public.npc_relationships(target_id, target_type);
 
 -- Normalized NPC world positions (SRID 0)
 CREATE OR REPLACE VIEW public.v_npc_world_positions AS
@@ -1210,6 +1212,8 @@ CREATE INDEX IF NOT EXISTS idx_spa_user_session
     ON public.session_player_actions (user_id, session_id);
 CREATE INDEX IF NOT EXISTS idx_spa_status
     ON public.session_player_actions (status) WHERE status IN ('pending', 'awaiting_roll');
+CREATE INDEX IF NOT EXISTS idx_spa_campaign_id
+    ON public.session_player_actions (campaign_id);
 
 -- =============================================================================
 -- SESSION LIVE STATES (WS3: Server-Authoritative Character State)

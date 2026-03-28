@@ -2,7 +2,7 @@ import { LLMProviderError, LLMServiceError } from './index.js';
 
 export const respondWithNarrativeError = (res, error) => {
   if (error instanceof LLMProviderError) {
-    return res.status(error.statusCode || 502).json({
+    return res.status(error.status || 502).json({
       error: 'narrative_provider_error',
       message: error.message,
       provider: error.provider ?? null,
@@ -11,7 +11,7 @@ export const respondWithNarrativeError = (res, error) => {
   }
 
   if (error instanceof LLMServiceError) {
-    return res.status(error.statusCode || 503).json({
+    return res.status(error.status || 503).json({
       error: 'narrative_service_error',
       message: error.message,
       provider: error.provider ?? null,

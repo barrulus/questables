@@ -28,7 +28,7 @@ export const listProviders = async () => {
 export const createProvider = async ({ name, adapter, host, model, apiKey, timeoutMs, options }) => {
   if (!name || !adapter) {
     const error = new Error('name and adapter are required');
-    Object.assign(error, { statusCode: 400 });
+    error.status = 400; error.code = 'validation_error';
     throw error;
   }
 
@@ -114,7 +114,7 @@ export const updateProvider = async (name, updates) => {
 
   if (sets.length === 0) {
     const error = new Error('No valid fields to update');
-    Object.assign(error, { statusCode: 400 });
+    error.status = 400; error.code = 'validation_error';
     throw error;
   }
 
@@ -131,7 +131,7 @@ export const updateProvider = async (name, updates) => {
 
   if (rows.length === 0) {
     const error = new Error(`Provider "${name}" not found`);
-    Object.assign(error, { statusCode: 404 });
+    error.status = 404; error.code = 'not_found';
     throw error;
   }
 
@@ -154,13 +154,13 @@ export const deleteProvider = async (name) => {
 
   if (targetRows.length === 0) {
     const error = new Error(`Provider "${name}" not found`);
-    Object.assign(error, { statusCode: 404 });
+    error.status = 404; error.code = 'not_found';
     throw error;
   }
 
   if (targetRows[0].enabled && (enabledRows[0]?.cnt ?? 0) <= 1) {
     const error = new Error('Cannot delete the last enabled provider');
-    Object.assign(error, { statusCode: 409 });
+    error.status = 409; error.code = 'conflict';
     throw error;
   }
 
@@ -183,7 +183,7 @@ export const setDefaultProvider = async (name) => {
 
   if (checkRows.length === 0) {
     const error = new Error(`Provider "${name}" not found`);
-    Object.assign(error, { statusCode: 404 });
+    error.status = 404; error.code = 'not_found';
     throw error;
   }
 
@@ -207,7 +207,7 @@ export const setDefaultProvider = async (name) => {
 export const listAvailableModels = async (providerName, registry) => {
   if (!registry) {
     const error = new Error('LLM registry is not available');
-    Object.assign(error, { statusCode: 503 });
+    error.status = 503; error.code = 'service_unavailable';
     throw error;
   }
 
@@ -216,13 +216,13 @@ export const listAvailableModels = async (providerName, registry) => {
     provider = registry.get(providerName);
   } catch {
     const error = new Error(`Provider "${providerName}" is not registered in the active registry`);
-    Object.assign(error, { statusCode: 404 });
+    error.status = 404; error.code = 'not_found';
     throw error;
   }
 
   if (!provider || typeof provider.checkHealth !== 'function') {
     const error = new Error(`Provider "${providerName}" does not support model listing`);
-    Object.assign(error, { statusCode: 501 });
+    error.status = 501; error.code = 'not_implemented';
     throw error;
   }
 

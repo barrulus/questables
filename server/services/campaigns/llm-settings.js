@@ -54,13 +54,13 @@ export const upsertCampaignLLMSettings = async (campaignId, settings, userId) =>
   // Validate fields
   if (settings.world_tone !== undefined && !VALID_WORLD_TONES.includes(settings.world_tone)) {
     const error = new Error(`world_tone must be one of: ${VALID_WORLD_TONES.join(', ')}`);
-    Object.assign(error, { statusCode: 400 });
+    error.status = 400; error.code = 'validation_error';
     throw error;
   }
 
   if (settings.narrative_voice !== undefined && !VALID_NARRATIVE_VOICES.includes(settings.narrative_voice)) {
     const error = new Error(`narrative_voice must be one of: ${VALID_NARRATIVE_VOICES.join(', ')}`);
-    Object.assign(error, { statusCode: 400 });
+    error.status = 400; error.code = 'validation_error';
     throw error;
   }
 
@@ -68,7 +68,7 @@ export const upsertCampaignLLMSettings = async (campaignId, settings, userId) =>
     const depth = Number(settings.chat_history_depth);
     if (!Number.isInteger(depth) || depth < 1 || depth > 20) {
       const error = new Error('chat_history_depth must be an integer between 1 and 20');
-      Object.assign(error, { statusCode: 400 });
+      error.status = 400; error.code = 'validation_error';
       throw error;
     }
   }
@@ -77,7 +77,7 @@ export const upsertCampaignLLMSettings = async (campaignId, settings, userId) =>
     const depth = Number(settings.npc_memory_depth);
     if (!Number.isInteger(depth) || depth < 1 || depth > 25) {
       const error = new Error('npc_memory_depth must be an integer between 1 and 25');
-      Object.assign(error, { statusCode: 400 });
+      error.status = 400; error.code = 'validation_error';
       throw error;
     }
   }
@@ -86,7 +86,7 @@ export const upsertCampaignLLMSettings = async (campaignId, settings, userId) =>
     const temp = Number(settings.temperature);
     if (Number.isNaN(temp) || temp < 0 || temp > 2) {
       const error = new Error('temperature must be between 0.0 and 2.0');
-      Object.assign(error, { statusCode: 400 });
+      error.status = 400; error.code = 'validation_error';
       throw error;
     }
   }
@@ -95,7 +95,7 @@ export const upsertCampaignLLMSettings = async (campaignId, settings, userId) =>
     const topP = Number(settings.top_p);
     if (Number.isNaN(topP) || topP < 0 || topP > 1) {
       const error = new Error('top_p must be between 0.0 and 1.0');
-      Object.assign(error, { statusCode: 400 });
+      error.status = 400; error.code = 'validation_error';
       throw error;
     }
   }

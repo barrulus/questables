@@ -57,7 +57,7 @@ router.patch('/users/:userId/status', async (req, res) => {
     });
     res.json(user);
   } catch (error) {
-    const statusCode = error.statusCode || 500;
+    const statusCode = error.status || 500;
     logError('Failed to update user status', error);
     res.status(statusCode).json({ error: error.message || 'Failed to update user status' });
   }
@@ -75,7 +75,7 @@ router.patch('/users/:userId/roles', async (req, res) => {
     });
     res.json(user);
   } catch (error) {
-    const statusCode = error.statusCode || 500;
+    const statusCode = error.status || 500;
     logError('Failed to update user roles', error);
     res.status(statusCode).json({ error: error.message || 'Failed to update user roles' });
   }
@@ -92,7 +92,7 @@ router.post('/users', async (req, res) => {
     });
     res.status(201).json(user);
   } catch (error) {
-    const statusCode = error.statusCode || 500;
+    const statusCode = error.status || 500;
     logError('Failed to create user', error);
     res.status(statusCode).json({ error: error.message || 'Failed to create user' });
   }
@@ -109,7 +109,7 @@ router.put('/users/:userId', async (req, res) => {
     });
     res.json(user);
   } catch (error) {
-    let statusCode = error.statusCode || 500;
+    let statusCode = error.status || 500;
     let message = error.message || 'Failed to update user';
     if (error.code === '23505') {
       statusCode = 409;
@@ -131,7 +131,7 @@ router.delete('/users/:userId', async (req, res) => {
     });
     res.json({ success: true, ...deleted });
   } catch (error) {
-    let statusCode = error.statusCode || 500;
+    let statusCode = error.status || 500;
     let message = error.message || 'Failed to delete user';
     if (error.code === '23503') {
       statusCode = 409;
@@ -153,7 +153,7 @@ router.post('/users/:userId/reset-password', async (req, res) => {
     });
     res.json({ success: true, ...result });
   } catch (error) {
-    const statusCode = error.statusCode || 500;
+    const statusCode = error.status || 500;
     logError('Failed to reset user password', error);
     res.status(statusCode).json({ error: error.message || 'Failed to reset password' });
   }

@@ -8,7 +8,6 @@ import { requireAuth } from '../auth-middleware.js';
 import { getClient } from '../db/pool.js';
 import { handleValidationErrors } from '../validation/common.js';
 import {
-  ensureDmControl,
   getViewerContextOrThrow,
 } from '../services/campaigns/service.js';
 import {

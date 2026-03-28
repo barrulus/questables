@@ -83,11 +83,11 @@ export async function getUserDetail(userId) {
 export async function updateUserStatus(userId, status, adminId) {
   const validStatuses = ['active', 'inactive', 'banned'];
   if (!validStatuses.includes(status)) {
-    throw Object.assign(new Error(`Invalid status. Must be one of: ${validStatuses.join(', ')}`), { statusCode: 400 });
+    const err = new Error(\1); err.status = \2; throw err;
   }
 
   if (userId === adminId) {
-    throw Object.assign(new Error('Cannot change your own account status'), { statusCode: 400 });
+    const err = new Error(\1); err.status = \2; throw err;
   }
 
   const result = await query(
@@ -97,7 +97,7 @@ export async function updateUserStatus(userId, status, adminId) {
   );
 
   if (result.rows.length === 0) {
-    throw Object.assign(new Error('User not found'), { statusCode: 404 });
+    const err = new Error(\1); err.status = \2; throw err;
   }
 
   return result.rows[0];
@@ -109,16 +109,16 @@ export async function updateUserStatus(userId, status, adminId) {
 export async function updateUserRoles(userId, roles, adminId) {
   const validRoles = ['player', 'dm', 'admin'];
   if (!Array.isArray(roles) || roles.length === 0) {
-    throw Object.assign(new Error('Roles must be a non-empty array'), { statusCode: 400 });
+    const err = new Error(\1); err.status = \2; throw err;
   }
 
   const invalid = roles.filter((r) => !validRoles.includes(r));
   if (invalid.length > 0) {
-    throw Object.assign(new Error(`Invalid roles: ${invalid.join(', ')}. Must be one of: ${validRoles.join(', ')}`), { statusCode: 400 });
+    const err = new Error(\1); err.status = \2; throw err;
   }
 
   if (userId === adminId && !roles.includes('admin')) {
-    throw Object.assign(new Error('Cannot remove admin role from your own account'), { statusCode: 400 });
+    const err = new Error(\1); err.status = \2; throw err;
   }
 
   const result = await query(
@@ -128,7 +128,7 @@ export async function updateUserRoles(userId, roles, adminId) {
   );
 
   if (result.rows.length === 0) {
-    throw Object.assign(new Error('User not found'), { statusCode: 404 });
+    const err = new Error(\1); err.status = \2; throw err;
   }
 
   return result.rows[0];
@@ -139,13 +139,13 @@ export async function updateUserRoles(userId, roles, adminId) {
  */
 export async function createUser({ username, email, password, roles }) {
   if (!username || typeof username !== 'string' || !username.trim()) {
-    throw Object.assign(new Error('Username is required'), { statusCode: 400 });
+    const err = new Error(\1); err.status = \2; throw err;
   }
   if (!email || typeof email !== 'string' || !email.trim()) {
-    throw Object.assign(new Error('Email is required'), { statusCode: 400 });
+    const err = new Error(\1); err.status = \2; throw err;
   }
   if (!password || typeof password !== 'string' || password.length < 6) {
-    throw Object.assign(new Error('Password must be at least 6 characters'), { statusCode: 400 });
+    const err = new Error(\1); err.status = \2; throw err;
   }
 
   const validRoles = ['player', 'dm', 'admin'];
@@ -159,7 +159,7 @@ export async function createUser({ username, email, password, roles }) {
     [email.trim(), username.trim()]
   );
   if (existing.rows.length > 0) {
-    throw Object.assign(new Error('A user with that email or username already exists'), { statusCode: 409 });
+    const err = new Error(\1); err.status = \2; throw err;
   }
 
   const passwordHash = await hashPassword(password);
@@ -194,17 +194,17 @@ export async function updateUser(userId, { username, email, roles }, adminId) {
     const validRoles = ['player', 'dm', 'admin'];
     const normalizedRoles = Array.isArray(roles) ? roles.filter((r) => validRoles.includes(r)) : [];
     if (normalizedRoles.length === 0) {
-      throw Object.assign(new Error('Roles must contain at least one valid role'), { statusCode: 400 });
+      const err = new Error(\1); err.status = \2; throw err;
     }
     if (userId === adminId && !normalizedRoles.includes('admin')) {
-      throw Object.assign(new Error('Cannot remove admin role from your own account'), { statusCode: 400 });
+      const err = new Error(\1); err.status = \2; throw err;
     }
     sets.push(`roles = $${paramIndex++}`);
     params.push(normalizedRoles);
   }
 
   if (sets.length === 0) {
-    throw Object.assign(new Error('No fields to update'), { statusCode: 400 });
+    const err = new Error(\1); err.status = \2; throw err;
   }
 
   sets.push('updated_at = NOW()');
@@ -217,7 +217,7 @@ export async function updateUser(userId, { username, email, roles }, adminId) {
   );
 
   if (result.rows.length === 0) {
-    throw Object.assign(new Error('User not found'), { statusCode: 404 });
+    const err = new Error(\1); err.status = \2; throw err;
   }
 
   return result.rows[0];
@@ -228,7 +228,7 @@ export async function updateUser(userId, { username, email, roles }, adminId) {
  */
 export async function deleteUser(userId, adminId) {
   if (userId === adminId) {
-    throw Object.assign(new Error('Cannot delete your own account'), { statusCode: 400 });
+    const err = new Error(\1); err.status = \2; throw err;
   }
 
   const result = await query(
@@ -237,7 +237,7 @@ export async function deleteUser(userId, adminId) {
   );
 
   if (result.rows.length === 0) {
-    throw Object.assign(new Error('User not found'), { statusCode: 404 });
+    const err = new Error(\1); err.status = \2; throw err;
   }
 
   return result.rows[0];
@@ -248,11 +248,11 @@ export async function deleteUser(userId, adminId) {
  */
 export async function resetUserPassword(userId, newPassword, adminId) {
   if (!newPassword || typeof newPassword !== 'string' || newPassword.length < 6) {
-    throw Object.assign(new Error('Password must be at least 6 characters'), { statusCode: 400 });
+    const err = new Error(\1); err.status = \2; throw err;
   }
 
   if (userId === adminId) {
-    throw Object.assign(new Error('Use account settings to change your own password'), { statusCode: 400 });
+    const err = new Error(\1); err.status = \2; throw err;
   }
 
   const passwordHash = await hashPassword(newPassword);
@@ -264,7 +264,7 @@ export async function resetUserPassword(userId, newPassword, adminId) {
   );
 
   if (result.rows.length === 0) {
-    throw Object.assign(new Error('User not found'), { statusCode: 404 });
+    const err = new Error(\1); err.status = \2; throw err;
   }
 
   return result.rows[0];
