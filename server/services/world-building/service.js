@@ -65,46 +65,43 @@ const SECTION_PROMPTS = {
 - Who is ascendant, who is declining
 Ground every claim in the state/province map data.`,
 
-  history: `Write a historical timeline for this world. Cover:
-- 3-5 major eras with evocative names
-- Founding events that explain the current political map
+  history: `Write a concise historical overview for this world in 300-500 words. Cover:
+- Name 3-5 major eras with evocative names and approximate date ranges
+- For each era: one paragraph summarising the key events
 - A catastrophe or transformation that reshaped the world
-- How geography (rivers, mountains, coasts) shaped civilisations
-- Legends that may or may not be true — adventure hooks
+- End with the current era and its defining tensions
 Reference real settlements and geographic features from the map data.`,
 
-  cultures: `Write cultural profiles for each major culture in the map data. For each, cover:
-- Geographic distribution and population
-- Values, customs, social structure
-- Relationships to other cultures (trade, rivalry, kinship)
-- Distinctive art, cuisine, or technology
-- Taboos and sacred practices
-- How geography shaped the culture`,
+  cultures: `Write a concise overview of the major cultures in this world in 400-600 words.
+For each of the top 4-5 cultures by population, write one paragraph covering:
+- Geographic heartland and key settlements
+- Core values and social structure
+- What makes them distinct from neighbours
+- One notable custom, art form, or technology
+Do NOT write exhaustive profiles — keep each culture to 2-4 sentences.`,
 
-  religions: `Write religious traditions for each religion in the map data. For each, cover:
-- Core beliefs and cosmology
-- Clergy structure and holy sites
+  religions: `Write a concise overview of the major religions in this world in 400-600 words.
+For each of the top 4-5 religions by followers, write one paragraph covering:
+- Core beliefs in one sentence
 - Relationship to political power
-- Popular vs orthodox practice
-- Tensions with other faiths
-- Sacred calendar and major festivals`,
+- Holy sites or centres of worship (use real settlement names)
+- One distinctive practice or festival
+Do NOT write exhaustive theology — keep each religion to 2-4 sentences.`,
 
-  regions: `Write regional backstories for each major state/province. For each, cover:
-- Ruling house or government structure
-- Notable figures (ruler, general, merchant prince, rebel leader)
-- Local customs distinct from neighbours
-- Economic basis (production, trade, shortages)
-- Current internal challenges
-- How terrain shapes daily life`,
+  regions: `Write concise regional profiles for the top 5-6 states/provinces by population in 400-600 words.
+For each, write one paragraph covering:
+- Government structure and current ruler
+- Economic basis and trade relationships
+- One distinctive local custom or challenge
+- How terrain shapes the region
+Do NOT write exhaustive backstories — keep each region to 2-4 sentences.`,
 
-  factions: `Write 4-6 major factions and organisations that operate across this world. For each, cover:
-- Name and purpose
-- Leadership and membership
-- Headquarters and areas of influence
-- Goals and methods
-- Rivals and allies among other factions
-- Secret agendas or internal divisions
-- How players might encounter or join them`,
+  factions: `Write 4-6 major factions in this world in 400-600 words. For each, write one paragraph covering:
+- Name, purpose, and headquarters (use real settlement names)
+- Leadership and how they operate
+- One secret agenda or internal tension
+- How players might encounter them
+Keep each faction to 2-4 sentences.`,
 };
 
 // ── Map data aggregation ────────────────────────────────────────────────────
