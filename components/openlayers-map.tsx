@@ -7,9 +7,8 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from ".
 import { Badge } from "./ui/badge";
 import { Popover, PopoverTrigger, PopoverContent } from "./ui/popover";
 import { Checkbox } from "./ui/checkbox";
-import { Switch } from "./ui/switch";
-import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "./ui/dialog";
-import { Avatar, AvatarFallback, AvatarImage } from "./ui/avatar";
+import { MapPlayerMovementDialog, type MoveMode } from "./map-player-movement-dialog";
+import { MapVisiblePlayersPanel, type PlayerToken } from "./map-visible-players-panel";
 import {
   MapPin,
   ZoomIn,
@@ -64,21 +63,7 @@ import { useWebSocket } from "../hooks/useWebSocket";
 import { apiFetch, fetchJson, readErrorMessage, readJsonBody } from "../utils/api-client";
 import { toast } from "sonner";
 
-interface PlayerToken {
-  playerId: string;
-  userId: string;
-  characterId?: string;
-  coordinates: [number, number];
-  name: string;
-  initials: string;
-  avatarUrl?: string | null;
-  visibilityState: 'visible' | 'stealthed' | 'hidden';
-  role: string;
-  canViewHistory: boolean;
-  lastLocatedAt?: string | null;
-  hitPoints?: { current: number; max: number; temporary?: number };
-  conditions: string[];
-}
+// PlayerToken type imported from map-visible-players-panel
 
 interface PlayerTrailMeta {
   feature: TrailFeature;
@@ -146,7 +131,6 @@ interface LayerVisibility {
 const INTERACTIVE_FEATURE_TYPES = new Set(['burg', 'marker', 'player']);
 const MOVE_PROMPT_TOAST_ID = 'player-move-selection';
 const MOVE_MODES = ['walk', 'ride', 'boat', 'fly', 'teleport', 'gm'] as const;
-type MoveMode = typeof MOVE_MODES[number];
 const TRAIL_CACHE_TTL_MS = 60_000;
 
 const isPlainObject = (value: unknown): value is Record<string, unknown> =>
@@ -2133,124 +2117,20 @@ export function OpenLayersMap() {
         </div>
       </CardContent>
       {mapMode === 'world' && (
-        <div className="border-t bg-muted/20 px-4 py-3 space-y-3">
-          <div className="flex items-center justify-between">
-            <div className="flex items-center gap-2">
-              <h3 className="text-sm font-semibold text-foreground">
-                Visible Players ({sortedPlayerTokens.length})
-              </h3>
-              {playerLoading && <Badge variant="secondary">Refreshing...</Badge>}
-            </div>
-            <div className="flex items-center gap-2">
-              {playerError && (
-                <Badge variant="destructive" className="text-xs">{playerError}</Badge>
-              )}
-              {activeCampaignId && (
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  className="h-7 px-2 text-xs"
-                  onClick={() => void loadVisiblePlayers(activeCampaignId)}
-                >
-                  Refresh
-                </Button>
-              )}
-            </div>
-          </div>
-
-          <div className="space-y-2">
-            {sortedPlayerTokens.length === 0 && !playerLoading ? (
-              <p className="text-xs text-muted-foreground">
-                No player tokens are currently visible.
-              </p>
-            ) : null}
-
-            {sortedPlayerTokens.map((token) => {
-              const hp = token.hitPoints;
-              const hpLabel = hp ? `${hp.current}/${hp.max}` : '—';
-              const hpPercent = hp && hp.max > 0 ? Math.round((hp.current / hp.max) * 100) : null;
-              const conditionsLabel = token.conditions.length
-                ? token.conditions.slice(0, 3).join(', ')
-                : 'No conditions';
-              const trailEnabled = trailSelections[token.playerId] ?? false;
-
-              return (
-                <div
-                  key={token.playerId}
-                  className="flex flex-col gap-2 rounded-md border bg-background/60 p-3 shadow-sm sm:flex-row sm:items-center sm:justify-between"
-                >
-                  <div className="flex items-start gap-3">
-                    <Avatar className="h-9 w-9 border">
-                      {token.avatarUrl ? (
-                        <AvatarImage src={token.avatarUrl} alt={token.name} />
-                      ) : null}
-                      <AvatarFallback>{token.initials}</AvatarFallback>
-                    </Avatar>
-                    <div className="space-y-1">
-                      <div className="flex items-center gap-2">
-                        <span className="text-sm font-semibold text-foreground">{token.name}</span>
-                        <Badge variant="outline" className="text-[10px] uppercase tracking-wide">
-                          {token.role}
-                        </Badge>
-                        {token.visibilityState !== 'visible' && (
-                          <Badge variant="secondary" className="text-[10px] uppercase tracking-wide">
-                            {token.visibilityState}
-                          </Badge>
-                        )}
-                      </div>
-                      <div className="text-xs text-muted-foreground space-x-3">
-                        <span>HP: {hpLabel}{hpPercent !== null ? ` (${hpPercent}%)` : ''}</span>
-                        <span>Conditions: {conditionsLabel}</span>
-                        {token.lastLocatedAt && (
-                          <span>Updated: {new Date(token.lastLocatedAt).toLocaleTimeString()}</span>
-                        )}
-                      </div>
-                    </div>
-                  </div>
-
-                  <div className="flex flex-wrap items-center gap-2">
-                    <div className="flex items-center gap-2">
-                      <Switch
-                        checked={trailEnabled}
-                        onCheckedChange={(checked) => {
-                          void handleTrailToggle(token, checked);
-                        }}
-                        disabled={!token.canViewHistory && !canControlPlayer(token)}
-                      />
-                      <span className="text-xs text-muted-foreground">Trail</span>
-                    </div>
-                    {trailErrors[token.playerId] && (
-                      <span className="text-[11px] text-destructive">
-                        {trailErrors[token.playerId]}
-                      </span>
-                    )}
-                    <Button
-                      variant="ghost"
-                      size="sm"
-                      className="h-7"
-                      onClick={() => focusOnPlayer(token)}
-                    >
-                      Focus
-                    </Button>
-                    {canControlPlayer(token) && (
-                      <Button
-                        variant={selectedPlayerId === token.playerId ? 'default' : 'outline'}
-                        size="sm"
-                        className="h-7"
-                        onClick={() => {
-                          setSelectedTool('move');
-                          selectPlayerForMovement(token);
-                        }}
-                      >
-                        Move
-                      </Button>
-                    )}
-                  </div>
-                </div>
-              );
-            })}
-          </div>
-        </div>
+        <MapVisiblePlayersPanel
+          tokens={sortedPlayerTokens}
+          playerLoading={playerLoading}
+          playerError={playerError}
+          activeCampaignId={activeCampaignId}
+          onRefresh={(id) => void loadVisiblePlayers(id)}
+          trailSelections={trailSelections}
+          trailErrors={trailErrors}
+          onTrailToggle={(token, checked) => void handleTrailToggle(token, checked)}
+          canControlPlayer={canControlPlayer}
+          selectedPlayerId={selectedPlayerId}
+          onFocusPlayer={focusOnPlayer}
+          onMovePlayer={(token) => { setSelectedTool('move'); selectPlayerForMovement(token); }}
+        />
       )}
 
       {/* Map Controls Panel */}
@@ -2315,78 +2195,15 @@ export function OpenLayersMap() {
           </div>
       </div>
     </div>
-      <Dialog
-        open={Boolean(movementDialog)}
-        onOpenChange={(open) => {
-          if (!open) {
-            setMovementDialog(null);
-            clearMovementSelection();
-          }
-        }}
-      >
-        <DialogContent className="max-w-sm">
-          <DialogHeader>
-            <DialogTitle>Confirm Movement</DialogTitle>
-            <DialogDescription>
-              Approve the new destination for this player token.
-            </DialogDescription>
-          </DialogHeader>
-          {movementDialog ? (
-            <div className="space-y-4 text-sm">
-              <div className="text-muted-foreground">
-                Moving <span className="font-semibold text-foreground">{movementDialog.playerName}</span>
-              </div>
-              <div className="grid gap-2">
-                <div className="flex justify-between">
-                  <span>Current position</span>
-                  <span>
-                    {movementDialog.currentPosition[0].toFixed(2)}, {movementDialog.currentPosition[1].toFixed(2)}
-                  </span>
-                </div>
-                <div className="flex justify-between">
-                  <span>Target position</span>
-                  <span>
-                    {movementDialog.coordinate[0].toFixed(2)}, {movementDialog.coordinate[1].toFixed(2)}
-                  </span>
-                </div>
-                <div className="flex justify-between">
-                  <span>Distance</span>
-                  <span>{movementDistance.toFixed(2)} units (SRID-0)</span>
-                </div>
-              </div>
-              <div className="space-y-1">
-                <label className="text-sm font-medium text-foreground">Movement mode</label>
-                <Select value={moveMode} onValueChange={(value) => setMoveMode(value as MoveMode)}>
-                  <SelectTrigger className="w-full">
-                    <SelectValue placeholder="Select mode" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {availableMoveModes.map((mode) => (
-                      <SelectItem key={mode} value={mode}>
-                        {mode.charAt(0).toUpperCase() + mode.slice(1)}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-              </div>
-            </div>
-          ) : null}
-          <DialogFooter className="flex justify-end gap-2">
-            <Button
-              variant="outline"
-              onClick={() => {
-                setMovementDialog(null);
-                clearMovementSelection();
-              }}
-            >
-              Cancel
-            </Button>
-            <Button onClick={handleConfirmMove} disabled={!movementDialog}>
-              Move token
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
+      <MapPlayerMovementDialog
+        dialog={movementDialog}
+        onClose={() => { setMovementDialog(null); clearMovementSelection(); }}
+        moveMode={moveMode}
+        onMoveModeChange={setMoveMode}
+        availableMoveModes={availableMoveModes}
+        movementDistance={movementDistance}
+        onConfirm={handleConfirmMove}
+      />
     </Card>
   );
 }
