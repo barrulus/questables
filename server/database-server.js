@@ -3,6 +3,7 @@
 
 import './config/load-env.js';
 import express from 'express';
+import { logInfo, logError } from './utils/logger.js';
 import { pool, query as dbQuery } from './db/pool.js';
 import cors from 'cors';
 import multer from 'multer';
@@ -39,6 +40,7 @@ import { registerLootRoutes } from './routes/loot.routes.js';
 import { registerAdminRoutes } from './routes/admin.routes.js';
 import { registerAdminLLMRoutes } from './routes/admin-llm.routes.js';
 import { registerModerationRoutes } from './routes/moderation.routes.js';
+import { registerWorldBuildingRoutes } from './routes/world-building.routes.js';
 import { ensureLLMService } from './llm/request-helpers.js';
 import {
   logInfo,
@@ -183,7 +185,7 @@ app.get('/api/health', async (req, res) => {
       }
     });
   } catch (error) {
-    console.error('Health check failed:', error);
+    logError('Health check failed', error);
     res.status(500).json({
       status: 'unhealthy',
       database: 'disconnected',
@@ -350,7 +352,7 @@ app.delete('/api/admin/llm/cache/:cacheKey', requireAuth, requireRole('admin'), 
 
 app.get('/api/admin/llm/providers', requireAuth, requireRole('admin'), async (req, res) => {
   const registry = req.app?.locals?.llmRegistry;
-  const configs = req.app?.locals?.llmProviderConfigs || [];
+  const inMemoryConfigs = req.app?.locals?.llmProviderConfigs || [];
   const defaultProvider = req.app?.locals?.defaultLLMProvider || null;
 
   if (!registry) {
@@ -360,11 +362,35 @@ app.get('/api/admin/llm/providers', requireAuth, requireRole('admin'), async (re
     });
   }
 
+  // Read saved config from DB so edits are reflected immediately
+  let dbConfigs = [];
+  try {
+    const { rows } = await pool.query(
+      `SELECT name, adapter, host, model, timeout_ms, options, enabled, default_provider
+         FROM public.llm_providers ORDER BY default_provider DESC, created_at ASC`
+    );
+    dbConfigs = rows.map((r) => ({
+      name: r.name,
+      adapter: r.adapter,
+      host: r.host,
+      model: r.model,
+      timeoutMs: r.timeout_ms,
+      options: r.options ?? {},
+      enabled: r.enabled,
+      defaultProvider: r.default_provider,
+    }));
+  } catch {
+    // Table may not exist; fall back to in-memory configs
+  }
+
   const providerNames = registry.list();
 
   const providers = await Promise.all(providerNames.map(async (name) => {
     const provider = registry.get(name);
-    const config = configs.find((cfg) => cfg.name === name) || {};
+    // Prefer DB config (reflects edits), fall back to in-memory
+    const config = dbConfigs.find((c) => c.name === name)
+      || inMemoryConfigs.find((cfg) => cfg.name === name)
+      || {};
     let health;
     try {
       health = await provider.checkHealth();
@@ -418,6 +444,7 @@ registerLootRoutes(app);
 registerAdminRoutes(app);
 registerAdminLLMRoutes(app);
 registerModerationRoutes(app);
+registerWorldBuildingRoutes(app);
 
 const loadProviderConfigurations = async () => {
   try {
@@ -505,15 +532,15 @@ app.locals.bootstrapLLMServices = bootstrapLLMServices;
 
 // Pool event handlers for monitoring
 pool.on('connect', () => {
-  console.log('[Database] Client connected to pool');
+  logInfo('[Database] Client connected to pool');
 });
 
 pool.on('error', (err) => {
-  console.error('[Database] Pool error:', err);
+  logError('[Database] Pool error', err);
 });
 
 pool.on('remove', () => {
-  console.log('[Database] Client removed from pool');
+  logInfo('[Database] Client removed from pool');
 });
 
 // Enhanced query wrapper with retries and performance monitoring
@@ -567,11 +594,11 @@ if (shouldStartServer) {
 
     logApplicationStart(config);
 
-    console.log(`Local database server running on port ${port}`);
-    console.log(`Health check: ${healthCheckUrl}`);
-    console.log(`WebSocket available at ${websocketUrl}`);
+    logInfo(`Local database server running on port ${port}`);
+    logInfo(`Health check: ${healthCheckUrl}`);
+    logInfo(`WebSocket available at ${websocketUrl}`);
     const wsStatus = wsServer ? wsServer.getStatus() : { connected: 0 };
-    console.log(`WebSocket connections: ${wsStatus.connected}`);
+    logInfo(`WebSocket connections: ${wsStatus.connected}`);
 
     logInfo('Database server ready', {
       port,

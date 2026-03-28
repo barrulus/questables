@@ -1,4 +1,5 @@
 import { LLMServiceError } from '../errors.js';
+import { buildGeographicContext } from './geographic-context-builder.js';
 
 const parseJson = (value, fallback) => {
   if (value === null || value === undefined) {
@@ -72,6 +73,7 @@ const mapSessionRow = (row) => {
     durationMinutes: row.duration,
     experienceAwarded: row.experience_awarded,
     treasureAwarded: parseJson(row.treasure_awarded, []),
+    gameState: parseJson(row.game_state, null),
     createdAt: row.created_at?.toISOString?.() ?? null,
     updatedAt: row.updated_at?.toISOString?.() ?? null,
   };
@@ -274,6 +276,23 @@ export class LLMContextManager {
       const encounters = await this.#loadEncounters(client, { campaignId, sessionId: session?.id });
       const chatDepth = llmSettings?.chatHistoryDepth || 20;
       const recentMessages = await this.#loadRecentMessages(client, campaignId, session?.id, chatDepth);
+      const directorWhispers = await this.#loadDirectorWhispers(client, campaignId);
+      const worldLore = await this.#loadWorldLore(client, campaignId, geographic);
+
+      // Load geographic context based on active player position
+      let geographic = null;
+      if (campaign.worldMapId) {
+        const playerPosition = await this.#loadActivePlayerPosition(client, campaignId, session);
+        if (playerPosition) {
+          geographic = await buildGeographicContext({
+            worldMapId: campaign.worldMapId,
+            x: playerPosition.x,
+            y: playerPosition.y,
+            campaignId,
+            insideBurgId: playerPosition.insideBurgId,
+          });
+        }
+      }
 
       return {
         campaign,
@@ -282,9 +301,12 @@ export class LLMContextManager {
         locations,
         npcs,
         encounters,
+        geographic,
         chat: {
           recentMessages,
         },
+        directorWhispers,
+        worldLore,
         generatedAt: new Date().toISOString(),
       };
     } finally {
@@ -545,6 +567,45 @@ export class LLMContextManager {
     );
   }
 
+  async #loadActivePlayerPosition(client, campaignId, session) {
+    // Determine the active player from game state
+    const gameState = session?.gameState;
+    const activePlayerId = gameState?.activePlayerId ?? null;
+
+    // Query: if there's an active player, get their position; otherwise get the party centroid
+    let positionQuery;
+    let positionParams;
+
+    if (activePlayerId) {
+      positionQuery = `
+        SELECT ST_X(loc_current) AS x, ST_Y(loc_current) AS y,
+               inside_burg_id
+          FROM public.campaign_players
+         WHERE campaign_id = $1 AND user_id = $2 AND loc_current IS NOT NULL
+         LIMIT 1`;
+      positionParams = [campaignId, activePlayerId];
+    } else {
+      // Fallback: first player with a known position
+      positionQuery = `
+        SELECT ST_X(loc_current) AS x, ST_Y(loc_current) AS y,
+               inside_burg_id
+          FROM public.campaign_players
+         WHERE campaign_id = $1 AND loc_current IS NOT NULL AND status = 'active'
+         ORDER BY last_located_at DESC
+         LIMIT 1`;
+      positionParams = [campaignId];
+    }
+
+    const { rows } = await client.query(positionQuery, positionParams);
+    if (!rows.length) return null;
+
+    return {
+      x: Number(rows[0].x),
+      y: Number(rows[0].y),
+      insideBurgId: rows[0].inside_burg_id ?? null,
+    };
+  }
+
   async #loadRecentMessages(client, campaignId, sessionId, limit = 20) {
     const params = [campaignId];
     const whereClauses = ['m.campaign_id = $1'];
@@ -570,6 +631,55 @@ export class LLMContextManager {
     );
 
     return messagesResult.rows.map(mapChatMessageRow);
+  }
+
+  async #loadWorldLore(client, campaignId, geographic) {
+    // Load world lore — location-aware: prefer lore matching current state/region
+    const currentState = geographic?.terrain?.state ??
+      geographic?.nearbyBurgs?.[0]?.statefull ?? null;
+
+    const result = await client.query(
+      `SELECT section, subsection, content
+         FROM public.campaign_world_lore
+        WHERE campaign_id = $1
+        ORDER BY
+          CASE
+            WHEN subsection IS NULL THEN 0
+            WHEN subsection = $2 THEN 1
+            ELSE 2
+          END,
+          section, updated_at DESC`,
+      [campaignId, currentState],
+    );
+
+    if (result.rows.length === 0) return [];
+
+    // Include: all global sections (subsection IS NULL) + location-relevant subsections
+    // Limit total to prevent prompt bloat
+    const MAX_LORE_SECTIONS = 6;
+    const filtered = result.rows.filter((r) =>
+      r.subsection === null || r.subsection === currentState
+    );
+    return filtered.slice(0, MAX_LORE_SECTIONS).map((r) => ({
+      section: r.section,
+      subsection: r.subsection,
+      content: r.content,
+    }));
+  }
+
+  async #loadDirectorWhispers(client, campaignId, limit = 5) {
+    const result = await client.query(
+      `SELECT m.content, m.created_at
+         FROM public.chat_messages m
+        WHERE m.campaign_id = $1
+          AND m.channel_type = 'director_whisper'
+        ORDER BY m.created_at DESC
+        LIMIT $2`,
+      [campaignId, limit],
+    );
+    return result.rows
+      .map((r) => r.content)
+      .reverse(); // chronological order
   }
 }
 

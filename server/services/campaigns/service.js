@@ -222,13 +222,30 @@ export const performPlayerMovement = async ({
     ? new Date(existing.last_located_at).getTime() / 1000
     : Date.now() / 1000;
 
+  // Detect if the player is now inside a burg (within 5px = very close)
+  const BURG_ENTRY_RADIUS = 5;
+  const { rows: burgProximity } = await client.query(
+    `SELECT b.id AS burg_id
+       FROM public.maps_burgs b
+       JOIN public.campaigns c ON c.world_map_id = b.world_id
+      WHERE c.id = $1
+        AND ST_DWithin(b.geom, ST_SetSRID(ST_MakePoint($2, $3), 0), $4)
+      ORDER BY ST_Distance(b.geom, ST_SetSRID(ST_MakePoint($2, $3), 0))
+      LIMIT 1`,
+    [campaignId, snappedTarget.x, snappedTarget.y, BURG_ENTRY_RADIUS],
+  );
+
+  const newBurgId = burgProximity[0]?.burg_id ?? null;
+
   await client.query(
     `UPDATE public.campaign_players
         SET loc_current = ST_SetSRID(ST_MakePoint($1, $2), 0),
+            inside_burg_id = $5,
+            current_map_level = CASE WHEN $5 IS NOT NULL THEN 'settlement' ELSE 'world' END,
             last_located_at = NOW()
       WHERE campaign_id = $3
         AND id = $4`,
-    [snappedTarget.x, snappedTarget.y, campaignId, playerId],
+    [snappedTarget.x, snappedTarget.y, campaignId, playerId, newBurgId],
   );
 
   const updateResult = await client.query(

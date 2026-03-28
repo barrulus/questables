@@ -16,6 +16,7 @@ import {
   getUnreadCounts,
   markChannelRead,
 } from '../services/chat/service.js';
+import { shouldInterceptAsAction, interceptChatAction } from '../services/chat/action-interceptor.js';
 import { getClient } from '../db/pool.js';
 
 const router = Router();
@@ -51,6 +52,23 @@ const validateChannelAuth = async (req, res, next) => {
     }
     if (channelTargetUserId === userId) {
       return res.status(400).json({ error: 'Cannot send a private message to yourself' });
+    }
+  }
+
+  if (channelType === 'director_whisper') {
+    // Only the Campaign Director (DM) may send director whispers — these are
+    // private instructions to the LLM that players never see.
+    const client = await getClient({ label: 'chat-director-auth' });
+    try {
+      const { rows } = await client.query(
+        'SELECT dm_user_id FROM campaigns WHERE id = $1',
+        [campaignId],
+      );
+      if (rows.length === 0 || rows[0].dm_user_id !== userId) {
+        return res.status(403).json({ error: 'Only the Campaign Director may send director whispers' });
+      }
+    } finally {
+      client.release();
     }
   }
 
@@ -135,6 +153,37 @@ router.post('/api/campaigns/:campaignId/messages', requireAuth, requireCampaignP
     });
 
     res.json({ message });
+
+    // ── Async action interception ──────────────────────────────────────
+    // If this is a party-channel text message, check if it should be
+    // processed as a game action (active session, player's turn, etc.)
+    const effectiveChannelType = channel_type ?? 'party';
+    if (effectiveChannelType === 'party' && (!type || type === 'text')) {
+      const contextualService = req.app?.locals?.contextualLLMService;
+      const wsServer = req.app?.locals?.wsServer;
+
+      if (contextualService) {
+        // Fire-and-forget — don't block the chat response
+        shouldInterceptAsAction({ campaignId, userId: senderId })
+          .then(({ shouldIntercept, session, gameState, characterId: charId }) => {
+            if (shouldIntercept) {
+              return interceptChatAction({
+                campaignId,
+                sessionId: session.id,
+                userId: senderId,
+                characterId: charId,
+                chatMessage: sanitizedContent,
+                gameState,
+                contextualService,
+                wsServer,
+              });
+            }
+          })
+          .catch((err) => {
+            logError('Action interception failed', { error: err.message, campaignId });
+          });
+      }
+    }
   } catch (error) {
     logError('[Chat] Send message error:', error);
     res.status(500).json({ error: 'Failed to send message' });

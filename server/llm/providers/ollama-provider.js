@@ -115,6 +115,13 @@ export class OllamaProvider extends EnhancedLLMProvider {
     return this.#generate(NARRATIVE_TYPES.SHOP_AUTO_STOCK, options);
   }
 
+  /**
+   * Generic generation for any narrative type not covered by a dedicated method.
+   */
+  async generate(type, options) {
+    return this.#generate(type, options);
+  }
+
   async #generate(type, options = {}) {
     this.assertPrompt(options);
 
@@ -136,9 +143,10 @@ export class OllamaProvider extends EnhancedLLMProvider {
       ...options.extra,
     };
 
-    // Inject structured output schema when provided
-    if (options.schema) {
-      generationOptions.format = options.schema;
+    // Inject structured output schema when provided (check both top-level and nested in parameters)
+    const schema = options.schema ?? options.parameters?.schema ?? null;
+    if (schema) {
+      generationOptions.format = schema;
     }
 
     // Clean undefined values to avoid API complaints

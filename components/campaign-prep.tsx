@@ -13,7 +13,9 @@ import { Skeleton } from "./ui/skeleton";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "./ui/select";
 import { CampaignPrepMap, type CampaignPrepMapProps, type MapContextDetails, type MapFeatureDetails } from "./campaign-prep-map";
 import { ObjectivesPanel } from "./objectives-panel";
+import { WorldLorePanel } from "./world-lore-panel";
 import SessionManager from "./session-manager";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "./ui/tabs";
 import type { Campaign } from "./campaign-shared";
 import {
   listCampaignSpawns,
@@ -1010,15 +1012,30 @@ export function CampaignPrep({
       </div>
 
       <div className="flex h-full flex-col overflow-y-auto">
-        <ObjectivesPanel
-          campaign={campaign}
-          canEdit={isCampaignDm}
-          worldMap={worldMap}
-          worldMapLoading={worldMapLoading}
-          worldMapError={worldMapError}
-          regions={regions}
-          refreshKey={objectivesRefreshKey}
-        />
+        <Tabs defaultValue="objectives" className="flex flex-col h-full">
+          <TabsList className="mx-4 mt-2 grid w-auto grid-cols-2">
+            <TabsTrigger value="objectives">Objectives</TabsTrigger>
+            <TabsTrigger value="world-lore">World Lore</TabsTrigger>
+          </TabsList>
+          <TabsContent value="objectives" className="flex-1 overflow-y-auto mt-0">
+            <ObjectivesPanel
+              campaign={campaign}
+              canEdit={isCampaignDm}
+              worldMap={worldMap}
+              worldMapLoading={worldMapLoading}
+              worldMapError={worldMapError}
+              regions={regions}
+              refreshKey={objectivesRefreshKey}
+            />
+          </TabsContent>
+          <TabsContent value="world-lore" className="flex-1 overflow-y-auto mt-0 px-4">
+            {campaignId ? (
+              <WorldLorePanel campaignId={campaignId} canEdit={isCampaignDm} />
+            ) : (
+              <p className="text-sm text-muted-foreground p-4">Select a campaign to manage world lore.</p>
+            )}
+          </TabsContent>
+        </Tabs>
       </div>
     </div>
   );

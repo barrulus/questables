@@ -7,6 +7,7 @@ import {
   deleteProvider,
   setDefaultProvider,
   listAvailableModels,
+  ensureProviderInDB,
 } from '../services/admin/llm-providers.js';
 
 const router = Router();
@@ -29,6 +30,7 @@ router.post('/providers', async (req, res) => {
 
 router.patch('/providers/:name', async (req, res) => {
   try {
+    await ensureProviderInDB(req.params.name, req.app?.locals?.llmProviderConfigs);
     const provider = await updateProvider(req.params.name, req.body ?? {});
     logInfo('LLM provider updated', { name: req.params.name, userId: req.user.id });
     res.json(provider);
@@ -43,6 +45,7 @@ router.patch('/providers/:name', async (req, res) => {
 
 router.delete('/providers/:name', async (req, res) => {
   try {
+    await ensureProviderInDB(req.params.name, req.app?.locals?.llmProviderConfigs);
     const deleted = await deleteProvider(req.params.name);
     logInfo('LLM provider deleted', { name: req.params.name, userId: req.user.id });
     res.json({ deleted: true, name: deleted.name });
@@ -57,6 +60,7 @@ router.delete('/providers/:name', async (req, res) => {
 
 router.post('/providers/:name/default', async (req, res) => {
   try {
+    await ensureProviderInDB(req.params.name, req.app?.locals?.llmProviderConfigs);
     const provider = await setDefaultProvider(req.params.name);
     logInfo('LLM default provider set', { name: req.params.name, userId: req.user.id });
     res.json(provider);

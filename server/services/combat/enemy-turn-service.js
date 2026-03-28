@@ -10,11 +10,13 @@
 
 import { logInfo, logError } from '../../utils/logger.js';
 import { NARRATIVE_TYPES } from '../../llm/narrative-types.js';
+import DM_RESPONSE_SCHEMA from '../../llm/schemas/dm-response-schema.js';
 import { buildEnemyTurnPrompt } from '../../llm/context/action-prompt-builder.js';
 import { applyMechanicalOutcome } from '../dm-action/service.js';
 import { endTurn } from '../game-state/service.js';
 import { getAllLiveStates } from '../live-state/service.js';
 import { getClient } from '../../db/pool.js';
+import { postNarrationToChat } from '../chat/dm-narrator.js';
 
 /**
  * Execute an enemy's combat turn via LLM.
@@ -80,6 +82,7 @@ export const executeEnemyTurn = async (contextualService, _pool, {
         type: NARRATIVE_TYPES.ENEMY_COMBAT_TURN,
         metadata: { enemyName: enemy.name, participantId },
         request: { extraSections: prompt },
+        parameters: { schema: DM_RESPONSE_SCHEMA },
       });
 
       dmResponse = result.parsed;
@@ -112,17 +115,19 @@ export const executeEnemyTurn = async (contextualService, _pool, {
 
     await client.query('COMMIT');
 
-    // Broadcast narration
-    if (wsServer) {
-      if (dmResponse.narration) {
-        wsServer.emitDmNarration(campaignId, {
-          actionId: null,
-          narration: dmResponse.narration,
-          characterId: enemy.participant_id,
-          actionType: 'enemy_action',
-        });
-      }
+    // Persist narration to Adventure chat channel
+    if (dmResponse.narration) {
+      postNarrationToChat({
+        campaignId,
+        content: dmResponse.narration,
+        messageType: 'action_result',
+        sessionId,
+        wsServer,
+      }).catch((err) => logError('Failed to post enemy turn narration to chat', { error: err.message }));
+    }
 
+    // Broadcast legacy combat events
+    if (wsServer) {
       wsServer.emitEnemyTurnCompleted(campaignId, {
         sessionId,
         participantId,

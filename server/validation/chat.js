@@ -6,12 +6,12 @@ export const validateChatMessage = [
     .withMessage('Message must be 1-2000 characters'),
   body('message_type')
     .optional()
-    .isIn(['text', 'dice_roll', 'system', 'ooc'])
+    .isIn(['text', 'dice_roll', 'system', 'ooc', 'narration', 'action_result', 'roll_request', 'system_event', 'world_turn'])
     .withMessage('Invalid message type'),
   body('channel_type')
     .optional()
-    .isIn(['party', 'private', 'dm_whisper', 'dm_broadcast'])
-    .withMessage('channel_type must be party, private, dm_whisper, or dm_broadcast'),
+    .isIn(['party', 'private', 'dm_whisper', 'dm_broadcast', 'director_whisper'])
+    .withMessage('channel_type must be party, private, dm_whisper, dm_broadcast, or director_whisper'),
   body('channel_target_user_id')
     .optional({ nullable: true })
     .isUUID()

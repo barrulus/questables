@@ -374,10 +374,16 @@ export class EnhancedLLMService {
           result = await provider.generateObjectiveRumours({ ...options, metadata, cacheKey, requestId });
           break;
         default:
-          throw new LLMServiceError(`Unsupported narrative type ${type}`, {
-            provider: provider?.name,
-            type,
-          });
+          // Generic fallback for types without a dedicated provider method
+          // (action resolution, combat turns, social dialogue, chat action parsing, etc.)
+          if (typeof provider.generate === 'function') {
+            result = await provider.generate(type, { ...options, metadata, cacheKey, requestId });
+          } else {
+            throw new LLMServiceError(`Unsupported narrative type ${type}`, {
+              provider: provider?.name,
+              type,
+            });
+          }
       }
 
       const durationMs = now() - startedAt;

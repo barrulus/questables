@@ -382,3 +382,51 @@ Respond with a narration of the enemy's action and any mechanical outcomes (dama
 
   return sections.join('\n\n');
 }
+
+// ── Chat Action Intent Parsing ──────────────────────────────────────────────
+
+export const CHAT_ACTION_PARSE_SYSTEM_PROMPT = `You are a D&D 5e game action classifier. A player has typed a natural language message during their turn. Your job is to classify it into a structured game action.
+
+RULES:
+- Respond ONLY with valid JSON matching the required schema.
+- Determine the most appropriate actionType from the available options.
+- If the message is clearly out-of-character chat, a question about rules, or checking inventory/stats, set isFreeAction to true.
+- If the message describes a game action (moving, attacking, searching, talking, casting), set isFreeAction to false.
+- The "target" field should name the object, NPC, or location the action is directed at.
+- The "narrationHint" field should be a brief suggestion for the DM about how to resolve this.
+- If unclear, default to "custom" actionType and let the DM resolve creatively.`;
+
+/**
+ * Build the user prompt for classifying a natural language chat message into an action.
+ */
+export function buildChatActionParsePrompt({
+  characterName,
+  characterClass,
+  characterLevel,
+  phase,
+  chatMessage,
+  visibleNpcs,
+  recentNarrations,
+}) {
+  const sections = [
+    `## Player Character\n${characterName} (Level ${characterLevel} ${characterClass})`,
+    `## Current Phase\n${phase}`,
+    `## Player's Message\n"${chatMessage}"`,
+  ];
+
+  if (visibleNpcs?.length > 0) {
+    const npcList = visibleNpcs.map((n) => `- ${n.name} (${n.occupation ?? 'unknown role'})`).join('\n');
+    sections.push(`## Nearby NPCs\n${npcList}`);
+  }
+
+  if (recentNarrations?.length > 0) {
+    sections.push(`## Recent Events\n${recentNarrations.slice(-3).join('\n')}`);
+  }
+
+  sections.push(`## Instructions
+Classify the player's message into a game action. Consider the current phase and context.
+Valid action types: move, interact, search, use_item, cast_spell, talk_to_npc, pass, free_action, attack, dash, dodge, disengage, help, hide, ready, custom.
+If this is just chat/OOC/a question, set isFreeAction=true and actionType="free_action".`);
+
+  return sections.join('\n\n');
+}

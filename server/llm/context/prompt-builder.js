@@ -117,7 +117,135 @@ const buildContextSummary = (context, campaignLLMSettings) => {
   summarySections.push(`Encounters:\n${summarizeEncounters(context.encounters)}`);
   summarySections.push(`Recent chat messages:\n${summarizeChat(context.chat?.recentMessages, campaignLLMSettings?.chat_history_depth || 5)}`);
 
+  if (context.geographic) {
+    summarySections.push(`Geographic context:\n${summarizeGeography(context.geographic)}`);
+  }
+
+  if (context.worldLore?.length > 0) {
+    const loreSections = context.worldLore.map((l) => {
+      const header = l.subsection
+        ? `### ${l.section} — ${l.subsection}`
+        : `### ${l.section}`;
+      return `${header}\n${l.content}`;
+    });
+    summarySections.push(`## World Lore\n${loreSections.join('\n\n')}`);
+  }
+
+  if (context.directorWhispers?.length > 0) {
+    const whispers = context.directorWhispers.map((w) => `- ${w}`).join('\n');
+    summarySections.push(
+      `## DIRECTOR INSTRUCTIONS (HIGH PRIORITY — follow these closely)\n${whispers}`
+    );
+  }
+
   return summarySections.join('\n\n');
+};
+
+const summarizeGeography = (geo) => {
+  if (!geo) return 'No geographic data available.';
+  const lines = [];
+
+  // Settlement level — player is inside a burg
+  if (geo.isInsideSettlement && geo.settlement) {
+    const s = geo.settlement;
+    const features = [
+      s.capital && 'capital city',
+      s.port && 'port',
+      s.citadel && 'citadel',
+      s.walls && 'walled',
+      s.temple && 'temple',
+      s.plaza && 'market plaza',
+      s.shanty && 'shanty districts',
+    ].filter(Boolean);
+    lines.push(`INSIDE SETTLEMENT: ${s.name} (population ${s.population?.toLocaleString() ?? 'unknown'})`);
+    if (features.length) lines.push(`Features: ${features.join(', ')}`);
+    if (s.statefull) lines.push(`State: ${s.statefull}`);
+    if (s.provincefull) lines.push(`Province: ${s.provincefull}`);
+    if (s.culture) lines.push(`Culture: ${s.culture}`);
+    if (s.religion) lines.push(`Religion: ${s.religion}`);
+    if (s.elevation) lines.push(`Elevation: ${s.elevation}m`);
+
+    if (geo.settlementNpcs?.length > 0) {
+      const npcLines = geo.settlementNpcs.map((n) =>
+        `- ${n.name} (${n.race}, ${n.occupation ?? 'unknown'}) — ${n.personality ?? ''}`
+      );
+      lines.push(`\nKnown NPCs in ${s.name}:\n${npcLines.join('\n')}`);
+    }
+
+    if (geo.settlementShops?.length > 0) {
+      const shopLines = geo.settlementShops.map((sh) =>
+        `- ${sh.name} (${sh.shop_type})${sh.description ? `: ${sh.description}` : ''}`
+      );
+      lines.push(`\nShops:\n${shopLines.join('\n')}`);
+    }
+
+    return lines.join('\n');
+  }
+
+  // World level
+  if (geo.terrain) {
+    const t = geo.terrain;
+    const terrainParts = [];
+    if (t.type) terrainParts.push(t.type);
+    if (t.height) terrainParts.push(`${t.height}m elevation`);
+    if (terrainParts.length) lines.push(`Terrain: ${terrainParts.join(', ')}`);
+    if (t.state) lines.push(`State territory: ${t.state}`);
+    if (t.culture) lines.push(`Culture: ${t.culture}`);
+    if (t.religion) lines.push(`Religion: ${t.religion}`);
+  }
+
+  if (geo.nearbyBurgs?.length > 0) {
+    const burgLines = geo.nearbyBurgs.map((b) => {
+      const features = [
+        b.capital && 'capital',
+        b.port && 'port',
+        b.walls && 'walled',
+        b.citadel && 'citadel',
+        b.temple && 'temple',
+        b.plaza && 'plaza',
+      ].filter(Boolean);
+      const dist = b.distanceKm != null ? ` — ${b.distanceKm}km away` : '';
+      const feat = features.length ? ` (${features.join(', ')})` : '';
+      return `- ${b.name} (pop. ${b.population?.toLocaleString() ?? '?'})${feat}${dist}`;
+    });
+    lines.push(`Nearby settlements:\n${burgLines.join('\n')}`);
+  }
+
+  if (geo.nearbyRoutes?.length > 0) {
+    const routeLines = geo.nearbyRoutes
+      .filter((r) => r.name)
+      .map((r) => `- ${r.name} (${r.type ?? 'road'})`);
+    if (routeLines.length) lines.push(`Nearby routes:\n${routeLines.join('\n')}`);
+  }
+
+  if (geo.nearbyRivers?.length > 0) {
+    const riverLines = geo.nearbyRivers
+      .filter((r) => r.name)
+      .map((r) => {
+        const width = r.width ? `, ~${Math.round(r.width)}m wide` : '';
+        return `- ${r.name} (${r.type ?? 'river'}${width})`;
+      });
+    if (riverLines.length) lines.push(`Nearby rivers:\n${riverLines.join('\n')}`);
+  }
+
+  if (geo.nearbyMarkers?.length > 0) {
+    const markerLines = geo.nearbyMarkers.map((m) => {
+      const dist = m.distanceKm != null ? ` — ${m.distanceKm}km away` : '';
+      const note = m.note ? `: ${m.note}` : '';
+      return `- ${m.type ?? 'unknown'}${note}${dist}`;
+    });
+    lines.push(`Points of interest:\n${markerLines.join('\n')}`);
+  }
+
+  if (geo.campaignRegions?.length > 0) {
+    const regionLines = geo.campaignRegions.map((r) => {
+      const desc = r.description ? ` — "${r.description}"` : '';
+      return `- [${r.category}] ${r.name}${desc}`;
+    });
+    lines.push(`Campaign regions:\n${regionLines.join('\n')}`);
+  }
+
+  return lines.length > 0 ? lines.join('\n') : 'No notable geographic features nearby.';
 };
 
 const assertContext = (context) => {

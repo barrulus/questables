@@ -1,8 +1,8 @@
 import { Badge } from "./ui/badge";
 import { Button } from "./ui/button";
-import { Users, MessageSquare, Crown, Lock } from "lucide-react";
+import { Users, MessageSquare, Lock, Scroll, Megaphone } from "lucide-react";
 
-export type ChannelType = "party" | "dm_whisper" | "dm_broadcast" | "private";
+export type ChannelType = "party" | "dm_whisper" | "dm_broadcast" | "private" | "director_whisper";
 
 export interface ChannelTab {
   channelType: ChannelType;
@@ -20,8 +20,9 @@ interface ChatChannelTabsProps {
 const CHANNEL_ICONS: Record<ChannelType, typeof Users> = {
   party: Users,
   dm_whisper: MessageSquare,
-  dm_broadcast: Crown,
+  dm_broadcast: Scroll,
   private: Lock,
+  director_whisper: Megaphone,
 };
 
 export function ChatChannelTabs({ tabs, activeChannel, onChannelChange }: ChatChannelTabsProps) {
@@ -60,15 +61,18 @@ export function ChatChannelTabs({ tabs, activeChannel, onChannelChange }: ChatCh
 
 /**
  * Build the default channel tabs for a user.
+ * The Adventure tab (dm_broadcast) is visible to everyone — it's the primary game narrative channel.
+ * The CD (Campaign Director) can write to it; players see it read-only.
  */
 export function buildDefaultTabs(isDm: boolean): ChannelTab[] {
   const tabs: ChannelTab[] = [
+    { channelType: "dm_broadcast", label: "Adventure" },
     { channelType: "party", label: "Party" },
     { channelType: "dm_whisper", label: "DM Whisper" },
   ];
 
   if (isDm) {
-    tabs.push({ channelType: "dm_broadcast", label: "DM Narration" });
+    tabs.push({ channelType: "director_whisper", label: "Director" });
   }
 
   return tabs;

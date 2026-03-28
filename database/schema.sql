@@ -302,6 +302,8 @@ CREATE TABLE IF NOT EXISTS public.campaign_players (
     role TEXT NOT NULL DEFAULT 'player' CHECK (role IN ('player', 'co-dm')),
     visibility_state TEXT NOT NULL DEFAULT 'visible' CHECK (visibility_state IN ('visible', 'stealthed', 'hidden')),
     loc_current geometry(Point, 0),
+    inside_burg_id UUID REFERENCES public.maps_burgs(id) ON DELETE SET NULL,
+    current_map_level TEXT NOT NULL DEFAULT 'world' CHECK (current_map_level IN ('world', 'settlement')),
     last_located_at TIMESTAMP WITH TIME ZONE DEFAULT NOW() NOT NULL,
     CONSTRAINT campaign_players_loc_current_srid CHECK (loc_current IS NULL OR ST_SRID(loc_current) = 0),
     UNIQUE(campaign_id, user_id)
@@ -434,6 +436,26 @@ CREATE INDEX IF NOT EXISTS idx_campaign_map_regions_region_gix ON public.campaig
 DROP TRIGGER IF EXISTS _touch_campaign_map_regions ON public.campaign_map_regions;
 CREATE TRIGGER _touch_campaign_map_regions
 BEFORE UPDATE ON public.campaign_map_regions
+FOR EACH ROW EXECUTE FUNCTION public.tg_touch_updated_at();
+
+-- campaign world lore (collaborative CD + LLM world-building)
+CREATE TABLE IF NOT EXISTS public.campaign_world_lore (
+    id UUID DEFAULT uuid_generate_v4() PRIMARY KEY,
+    campaign_id UUID NOT NULL REFERENCES public.campaigns(id) ON DELETE CASCADE,
+    section TEXT NOT NULL CHECK (section IN ('geopolitical', 'history', 'cultures', 'religions', 'regions', 'factions', 'custom')),
+    subsection TEXT,               -- state name, culture name, faction name, etc.
+    content TEXT NOT NULL,
+    cd_direction TEXT,             -- the CD's prompt/direction that generated this content
+    generated_by TEXT NOT NULL DEFAULT 'manual' CHECK (generated_by IN ('llm', 'manual')),
+    version INT NOT NULL DEFAULT 1,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW() NOT NULL,
+    updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW() NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_campaign_world_lore_campaign_id ON public.campaign_world_lore(campaign_id);
+CREATE INDEX IF NOT EXISTS idx_campaign_world_lore_section ON public.campaign_world_lore(campaign_id, section);
+DROP TRIGGER IF EXISTS _touch_campaign_world_lore ON public.campaign_world_lore;
+CREATE TRIGGER _touch_campaign_world_lore
+BEFORE UPDATE ON public.campaign_world_lore
 FOR EACH ROW EXECUTE FUNCTION public.tg_touch_updated_at();
 
 -- campaign objectives tree (DM Toolkit)
@@ -760,6 +782,8 @@ CREATE TABLE IF NOT EXISTS public.npcs (
     world_position geometry(Point, 0),
     CONSTRAINT npc_world_position_srid CHECK (world_position IS NULL OR ST_SRID(world_position) = 0),
     voice_config JSONB DEFAULT '{}'::jsonb,
+    auto_generated BOOLEAN DEFAULT false,
+    linked_burg_id UUID REFERENCES public.maps_burgs(id) ON DELETE SET NULL,
     created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW() NOT NULL,
     updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW() NOT NULL
 );
@@ -1005,7 +1029,7 @@ CREATE TABLE IF NOT EXISTS public.chat_messages (
     campaign_id UUID REFERENCES public.campaigns(id) ON DELETE CASCADE,
     session_id UUID REFERENCES public.sessions(id) ON DELETE SET NULL,
     content TEXT NOT NULL,
-    message_type TEXT NOT NULL DEFAULT 'text' CHECK (message_type IN ('text', 'dice_roll', 'system', 'ooc')),
+    message_type TEXT NOT NULL DEFAULT 'text' CHECK (message_type IN ('text', 'dice_roll', 'system', 'ooc', 'narration', 'action_result', 'roll_request', 'system_event', 'world_turn')),
     sender_id UUID REFERENCES public.user_profiles(id) ON DELETE CASCADE NOT NULL,
     sender_name TEXT NOT NULL,
     character_id UUID REFERENCES public.characters(id) ON DELETE SET NULL,
@@ -1014,7 +1038,7 @@ CREATE TABLE IF NOT EXISTS public.chat_messages (
     recipients JSONB,
     reactions JSONB DEFAULT '[]'::jsonb,
     channel_type TEXT NOT NULL DEFAULT 'party'
-      CHECK (channel_type IN ('party', 'private', 'dm_whisper', 'dm_broadcast')),
+      CHECK (channel_type IN ('party', 'private', 'dm_whisper', 'dm_broadcast', 'director_whisper')),
     channel_target_user_id UUID REFERENCES public.user_profiles(id),
     created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW() NOT NULL
 );

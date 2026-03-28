@@ -2,12 +2,13 @@
 import jwt from 'jsonwebtoken';
 import bcrypt from 'bcrypt';
 import { Pool } from 'pg';
+import { logError } from './utils/logger.js';
 
 // JWT secret key - must be set via environment variable
 const JWT_SECRET = process.env.JWT_SECRET;
 if (!JWT_SECRET) {
   const message = 'FATAL: JWT_SECRET environment variable is not set. Refusing to start with an insecure default.';
-  console.error(message);
+  logError(message);
   throw new Error(message);
 }
 const JWT_EXPIRES_IN = process.env.JWT_EXPIRES_IN || '24h';
@@ -27,7 +28,7 @@ export const hashPassword = async (password) => {
     const hashedPassword = await bcrypt.hash(password, saltRounds);
     return hashedPassword;
   } catch (error) {
-    console.error('Error hashing password:', error);
+    logError('Error hashing password', error);
     throw new Error('Password hashing failed');
   }
 };
@@ -37,7 +38,7 @@ export const comparePassword = async (password, hashedPassword) => {
     const isMatch = await bcrypt.compare(password, hashedPassword);
     return isMatch;
   } catch (error) {
-    console.error('Error comparing password:', error);
+    logError('Error comparing password', error);
     throw new Error('Password comparison failed');
   }
 };
@@ -52,7 +53,7 @@ export const generateToken = (payload) => {
     });
     return token;
   } catch (error) {
-    console.error('Error generating JWT token:', error);
+    logError('Error generating JWT token', error);
     throw new Error('Token generation failed');
   }
 };
@@ -70,7 +71,7 @@ export const verifyToken = (token) => {
     } else if (error.name === 'JsonWebTokenError') {
       throw new Error('Invalid token');
     } else {
-      console.error('Error verifying JWT token:', error);
+      logError('Error verifying JWT token', error);
       throw new Error('Token verification failed');
     }
   }
@@ -147,7 +148,7 @@ export const requireAuth = async (req, res, next) => {
     }
     
   } catch (error) {
-    console.error('Authentication error:', error);
+    logError('Authentication error', error);
     res.status(500).json({ 
       error: 'Authentication system error',
       message: 'Please try again'
@@ -198,7 +199,7 @@ export const requireCampaignOwnership = async (req, res, next) => {
     next();
     
   } catch (error) {
-    console.error('Campaign ownership check error:', error);
+    logError('Campaign ownership check error', error);
     res.status(500).json({ 
       error: 'Authorization system error',
       message: 'Please try again'
@@ -262,7 +263,7 @@ export const requireCampaignParticipation = async (req, res, next) => {
     next();
     
   } catch (error) {
-    console.error('Campaign participation check error:', error);
+    logError('Campaign participation check error', error);
     res.status(500).json({ 
       error: 'Authorization system error',
       message: 'Please try again'
@@ -313,7 +314,7 @@ export const requireCharacterOwnership = async (req, res, next) => {
     next();
     
   } catch (error) {
-    console.error('Character ownership check error:', error);
+    logError('Character ownership check error', error);
     res.status(500).json({ 
       error: 'Authorization system error',
       message: 'Please try again'
@@ -343,7 +344,7 @@ export const requireRole = (allowedRoles) => {
       next();
       
     } catch (error) {
-      console.error('Role check error:', error);
+      logError('Role check error', error);
       res.status(500).json({ 
         error: 'Authorization system error',
         message: 'Please try again'

@@ -30,7 +30,7 @@ interface ChatMessage {
   id: string;
   campaign_id: string;
   content: string;
-  message_type: "text" | "dice_roll" | "system" | "ooc";
+  message_type: "text" | "dice_roll" | "system" | "ooc" | "narration" | "action_result" | "roll_request" | "system_event" | "world_turn";
   sender_id: string;
   sender_name: string;
   username: string;
@@ -125,7 +125,7 @@ function normalizeChatMessage(raw: ApiChatMessage): ChatMessage {
   };
 }
 
-const DEFAULT_CHANNEL: ChannelTab = { channelType: "party", label: "Party" };
+const DEFAULT_CHANNEL: ChannelTab = { channelType: "dm_broadcast", label: "Adventure" };
 
 export function ChatSystem({ campaignId, campaignName, campaignRole, dmUserId }: ChatSystemProps) {
   const { user } = useUser();
@@ -237,6 +237,9 @@ export function ChatSystem({ campaignId, campaignName, campaignRole, dmUserId }:
       }
       if (activeChannel.channelType === "dm_whisper") {
         return msgChannel === "dm_whisper";
+      }
+      if (activeChannel.channelType === "director_whisper") {
+        return msgChannel === "director_whisper";
       }
       if (activeChannel.channelType === "private") {
         return (
@@ -559,6 +562,21 @@ export function ChatSystem({ campaignId, campaignName, campaignRole, dmUserId }:
   }, []);
 
   const getMessageStyling = useCallback((message: ChatMessage) => {
+    // LLM narration message types — styled as parchment/adventure text
+    const msgType = message.message_type;
+    if (msgType === "narration" || msgType === "world_turn") {
+      return "bg-amber-50 border-l-4 border-amber-400 text-amber-950 italic px-3 py-2";
+    }
+    if (msgType === "action_result") {
+      return "bg-amber-50/80 border-l-4 border-orange-400 text-amber-900 px-3 py-2";
+    }
+    if (msgType === "roll_request") {
+      return "bg-blue-50 border-l-4 border-blue-400 text-blue-900 px-3 py-2 font-medium";
+    }
+    if (msgType === "system_event") {
+      return "bg-slate-100 border border-slate-300 text-slate-700 text-center text-sm px-3 py-1";
+    }
+
     // Channel-specific visual styles
     const channelType = message.channel_type ?? "party";
     if (channelType === "dm_broadcast") {
@@ -567,18 +585,21 @@ export function ChatSystem({ campaignId, campaignName, campaignRole, dmUserId }:
     if (channelType === "dm_whisper") {
       return "bg-indigo-50 border border-indigo-200 text-indigo-900";
     }
+    if (channelType === "director_whisper") {
+      return "bg-violet-50 border-l-4 border-violet-400 text-violet-900 text-sm";
+    }
     if (channelType === "private") {
       return "bg-emerald-50 border border-emerald-200 text-emerald-900";
     }
 
     // Default message type styles
-    if (message.message_type === "system") {
+    if (msgType === "system") {
       return "bg-purple-50 border border-purple-200 text-purple-800";
     }
-    if (message.message_type === "dice_roll") {
+    if (msgType === "dice_roll") {
       return "bg-blue-50 border border-blue-200 text-blue-800";
     }
-    if (message.message_type === "ooc") {
+    if (msgType === "ooc") {
       return "bg-gray-50 border border-gray-200 text-gray-700";
     }
     return "";
@@ -607,17 +628,19 @@ export function ChatSystem({ campaignId, campaignName, campaignRole, dmUserId }:
   const inputPlaceholder = useMemo(() => {
     switch (activeChannel.channelType) {
       case "dm_broadcast":
-        return "Narrate to all players...";
+        return isDm ? "Narrate to all players..." : "The DM narrates here — use Party chat to act";
       case "dm_whisper":
-        return "Whisper to/from the DM...";
+        return "Whisper to the DM...";
+      case "director_whisper":
+        return "Steer the DM... (only the LLM sees this)";
       case "private":
         return "Private message...";
       default:
-        return "Type your message...";
+        return "What do you do?";
     }
   }, [activeChannel.channelType]);
 
-  // Disable input for dm_broadcast if not DM
+  // Disable input for dm_broadcast if not CD; director_whisper is CD-only (tab only shown to CD)
   const inputDisabled = sending || (activeChannel.channelType === "dm_broadcast" && !isDm);
 
   if (!user) {

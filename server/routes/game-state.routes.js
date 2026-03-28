@@ -20,6 +20,8 @@ import { getAllLiveStates } from '../services/live-state/service.js';
 import { resolveDeathSave } from '../services/combat/death-saves.js';
 import { checkLevelUps } from '../services/levelling/service.js';
 import { logError } from '../utils/logger.js';
+import { postNarrationToChat } from '../services/chat/dm-narrator.js';
+import { narrateWorldTurn } from '../services/narration/proactive-narrator.js';
 
 const router = Router();
 
@@ -234,6 +236,37 @@ router.post(
           gameState: result.newState,
         });
 
+        // Auto-fire LLM world turn narration when round completes
+        if (result.newState.worldTurnPending) {
+          const contextualService = req.app?.locals?.contextualLLMService;
+          if (contextualService) {
+            // Fire-and-forget: narrate, then execute the world turn to advance state
+            narrateWorldTurn({
+              campaignId,
+              sessionId,
+              contextualService,
+              wsServer,
+            }).then(async () => {
+              // After narration, execute the mechanical world turn (resets worldTurnPending, advances to first player)
+              const wtClient = await import('../../db/pool.js').then((m) => m.getClient({ label: 'auto-world-turn' }));
+              try {
+                await wtClient.query('BEGIN');
+                const wtResult = await executeDmWorldTurn(wtClient, sessionId, { actorId: req.user.id });
+                await wtClient.query('COMMIT');
+                wsServer.emitWorldTurnCompleted(campaignId, {
+                  sessionId,
+                  gameState: wtResult.newState,
+                });
+              } catch (wtErr) {
+                await wtClient.query('ROLLBACK').catch(() => {});
+                logError('Auto world turn execution failed', wtErr, { campaignId });
+              } finally {
+                wtClient.release();
+              }
+            }).catch((err) => logError('Auto world turn narration failed', err, { campaignId }));
+          }
+        }
+
         // If next turn is an NPC, auto-fire enemy turn processing
         const nextPlayer = result.newState.activePlayerId;
         if (typeof nextPlayer === 'string' && nextPlayer.startsWith('npc:')) {
@@ -323,6 +356,10 @@ router.post(
           gameState: result.newState,
         });
       }
+
+      // TODO (Phase 3): LLM-powered world turn narration — invoke LLM to
+      // narrate environmental changes, NPC reactions, time passage, then
+      // post to chat via postNarrationToChat({ campaignId, content, messageType: 'world_turn', sessionId, wsServer })
 
       return res.json({ sessionId, gameState: result.newState });
     } catch (error) {

@@ -51,6 +51,41 @@ export const createProvider = async ({ name, adapter, host, model, apiKey, timeo
   return rows[0];
 };
 
+/**
+ * Ensures a provider row exists in the DB. If the provider was bootstrapped
+ * from environment variables, it won't have a DB row. This seeds one from
+ * the in-memory config so that update/delete/setDefault operations work.
+ */
+export const ensureProviderInDB = async (name, inMemoryConfigs) => {
+  const { rows } = await query(
+    `SELECT id FROM public.llm_providers WHERE name = $1`,
+    [name],
+    { label: 'admin.llm_providers.ensure_exists' },
+  );
+
+  if (rows.length > 0) return;
+
+  const config = (inMemoryConfigs || []).find((c) => c.name === name);
+  if (!config) return;
+
+  await query(
+    `INSERT INTO public.llm_providers (name, adapter, host, model, timeout_ms, options, enabled, default_provider)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+     ON CONFLICT (name) DO NOTHING`,
+    [
+      config.name,
+      config.adapter || 'ollama',
+      config.host || null,
+      config.model || null,
+      config.timeoutMs || null,
+      config.options ? JSON.stringify(config.options) : '{}',
+      config.enabled !== false,
+      config.defaultProvider || false,
+    ],
+    { label: 'admin.llm_providers.seed_from_env' },
+  );
+};
+
 export const updateProvider = async (name, updates) => {
   const allowedFields = {
     adapter: 'adapter',

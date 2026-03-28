@@ -45,6 +45,7 @@ import {
 } from "./ui/dialog";
 import { AdminUserManagement } from "./admin-user-management";
 import { AdminModeration } from "./admin-moderation";
+import { toast } from "sonner";
 
 interface AdminDashboardProps {
   user: { id: string; username: string; email: string; roles: string[]; role?: string };
@@ -355,9 +356,13 @@ export function AdminDashboard({ user, onLogout }: AdminDashboardProps) {
         });
       }
       setProviderDialogOpen(false);
+      // Reload LLM services so the in-memory provider picks up the change
+      try { await reloadAdminLLMServices(); } catch { /* best-effort */ }
       await loadLlmProviders();
+      toast.success(editingProvider ? "Provider updated" : "Provider created");
     } catch (error) {
       console.error("Failed to save provider", error);
+      toast.error(error instanceof Error ? error.message : "Failed to save provider");
     } finally {
       setProviderSaving(false);
     }
@@ -368,8 +373,10 @@ export function AdminDashboard({ user, onLogout }: AdminDashboardProps) {
     try {
       await deleteAdminLLMProvider(name);
       await loadLlmProviders();
+      toast.success(`Provider "${name}" deleted`);
     } catch (error) {
       console.error("Failed to delete provider", error);
+      toast.error(error instanceof Error ? error.message : "Failed to delete provider");
     }
   }, [loadLlmProviders]);
 
@@ -377,8 +384,10 @@ export function AdminDashboard({ user, onLogout }: AdminDashboardProps) {
     try {
       await setAdminLLMDefaultProvider(name);
       await loadLlmProviders();
+      toast.success(`"${name}" set as default provider`);
     } catch (error) {
       console.error("Failed to set default provider", error);
+      toast.error(error instanceof Error ? error.message : "Failed to set default provider");
     }
   }, [loadLlmProviders]);
 
@@ -398,8 +407,10 @@ export function AdminDashboard({ user, onLogout }: AdminDashboardProps) {
     try {
       await reloadAdminLLMServices();
       await loadLlmProviders();
+      toast.success("LLM services reloaded");
     } catch (error) {
       console.error("Failed to reload LLM services", error);
+      toast.error(error instanceof Error ? error.message : "Failed to reload LLM services");
     }
   }, [loadLlmProviders]);
 
@@ -1024,7 +1035,13 @@ export function AdminDashboard({ user, onLogout }: AdminDashboardProps) {
           </TabsContent>
 
           <ProviderDialog open={providerDialogOpen} onOpenChange={setProviderDialogOpen}>
-            <ProviderDialogContent className="sm:max-w-lg">
+            <ProviderDialogContent className="sm:max-w-lg" onPointerDownOutside={(e) => {
+              // Prevent dialog closing when interacting with Select dropdown portals
+              const target = e.target as HTMLElement;
+              if (target?.closest?.("[data-radix-select-content]") || target?.closest?.("[role='listbox']") || target?.closest?.("[role='option']")) {
+                e.preventDefault();
+              }
+            }}>
               <ProviderDialogHeader>
                 <ProviderDialogTitle>{editingProvider ? "Edit Provider" : "Add Provider"}</ProviderDialogTitle>
                 <ProviderDialogDescription>

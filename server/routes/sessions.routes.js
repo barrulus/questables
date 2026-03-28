@@ -18,6 +18,7 @@ import { logError, logInfo } from '../utils/logger.js';
 import { incrementCounter, recordEvent } from '../utils/telemetry.js';
 import { initializeGameState } from '../services/game-state/service.js';
 import { initializeLiveStates } from '../services/live-state/service.js';
+import { narrateSessionOpening } from '../services/narration/proactive-narrator.js';
 
 const router = Router();
 
@@ -317,6 +318,23 @@ router.put(
       }
 
       await client.query('COMMIT');
+
+      // Fire-and-forget: LLM opening narration when session activates
+      if (
+        sessionRow.status === 'scheduled' &&
+        session.status === 'active'
+      ) {
+        const contextualService = req.app?.locals?.contextualLLMService;
+        const wsServer = req.app?.locals?.wsServer;
+        if (contextualService) {
+          narrateSessionOpening({
+            campaignId: sessionRow.campaign_id,
+            sessionId,
+            contextualService,
+            wsServer,
+          }).catch((err) => logError('Session opening narration failed', { error: err.message }));
+        }
+      }
 
       logInfo('Session updated', {
         telemetryEvent: 'session.updated',

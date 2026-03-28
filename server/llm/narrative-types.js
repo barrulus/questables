@@ -14,6 +14,10 @@ export const NARRATIVE_TYPES = Object.freeze({
   ENEMY_COMBAT_TURN: 'enemy_combat_turn',
   SOCIAL_DIALOGUE: 'social_dialogue',
   SHOP_AUTO_STOCK: 'shop_auto_stock',
+  CHAT_ACTION_PARSE: 'chat_action_parse',
+  SESSION_OPENING: 'session_opening',
+  AREA_DESCRIPTION: 'area_description',
+  WORLD_TURN_NARRATION: 'world_turn_narration',
 });
 
 export const SUPPORTED_TYPES = new Set(Object.values(NARRATIVE_TYPES));

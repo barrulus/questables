@@ -22,12 +22,10 @@ export const REALTIME_EVENTS = {
   turnAdvanced: 'turn-advanced',
   worldTurnCompleted: 'world-turn-completed',
   turnOrderChanged: 'turn-order-changed',
-  dmNarration: 'dm-narration',
   rollRequested: 'roll-requested',
   actionCompleted: 'action-completed',
   liveStateChanged: 'live-state-changed',
   regionTriggered: 'region-triggered',
-  worldTurnNarration: 'world-turn-narration',
   // WS4: Combat events
   enemyTurnStarted: 'enemy-turn-started',
   enemyTurnCompleted: 'enemy-turn-completed',
@@ -606,21 +604,7 @@ class WebSocketServer {
   }
 
   // ── Action Processing Events (WS3) ─────────────────────────────────────
-
-  emitDmNarration(campaignId, { actionId, narration, characterId, actionType }) {
-    const payload = {
-      actionId,
-      narration,
-      characterId: characterId ?? null,
-      actionType: actionType ?? null,
-      emittedAt: new Date().toISOString(),
-    };
-    this.broadcastToCampaign(campaignId, REALTIME_EVENTS.dmNarration, payload, {
-      category: 'action',
-      event: 'dm-narration',
-      actionId,
-    });
-  }
+  // Note: DM narration now flows through chat messages via dm-narrator.js → postNarrationToChat()
 
   emitRollRequested(campaignId, targetUserId, { actionId, requiredRolls }) {
     const payload = {
@@ -678,20 +662,6 @@ class WebSocketServer {
       event: 'region-triggered',
       regionId: region?.id ?? null,
       regionCategory: region?.category ?? null,
-    });
-  }
-
-  emitWorldTurnNarration(campaignId, { sessionId, narration, stateChanges }) {
-    const payload = {
-      sessionId,
-      narration,
-      stateChanges: stateChanges ?? null,
-      emittedAt: new Date().toISOString(),
-    };
-    this.broadcastToCampaign(campaignId, REALTIME_EVENTS.worldTurnNarration, payload, {
-      category: 'game-state',
-      event: 'world-turn-narration',
-      sessionId,
     });
   }
 

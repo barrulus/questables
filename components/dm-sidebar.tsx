@@ -1,12 +1,13 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Accordion, AccordionContent, AccordionItem, AccordionTrigger } from "./ui/accordion";
 import { toast } from "sonner";
-import { Loader2, MapPin, Sparkles, Compass, Target, Users, FileText, Swords, SkipForward, Play } from "lucide-react";
+import { Loader2, MapPin, Sparkles, Compass, Target, Users, FileText, Swords, SkipForward, Play, Megaphone, Send, RotateCcw } from "lucide-react";
 import { useGameSession } from "../contexts/GameSessionContext";
 import { useUser } from "../contexts/UserContext";
 import { useGameState, type GamePhase } from "../contexts/GameStateContext";
 import {
   fetchJson,
+  apiFetch,
   listCampaignSpawns,
   updateSessionFocus,
   updateSessionContext,
@@ -275,6 +276,12 @@ export function DMSidebar() {
   const [teleportPlayerError, setTeleportPlayerError] = useState<string | null>(null);
 
   const [worldTurnWithLLM, setWorldTurnWithLLM] = useState(false);
+
+  // Director controls state
+  const [directorWhisper, setDirectorWhisper] = useState("");
+  const [directorWhisperPending, setDirectorWhisperPending] = useState(false);
+  const [narrativeNudge, setNarrativeNudge] = useState("");
+  const [narrativeNudgePending, setNarrativeNudgePending] = useState(false);
   const [teleportNpcMode, setTeleportNpcMode] = useState<"location" | "coordinates">("location");
   const [teleportNpcId, setTeleportNpcId] = useState<string>(NONE_VALUE);
   const [teleportNpcLocationId, setTeleportNpcLocationId] = useState<string>(NONE_VALUE);
@@ -878,6 +885,80 @@ export function DMSidebar() {
     }
   }, [activeCampaignId, teleportNpcId, teleportNpcLocationId, teleportNpcMode, teleportNpcReason, teleportNpcX, teleportNpcY]);
 
+  // ── Director Controls handlers ──────────────────────────────────────────
+  const handleDirectorWhisper = useCallback(async () => {
+    if (!activeCampaignId || !directorWhisper.trim()) return;
+    setDirectorWhisperPending(true);
+    try {
+      const res = await apiFetch(`/api/campaigns/${activeCampaignId}/messages`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          content: directorWhisper.trim(),
+          message_type: "text",
+          channel_type: "director_whisper",
+        }),
+      });
+      if (res.ok) {
+        setDirectorWhisper("");
+        toast.success("Director whisper sent — the DM will follow your guidance.");
+      } else {
+        toast.error("Failed to send director whisper");
+      }
+    } catch (error) {
+      toast.error("Failed to send director whisper");
+    } finally {
+      setDirectorWhisperPending(false);
+    }
+  }, [activeCampaignId, directorWhisper]);
+
+  const handleNarrativeNudgeSave = useCallback(async () => {
+    if (!activeCampaignId) return;
+    setNarrativeNudgePending(true);
+    try {
+      const res = await apiFetch(`/api/campaigns/${activeCampaignId}/llm-settings`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          system_prompt_additions: narrativeNudge.trim() || null,
+        }),
+      });
+      if (res.ok) {
+        toast.success("Narrative nudge saved — applied to all future LLM prompts.");
+      } else {
+        toast.error("Failed to save narrative nudge");
+      }
+    } catch (error) {
+      toast.error("Failed to save narrative nudge");
+    } finally {
+      setNarrativeNudgePending(false);
+    }
+  }, [activeCampaignId, narrativeNudge]);
+
+  const handleRetcon = useCallback(async () => {
+    if (!activeCampaignId) return;
+    // Delete the most recent narration message from dm_broadcast
+    try {
+      const messages = await fetchJson<Array<{ id: string; message_type: string }>>(
+        `/api/campaigns/${activeCampaignId}/messages?channel_type=dm_broadcast&limit=5`
+      );
+      const narrationTypes = new Set(["narration", "action_result", "world_turn"]);
+      const latest = Array.isArray(messages)
+        ? messages.find((m) => narrationTypes.has(m.message_type))
+        : null;
+      if (latest?.id) {
+        await apiFetch(`/api/campaigns/${activeCampaignId}/messages/${latest.id}`, {
+          method: "DELETE",
+        });
+        toast.success("Last narration retconned — it never happened.");
+      } else {
+        toast.info("No recent narration to retcon.");
+      }
+    } catch (error) {
+      toast.error("Failed to retcon narration");
+    }
+  }, [activeCampaignId]);
+
   if (!user || !activeCampaignId) {
     return (
       <div className="flex h-full flex-col">
@@ -895,13 +976,91 @@ export function DMSidebar() {
   return (
     <div className="flex h-full flex-col">
       <div className="border-b px-4 py-3">
-        <CardTitle className="text-base font-semibold">DM Sidebar</CardTitle>
+        <CardTitle className="text-base font-semibold">Campaign Director</CardTitle>
         <CardDescription>
-          Manage live session focus, notes, emergent encounters, and map state using the verified API endpoints.
+          Steer the LLM Dungeon Master — send directives, adjust difficulty, nudge the narrative.
         </CardDescription>
       </div>
       <ScrollArea className="flex-1">
-        <Accordion type="multiple" defaultValue={["session-focus"]} className="p-4 pb-8">
+        <Accordion type="multiple" defaultValue={["director-controls"]} className="p-4 pb-8">
+
+          {/* ── Director Controls ──────────────────────────────────── */}
+          <AccordionItem value="director-controls">
+            <AccordionTrigger>
+              <span className="flex items-center gap-1.5">
+                <Megaphone className="h-4 w-4" /> Director Controls
+              </span>
+            </AccordionTrigger>
+            <AccordionContent>
+              <div className="space-y-4">
+                {/* Director Whisper */}
+                <div className="space-y-1.5">
+                  <Label className="text-xs font-medium">Quick Directive</Label>
+                  <p className="text-xs text-muted-foreground">
+                    Send a private instruction to the LLM DM. Players never see this.
+                  </p>
+                  <div className="flex gap-1.5">
+                    <Input
+                      placeholder="e.g. Introduce a mysterious stranger..."
+                      value={directorWhisper}
+                      onChange={(e) => setDirectorWhisper(e.target.value)}
+                      onKeyDown={(e) => {
+                        if (e.key === "Enter" && !e.shiftKey) {
+                          e.preventDefault();
+                          handleDirectorWhisper();
+                        }
+                      }}
+                      disabled={directorWhisperPending}
+                      className="text-sm"
+                    />
+                    <Button
+                      size="sm"
+                      onClick={handleDirectorWhisper}
+                      disabled={directorWhisperPending || !directorWhisper.trim()}
+                    >
+                      <Send className="h-3.5 w-3.5" />
+                    </Button>
+                  </div>
+                </div>
+
+                {/* Narrative Nudge */}
+                <div className="space-y-1.5">
+                  <Label className="text-xs font-medium">Persistent Narrative Nudge</Label>
+                  <p className="text-xs text-muted-foreground">
+                    A standing instruction applied to every LLM response (e.g. &quot;keep combat descriptions gritty&quot;).
+                  </p>
+                  <Textarea
+                    placeholder="e.g. Favour understated prose. NPCs should speak in clipped sentences."
+                    value={narrativeNudge}
+                    onChange={(e) => setNarrativeNudge(e.target.value)}
+                    rows={2}
+                    className="text-sm"
+                  />
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    onClick={handleNarrativeNudgeSave}
+                    disabled={narrativeNudgePending}
+                  >
+                    {narrativeNudgePending ? <Loader2 className="h-3 w-3 animate-spin mr-1" /> : null}
+                    Save Nudge
+                  </Button>
+                </div>
+
+                {/* Retcon */}
+                <div className="space-y-1.5">
+                  <Label className="text-xs font-medium">Retcon</Label>
+                  <p className="text-xs text-muted-foreground">
+                    Delete the last LLM narration — it never happened.
+                  </p>
+                  <Button size="sm" variant="destructive" onClick={handleRetcon}>
+                    <RotateCcw className="h-3.5 w-3.5 mr-1" /> Retcon Last Narration
+                  </Button>
+                </div>
+              </div>
+            </AccordionContent>
+          </AccordionItem>
+
           <AccordionItem value="session-focus">
             <AccordionTrigger>Session Focus</AccordionTrigger>
             <AccordionContent>

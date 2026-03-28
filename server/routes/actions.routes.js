@@ -24,6 +24,7 @@ import {
 import { writeNpcMemoryInternal } from '../services/npcs/service.js';
 import { consumeAction } from '../services/combat/service.js';
 import { logError, logInfo } from '../utils/logger.js';
+import { postNarrationToChat, postPrivateNarration } from '../services/chat/dm-narrator.js';
 
 const router = Router();
 
@@ -249,26 +250,29 @@ router.post(
 
           await asyncClient.query('COMMIT');
 
-          // Broadcast results via WebSocket
-          if (wsServer) {
-            // Narration to all
-            if (dmResponse.narration) {
-              wsServer.emitDmNarration(campaignId, {
-                actionId: action.id,
-                narration: dmResponse.narration,
-                characterId,
-                actionType,
-              });
-            }
+          // Persist narration to Adventure chat channel + broadcast via WebSocket
+          if (dmResponse.narration) {
+            postNarrationToChat({
+              campaignId,
+              content: dmResponse.narration,
+              messageType: 'action_result',
+              sessionId: session.id,
+              wsServer,
+            }).catch((err) => logError('Failed to post narration to chat', { error: err.message }));
+          }
+          if (dmResponse.privateMessage) {
+            postPrivateNarration({
+              campaignId,
+              targetUserId: req.user.id,
+              content: dmResponse.privateMessage,
+              messageType: 'narration',
+              sessionId: session.id,
+              wsServer,
+            }).catch((err) => logError('Failed to post private narration', { error: err.message }));
+          }
 
-            // Private message to the acting player only
-            if (dmResponse.privateMessage) {
-              wsServer.emitToUser(campaignId, req.user.id, 'dm-narration', {
-                actionId: action.id,
-                narration: dmResponse.privateMessage,
-                isPrivate: true,
-              });
-            }
+          // Broadcast results via WebSocket (legacy action events — keep for action panel)
+          if (wsServer) {
 
             // Roll request to the acting player
             if (needsRoll) {
@@ -446,17 +450,19 @@ router.post(
 
           await asyncClient.query('COMMIT');
 
-          // Broadcast
-          if (wsServer) {
-            if (dmResponse.narration) {
-              wsServer.emitDmNarration(campaignId, {
-                actionId,
-                narration: dmResponse.narration,
-                characterId: action.character_id,
-                actionType: action.action_type,
-              });
-            }
+          // Persist narration to Adventure chat channel
+          if (dmResponse.narration) {
+            postNarrationToChat({
+              campaignId,
+              content: dmResponse.narration,
+              messageType: 'action_result',
+              sessionId: action.session_id,
+              wsServer,
+            }).catch((err) => logError('Failed to post roll-result narration to chat', { error: err.message }));
+          }
 
+          // Broadcast legacy action events
+          if (wsServer) {
             wsServer.emitActionCompleted(campaignId, {
               actionId,
               characterId: action.character_id,

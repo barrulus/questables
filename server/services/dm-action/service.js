@@ -154,6 +154,7 @@ export const invokeDmForAction = async (contextualService, {
       request: {
         extraSections: prompt,
       },
+      parameters: { schema: DM_RESPONSE_SCHEMA },
     });
 
     // Try to use parsed structured output first
@@ -204,6 +205,7 @@ export const invokeDmForSocialAction = async (contextualService, {
       request: {
         extraSections: prompt,
       },
+      parameters: { schema: DM_RESPONSE_SCHEMA },
     });
 
     if (result.parsed) return result.parsed;
