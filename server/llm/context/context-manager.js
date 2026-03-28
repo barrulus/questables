@@ -277,9 +277,8 @@ export class LLMContextManager {
       const chatDepth = llmSettings?.chatHistoryDepth || 20;
       const recentMessages = await this.#loadRecentMessages(client, campaignId, session?.id, chatDepth);
       const directorWhispers = await this.#loadDirectorWhispers(client, campaignId);
-      const worldLore = await this.#loadWorldLore(client, campaignId, geographic);
 
-      // Load geographic context based on active player position
+      // Load geographic context based on active player position (must come before worldLore)
       let geographic = null;
       if (campaign.worldMapId) {
         const playerPosition = await this.#loadActivePlayerPosition(client, campaignId, session);
@@ -293,6 +292,8 @@ export class LLMContextManager {
           });
         }
       }
+
+      const worldLore = await this.#loadWorldLore(client, campaignId, geographic);
 
       return {
         campaign,
