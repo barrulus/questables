@@ -12,6 +12,7 @@ import {
   getViewerContextOrThrow,
 } from '../services/campaigns/service.js';
 import { applyLevelUp } from '../services/levelling/service.js';
+import { userOwnsCharacterInCampaign } from '../services/sessions/service.js';
 import { getAllLiveStates } from '../services/live-state/service.js';
 import { logError } from '../utils/logger.js';
 
@@ -40,12 +41,8 @@ router.post(
 
       // Players can only level up their own character
       if (viewer.role !== 'dm' && viewer.role !== 'co-dm' && !viewer.isAdmin) {
-        const { rows: playerRows } = await client.query(
-          `SELECT character_id FROM public.campaign_players
-            WHERE campaign_id = $1 AND user_id = $2 AND status = 'active'`,
-          [campaignId, req.user.id],
-        );
-        if (!playerRows.some((r) => r.character_id === characterId)) {
+        const owns = await userOwnsCharacterInCampaign(client, campaignId, req.user.id, characterId);
+        if (!owns) {
           const err = new Error('You can only level up your own character');
           err.status = 403;
           err.code = 'level_up_forbidden';

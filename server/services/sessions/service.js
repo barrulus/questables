@@ -45,6 +45,20 @@ export const getCampaignPlayerCharacterId = async (client, campaignId, userId) =
   return rows[0]?.character_id ?? null;
 };
 
+/**
+ * Check if a user owns a specific character in a campaign.
+ * Used for permission gating — "can this user act on this character?"
+ */
+export const userOwnsCharacterInCampaign = async (client, campaignId, userId, characterId) => {
+  const { rows } = await client.query(
+    `SELECT 1 FROM public.campaign_players
+      WHERE campaign_id = $1 AND user_id = $2 AND character_id = $3 AND status = 'active'
+      LIMIT 1`,
+    [campaignId, userId, characterId],
+  );
+  return rows.length > 0;
+};
+
 export const fetchSessionWithCampaign = async (client, sessionId, { forUpdate = false } = {}) => {
   const lockClause = forUpdate ? 'FOR UPDATE' : '';
   const { rows } = await client.query(

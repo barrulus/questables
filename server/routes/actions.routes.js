@@ -10,7 +10,7 @@ import { handleValidationErrors } from '../validation/common.js';
 import {
   getViewerContextOrThrow,
 } from '../services/campaigns/service.js';
-import { getActiveSession } from '../services/sessions/service.js';
+import { getActiveSession, getCampaignPlayerCharacterId, userOwnsCharacterInCampaign } from '../services/sessions/service.js';
 import {
   buildActionContext,
   invokeDmForAction,
@@ -95,19 +95,13 @@ router.post(
       }
 
       // Get the player's character
-      const { rows: playerRows } = await client.query(
-        `SELECT character_id FROM public.campaign_players
-          WHERE campaign_id = $1 AND user_id = $2 AND status = 'active'`,
-        [campaignId, req.user.id],
-      );
-      if (playerRows.length === 0) {
+      const characterId = await getCampaignPlayerCharacterId(client, campaignId, req.user.id);
+      if (!characterId) {
         const err = new Error('No active character in this campaign');
         err.status = 400;
         err.code = 'no_active_character';
         throw err;
       }
-
-      const characterId = playerRows[0].character_id;
 
       // Insert the action
       const { rows: actionRows } = await client.query(
@@ -624,12 +618,8 @@ router.patch(
 
       // DM/co-dm/admin can patch anyone; players can only patch their own character
       if (viewer.role !== 'dm' && viewer.role !== 'co-dm' && !viewer.isAdmin) {
-        const { rows: playerRows } = await client.query(
-          `SELECT character_id FROM public.campaign_players
-            WHERE campaign_id = $1 AND user_id = $2 AND status = 'active'`,
-          [campaignId, req.user.id],
-        );
-        if (!playerRows.some((r) => r.character_id === characterId)) {
+        const owns = await userOwnsCharacterInCampaign(client, campaignId, req.user.id, characterId);
+        if (!owns) {
           const err = new Error('You can only modify your own character live state');
           err.status = 403;
           err.code = 'live_state_forbidden';

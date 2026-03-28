@@ -20,7 +20,7 @@ import { getAllLiveStates } from '../services/live-state/service.js';
 import { resolveDeathSave } from '../services/combat/death-saves.js';
 import { checkLevelUps } from '../services/levelling/service.js';
 import { logError } from '../utils/logger.js';
-import { getActiveSession } from '../services/sessions/service.js';
+import { getActiveSession, userOwnsCharacterInCampaign } from '../services/sessions/service.js';
 import { postNarrationToChat } from '../services/chat/dm-narrator.js';
 import { narrateWorldTurn } from '../services/narration/proactive-narrator.js';
 
@@ -588,12 +588,8 @@ router.post(
 
       // Players can only roll for their own character
       if (viewer.role !== 'dm' && viewer.role !== 'co-dm' && !viewer.isAdmin) {
-        const { rows: playerRows } = await client.query(
-          `SELECT character_id FROM public.campaign_players
-            WHERE campaign_id = $1 AND user_id = $2 AND status = 'active'`,
-          [campaignId, req.user.id],
-        );
-        if (!playerRows.some((r) => r.character_id === characterId)) {
+        const owns = await userOwnsCharacterInCampaign(client, campaignId, req.user.id, characterId);
+        if (!owns) {
           const err = new Error('You can only roll death saves for your own character');
           err.status = 403;
           err.code = 'death_save_forbidden';
