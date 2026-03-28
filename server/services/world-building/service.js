@@ -44,59 +44,44 @@ function pickRandom(arr, count = 1) {
 
 // ── System prompts ──────────────────────────────────────────────────────────
 
-const WORLD_BUILD_BASE = `You are a D&D 5e world builder creating rich, nuanced setting content for a campaign.
-
-ANTI-TROPE GUIDELINES:
-- Avoid these clichés: ${pickRandom(AVOID_TROPES, 3).join('; ')}
-- Include at least one unexpected element: ${pickRandom(UNIQUE_ELEMENTS, 1)[0]}
-- Use this conflict driver as inspiration: ${pickRandom(CONFLICT_SOURCES, 1)[0]}
+const WORLD_BUILD_BASE = `You are a D&D 5e world builder. You write rich, specific setting content grounded in map data.
 
 RULES:
-- Ground everything in the provided map data — use real settlement names, populations, geography.
-- Create interconnected content — factions should reference settlements, history should reference geography.
-- Maintain internal consistency — don't contradict the map data.
-- Write engaging, specific content — avoid generic fantasy filler.
-- Do NOT include your reasoning, thinking process, or meta-commentary. Output ONLY the requested content.
-- Respond in JSON format: { "content": "<your markdown-formatted lore text>" }
-- The "content" field should contain well-structured prose with markdown headers and bullet points where appropriate.
-- Keep the response concise and focused — aim for 500-1500 words.`;
+- Use ONLY real settlement names, rivers, routes, cultures, and religions from the map data provided.
+- Reference specific populations, geography, and political structures — no generic fantasy filler.
+- If existing lore is provided, you MUST maintain consistency with it — same names, same events, same factions.
+- Do NOT echo instructions, do NOT explain what you are doing, do NOT include meta-commentary.
+- Write the lore content directly. 500-1500 words. Markdown format with headers and bullet points.
+- Avoid clichés: ${pickRandom(AVOID_TROPES, 3).join('; ')}
+- Include an unexpected element: ${pickRandom(UNIQUE_ELEMENTS, 1)[0]}
+- Conflict driver: ${pickRandom(CONFLICT_SOURCES, 1)[0]}`;
 
 const SECTION_PROMPTS = {
-  geopolitical: `Generate a geopolitical overview for this world.
-
-Include:
-- Major power blocs and their relationships (alliances, rivalries, cold wars)
-- Key political figures and their agendas
-- Trade relationships based on the route network
+  geopolitical: `Write a geopolitical overview of this world. Cover:
+- Major power blocs, their alliances and rivalries
+- Key political figures and agendas
+- Trade relationships along the route network
 - Border tensions and disputed territories
-- The balance of power — who is ascendant, who is declining?
+- Who is ascendant, who is declining
+Ground every claim in the state/province map data.`,
 
-Use the state/province data from the map to ground every claim.`,
-
-  history: `Generate a historical timeline for this world.
-
-Include:
-- 3-5 major historical eras with evocative names
+  history: `Write a historical timeline for this world. Cover:
+- 3-5 major eras with evocative names
 - Founding events that explain the current political map
 - A catastrophe or transformation that reshaped the world
-- How geography influenced the rise and fall of civilisations (river valleys, mountain barriers, coastal empires)
-- Legends that may or may not be true — hooks for adventure
+- How geography (rivers, mountains, coasts) shaped civilisations
+- Legends that may or may not be true — adventure hooks
+Reference real settlements and geographic features from the map data.`,
 
-Reference actual settlements and geographic features.`,
-
-  cultures: `Generate cultural profiles for the peoples of this world.
-
-For each major culture in the map data:
-- Name and geographic distribution
-- Values, customs, and social structure
-- Relationship to other cultures (trade, rivalry, kinship)
+  cultures: `Write cultural profiles for each major culture in the map data. For each, cover:
+- Geographic distribution and population
+- Values, customs, social structure
+- Relationships to other cultures (trade, rivalry, kinship)
 - Distinctive art, cuisine, or technology
 - Taboos and sacred practices
-- How geography shaped the culture (coastal peoples differ from mountain folk)`,
+- How geography shaped the culture`,
 
-  religions: `Generate religious traditions for this world.
-
-For each religion present in the map data:
+  religions: `Write religious traditions for each religion in the map data. For each, cover:
 - Core beliefs and cosmology
 - Clergy structure and holy sites
 - Relationship to political power
@@ -104,19 +89,15 @@ For each religion present in the map data:
 - Tensions with other faiths
 - Sacred calendar and major festivals`,
 
-  regions: `Generate regional backstories for the major territories in this world.
-
-For each state/province:
+  regions: `Write regional backstories for each major state/province. For each, cover:
 - Ruling house or government structure
 - Notable figures (ruler, general, merchant prince, rebel leader)
-- Local customs that differ from neighbours
-- Economic basis (what do they produce, trade, lack?)
+- Local customs distinct from neighbours
+- Economic basis (production, trade, shortages)
 - Current internal challenges
-- How the terrain shapes daily life`,
+- How terrain shapes daily life`,
 
-  factions: `Generate major factions and organisations that operate across this world.
-
-Include 4-6 factions:
+  factions: `Write 4-6 major factions and organisations that operate across this world. For each, cover:
 - Name and purpose
 - Leadership and membership
 - Headquarters and areas of influence
