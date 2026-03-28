@@ -149,6 +149,10 @@ export class OllamaProvider extends EnhancedLLMProvider {
       generationOptions.format = schema;
     }
 
+    // Disable thinking/reasoning mode — it drastically slows generation on qwen3 models
+    // and produces extremely long internal monologues that waste context and time.
+    generationOptions.think = false;
+
     // Clean undefined values to avoid API complaints
     Object.keys(generationOptions).forEach((key) => {
       if (generationOptions[key] === undefined) {
@@ -165,8 +169,18 @@ export class OllamaProvider extends EnhancedLLMProvider {
         requestId,
       });
 
+      // Use caller's signal or create a timeout-based one
+      const timeoutMs = options.timeoutMs ?? this.timeoutMs;
+      let controller;
+      let signal = options.signal;
+      if (!signal && timeoutMs > 0) {
+        controller = new AbortController();
+        signal = controller.signal;
+        setTimeout(() => controller.abort(), timeoutMs);
+      }
+
       const response = await this.client.generate(generationOptions, {
-        signal: options.signal,
+        signal,
       });
 
       const latencyMs = Date.now() - startedAt;
