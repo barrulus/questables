@@ -18,6 +18,7 @@ export const NARRATIVE_TYPES = Object.freeze({
   SESSION_OPENING: 'session_opening',
   AREA_DESCRIPTION: 'area_description',
   WORLD_TURN_NARRATION: 'world_turn_narration',
+  WORLD_BUILDING: 'world_building',
 });
 
 export const SUPPORTED_TYPES = new Set(Object.values(NARRATIVE_TYPES));

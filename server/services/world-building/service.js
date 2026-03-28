@@ -11,6 +11,7 @@
 
 import { query } from '../../db/pool.js';
 import { logInfo } from '../../utils/logger.js';
+import { NARRATIVE_TYPES } from '../../llm/narrative-types.js';
 
 // ── Anti-trope elements ─────────────────────────────────────────────────────
 
@@ -303,7 +304,7 @@ export async function generateWorldLore({
 
   logInfo('Generating world lore', { campaignId, section, subsection, promptLength: prompt.length });
 
-  const result = await llmService.generate('world_building', {
+  const result = await llmService.generate(NARRATIVE_TYPES.WORLD_BUILDING, {
     prompt,
     systemPrompt,
   });
