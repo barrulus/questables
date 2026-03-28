@@ -151,7 +151,12 @@ export class OllamaProvider extends EnhancedLLMProvider {
 
     // Disable thinking/reasoning mode — it drastically slows generation on qwen3 models
     // and produces extremely long internal monologues that waste context and time.
-    generationOptions.think = false;
+    // Must go inside `options` for Ollama API, not top-level.
+    if (generationOptions.options) {
+      generationOptions.options.think = false;
+    } else {
+      generationOptions.options = { think: false };
+    }
 
     // Clean undefined values to avoid API complaints
     Object.keys(generationOptions).forEach((key) => {

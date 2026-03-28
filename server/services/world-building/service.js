@@ -56,7 +56,10 @@ RULES:
 - Create interconnected content — factions should reference settlements, history should reference geography.
 - Maintain internal consistency — don't contradict the map data.
 - Write engaging, specific content — avoid generic fantasy filler.
-- Respond with well-structured prose, using markdown headers and bullet points where appropriate.`;
+- Do NOT include your reasoning, thinking process, or meta-commentary. Output ONLY the requested content.
+- Respond in JSON format: { "content": "<your markdown-formatted lore text>" }
+- The "content" field should contain well-structured prose with markdown headers and bullet points where appropriate.
+- Keep the response concise and focused — aim for 500-1500 words.`;
 
 const SECTION_PROMPTS = {
   geopolitical: `Generate a geopolitical overview for this world.
@@ -304,13 +307,31 @@ export async function generateWorldLore({
 
   logInfo('Generating world lore', { campaignId, section, subsection, promptLength: prompt.length });
 
+  const WORLD_LORE_SCHEMA = {
+    type: 'object',
+    properties: {
+      content: { type: 'string', description: 'Markdown-formatted lore text' },
+    },
+    required: ['content'],
+  };
+
   const result = await llmService.generate({
     type: NARRATIVE_TYPES.WORLD_BUILDING,
     prompt,
     systemPrompt,
+    schema: WORLD_LORE_SCHEMA,
   });
 
-  const content = result.parsed?.content || result.content || '';
+  // Parse JSON response — the schema enforces { content: "..." }
+  let content = '';
+  const raw = result.content || '';
+  try {
+    const parsed = JSON.parse(raw);
+    content = parsed.content || raw;
+  } catch {
+    // Fallback: if LLM didn't return valid JSON, use raw text
+    content = raw;
+  }
 
   return { content, section, subsection };
 }
