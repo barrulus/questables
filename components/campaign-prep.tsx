@@ -5,13 +5,12 @@ import { Alert, AlertDescription, AlertTitle } from "./ui/alert";
 import { Button } from "./ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "./ui/card";
 import { Badge } from "./ui/badge";
-import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "./ui/dialog";
 import { Input } from "./ui/input";
-import { Label } from "./ui/label";
-import { Textarea } from "./ui/textarea";
 import { Skeleton } from "./ui/skeleton";
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "./ui/select";
 import { CampaignPrepMap, type CampaignPrepMapProps, type MapContextDetails, type MapFeatureDetails } from "./campaign-prep-map";
+import { SpawnPointEditorDialog } from "./campaign-prep-spawn-dialog";
+import { RegionCreationDialog } from "./campaign-prep-region-dialog";
+import { ObjectiveLocationDialog } from "./campaign-prep-objective-dialog";
 import { ObjectivesPanel } from "./objectives-panel";
 import { WorldLorePanel } from "./world-lore-panel";
 import SessionManager from "./session-manager";
@@ -65,13 +64,7 @@ interface WorldMapRecord {
 
 type MapLocationKind = "pin" | "burg" | "marker" | "region";
 
-const REGION_CATEGORY_OPTIONS: Array<{ value: CampaignRegionCategory; label: string }> = [
-  { value: "encounter", label: "Encounter" },
-  { value: "rumour", label: "Rumour" },
-  { value: "narrative", label: "Narrative" },
-  { value: "travel", label: "Travel" },
-  { value: "custom", label: "Custom" },
-];
+// REGION_CATEGORY_OPTIONS moved to campaign-prep-region-dialog.tsx
 
 const parseBounds = (value: unknown): WorldMapRecord["bounds"] | null => {
   if (!value) return null;
@@ -770,223 +763,54 @@ export function CampaignPrep({
               )}
             </div>
 
-            <Dialog open={isDialogOpen} onOpenChange={(open) => {
-              setIsDialogOpen(open);
-              if (!open) {
-                setEditing(false);
-                setPendingPosition(null);
-              }
-            }}>
-              <DialogContent>
-                <DialogHeader>
-                  <DialogTitle>Save Default Spawn</DialogTitle>
-                  <DialogDescription>
-                    Confirm the spawn location note. Coordinates are stored automatically based on your map selection.
-                  </DialogDescription>
-                </DialogHeader>
-                <div className="space-y-4">
-                  {pendingPosition && (
-                    <div className="rounded-md bg-muted/50 p-3 text-sm">
-                      <div className="flex items-center justify-between">
-                        <span className="font-medium">Coordinates</span>
-                        <span>
-                          x: {pendingPosition.x.toFixed(2)}, y: {pendingPosition.y.toFixed(2)}
-                        </span>
-                      </div>
-                    </div>
-                  )}
-                  <div className="space-y-2">
-                    <Label htmlFor="spawn-note">Scene Note</Label>
-                    <Textarea
-                      id="spawn-note"
-                      value={noteDraft}
-                      onChange={(event) => setNoteDraft(event.target.value)}
-                      placeholder="Describe the opening scene or context the party should see when they load in."
-                      rows={4}
-                    />
-                  </div>
-                </div>
-                <DialogFooter className="gap-2">
-                  <Button
-                    type="button"
-                    variant="outline"
-                    onClick={() => {
-                      setIsDialogOpen(false);
-                      setEditing(false);
-                      setPendingPosition(null);
-                    }}
-                  >
-                    Cancel
-                  </Button>
-                  <Button type="button" onClick={handleSubmit} disabled={saving}>
-                    {saving ? "Saving…" : "Save Spawn"}
-                  </Button>
-                </DialogFooter>
-              </DialogContent>
-            </Dialog>
+            <SpawnPointEditorDialog
+              open={isDialogOpen}
+              onOpenChange={(open) => {
+                setIsDialogOpen(open);
+                if (!open) { setEditing(false); setPendingPosition(null); }
+              }}
+              pendingPosition={pendingPosition}
+              noteDraft={noteDraft}
+              onNoteDraftChange={setNoteDraft}
+              onSubmit={handleSubmit}
+              onCancel={() => { setIsDialogOpen(false); setEditing(false); setPendingPosition(null); }}
+              saving={saving}
+            />
 
-            <Dialog open={regionDialogOpen} onOpenChange={(open) => {
-              if (open) {
-                setRegionDialogOpen(true);
-              } else {
-                resetRegionDialog();
-              }
-            }}>
-              <DialogContent>
-                <DialogHeader>
-                  <DialogTitle>Create campaign region</DialogTitle>
-                  <DialogDescription>
-                    Name and categorize the selected area. Regions are persisted to the live database immediately.
-                  </DialogDescription>
-                </DialogHeader>
-                <div className="space-y-4">
-                  {regionSeedContext ? (
-                    <div className="rounded-md border bg-muted/40 px-3 py-2 text-xs text-muted-foreground">
-                      <div className="flex items-center justify-between">
-                        <span className="font-medium text-foreground">Seed coordinates</span>
-                        <span>
-                          x: {regionSeedContext.coordinate[0].toFixed(1)} · y: {regionSeedContext.coordinate[1].toFixed(1)}
-                        </span>
-                      </div>
-                    </div>
-                  ) : null}
-                  <div className="space-y-2">
-                    <Label htmlFor="region-name">Name</Label>
-                    <Input
-                      id="region-name"
-                      value={regionName}
-                      onChange={(event) => setRegionName(event.target.value)}
-                      placeholder="Bandit ambush territory"
-                      autoFocus
-                    />
-                  </div>
-                  <div className="space-y-2">
-                    <Label htmlFor="region-category">Category</Label>
-                    <Select value={regionCategory} onValueChange={(value) => setRegionCategory(value as CampaignRegionCategory)}>
-                      <SelectTrigger id="region-category">
-                        <SelectValue placeholder="Select category" />
-                      </SelectTrigger>
-                      <SelectContent>
-                        {REGION_CATEGORY_OPTIONS.map((option) => (
-                          <SelectItem key={option.value} value={option.value}>{option.label}</SelectItem>
-                        ))}
-                      </SelectContent>
-                    </Select>
-                  </div>
-                  <div className="space-y-2">
-                    <Label htmlFor="region-color">Color</Label>
-                    <div className="flex items-center gap-2">
-                      <Input
-                        id="region-color"
-                        type="color"
-                        className="h-8 w-16 p-1"
-                        value={regionColor}
-                        onChange={(event) => setRegionColor(event.target.value)}
-                      />
-                      <Input
-                        value={regionColor}
-                        onChange={(event) => setRegionColor(event.target.value)}
-                        className="h-8"
-                      />
-                    </div>
-                  </div>
-                  <div className="space-y-2">
-                    <Label htmlFor="region-description">Description (optional)</Label>
-                    <Textarea
-                      id="region-description"
-                      value={regionDescription}
-                      onChange={(event) => setRegionDescription(event.target.value)}
-                      rows={3}
-                      placeholder="Notable encounters, terrain notes, or rumours about this region"
-                    />
-                  </div>
-                  {regionError ? <p className="text-xs text-destructive">{regionError}</p> : null}
-                </div>
-                <DialogFooter className="gap-2">
-                  <Button type="button" variant="outline" onClick={resetRegionDialog} disabled={regionSaving}>
-                    Cancel
-                  </Button>
-                  <Button type="button" onClick={handleCreateRegion} disabled={regionSaving}>
-                    {regionSaving ? "Saving…" : "Save region"}
-                  </Button>
-                </DialogFooter>
-              </DialogContent>
-            </Dialog>
+            <RegionCreationDialog
+              open={regionDialogOpen}
+              onOpenChange={(open) => { if (open) setRegionDialogOpen(true); else resetRegionDialog(); }}
+              seedContext={regionSeedContext}
+              name={regionName}
+              onNameChange={setRegionName}
+              category={regionCategory}
+              onCategoryChange={(v) => setRegionCategory(v)}
+              color={regionColor}
+              onColorChange={setRegionColor}
+              description={regionDescription}
+              onDescriptionChange={setRegionDescription}
+              error={regionError}
+              onSubmit={handleCreateRegion}
+              onCancel={resetRegionDialog}
+              saving={regionSaving}
+            />
 
-            <Dialog open={objectiveDialogOpen} onOpenChange={(open) => {
-              if (open) {
-                setObjectiveDialogOpen(true);
-              } else {
-                handleCancelObjectiveLink();
-              }
-            }}>
-              <DialogContent>
-                <DialogHeader>
-                  <DialogTitle>Link objective to map</DialogTitle>
-                  <DialogDescription>
-                    Choose which objective should inherit this map location.
-                  </DialogDescription>
-                </DialogHeader>
-                <div className="space-y-4">
-                  {objectiveLinkContext ? (
-                    <div className="rounded-md border bg-muted/40 px-3 py-2 text-xs text-muted-foreground">
-                      <div className="font-medium text-foreground">{objectiveLinkContext.label}</div>
-                      <div>
-                        x: {objectiveLinkContext.context.coordinate[0].toFixed(1)} · y: {objectiveLinkContext.context.coordinate[1].toFixed(1)}
-                      </div>
-                    </div>
-                  ) : null}
-                  <div className="space-y-2">
-                    <Label htmlFor="objective-select">Objective</Label>
-                    <Select
-                      value={objectiveSelection ?? "__none__"}
-                      onValueChange={(value) => setObjectiveSelection(value === "__none__" ? null : value)}
-                    >
-                      <SelectTrigger id="objective-select">
-                        <SelectValue placeholder={objectiveLoading ? "Loading objectives…" : "Select objective"} />
-                      </SelectTrigger>
-                      <SelectContent>
-                        <SelectItem value="__none__" disabled>
-                          Select objective
-                        </SelectItem>
-                        {objectiveOptions.map((objective) => (
-                          <SelectItem key={objective.id} value={objective.id}>
-                            {objective.title}
-                          </SelectItem>
-                        ))}
-                      </SelectContent>
-                    </Select>
-                    {objectiveLoading ? <p className="text-xs text-muted-foreground">Loading objectives…</p> : null}
-                  </div>
-                  <div className="space-y-2">
-                    <Label htmlFor="objective-location-kind">Link as</Label>
-                    <Select
-                      value={objectiveLocationKind}
-                      onValueChange={(value) => setObjectiveLocationKind(value as MapLocationKind)}
-                    >
-                      <SelectTrigger>
-                        <SelectValue />
-                      </SelectTrigger>
-                      <SelectContent>
-                        <SelectItem value="pin">Pin (SRID 0 coordinate)</SelectItem>
-                        <SelectItem value="burg" disabled={!availableLocationKinds.has("burg")}>Burg</SelectItem>
-                        <SelectItem value="marker" disabled={!availableLocationKinds.has("marker")}>Marker</SelectItem>
-                        <SelectItem value="region" disabled={!availableLocationKinds.has("region")}>Region</SelectItem>
-                      </SelectContent>
-                    </Select>
-                  </div>
-                  {objectiveError ? <p className="text-xs text-destructive">{objectiveError}</p> : null}
-                </div>
-                <DialogFooter className="gap-2">
-                  <Button type="button" variant="outline" onClick={handleCancelObjectiveLink} disabled={objectiveSaving}>
-                    Cancel
-                  </Button>
-                  <Button type="button" onClick={handleConfirmObjectiveLink} disabled={objectiveSaving || objectiveLoading || !objectiveSelection}>
-                    {objectiveSaving ? "Linking…" : "Link objective"}
-                  </Button>
-                </DialogFooter>
-              </DialogContent>
-            </Dialog>
+            <ObjectiveLocationDialog
+              open={objectiveDialogOpen}
+              onOpenChange={(open) => { if (open) setObjectiveDialogOpen(true); else handleCancelObjectiveLink(); }}
+              linkContext={objectiveLinkContext}
+              objectives={objectiveOptions}
+              objectivesLoading={objectiveLoading}
+              selectedObjectiveId={objectiveSelection}
+              onObjectiveChange={setObjectiveSelection}
+              locationKind={objectiveLocationKind}
+              onLocationKindChange={(v) => setObjectiveLocationKind(v as typeof objectiveLocationKind)}
+              availableLocationKinds={availableLocationKinds}
+              error={objectiveError}
+              onSubmit={handleConfirmObjectiveLink}
+              onCancel={handleCancelObjectiveLink}
+              saving={objectiveSaving}
+            />
           </CardContent>
         </Card>
 
