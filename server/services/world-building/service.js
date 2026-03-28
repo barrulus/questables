@@ -10,7 +10,7 @@
  */
 
 import { query } from '../../db/pool.js';
-import { NARRATIVE_TYPES } from '../../llm/narrative-types.js';
+import { logInfo } from '../../utils/logger.js';
 
 // ── Anti-trope elements ─────────────────────────────────────────────────────
 
@@ -264,7 +264,7 @@ function formatWorldDataForPrompt(data) {
  * @param {string} opts.section - One of: geopolitical, history, cultures, religions, regions, factions
  * @param {string} [opts.subsection] - Specific state/culture/religion name
  * @param {string} [opts.direction] - CD's direction/guidance for the generation
- * @param {object} opts.contextualService
+ * @param {object} opts.llmService - Enhanced LLM service (direct, no game context)
  * @returns {Promise<{ content: string, section: string, subsection?: string }>}
  */
 export async function generateWorldLore({
@@ -273,7 +273,7 @@ export async function generateWorldLore({
   section,
   subsection = null,
   direction = null,
-  contextualService,
+  llmService,
 }) {
   const sectionPrompt = SECTION_PROMPTS[section];
   if (!sectionPrompt) {
@@ -299,17 +299,16 @@ export async function generateWorldLore({
   }
 
   const systemPrompt = WORLD_BUILD_BASE;
+  const prompt = promptParts.join('\n\n');
 
-  const { result } = await contextualService.generateFromContext({
-    campaignId,
-    type: NARRATIVE_TYPES.DM_NARRATION,
-    request: {
-      extraSections: promptParts.join('\n\n'),
-      systemPromptOverride: systemPrompt,
-    },
+  logInfo('Generating world lore', { campaignId, section, subsection, promptLength: prompt.length });
+
+  const result = await llmService.generate('world_building', {
+    prompt,
+    systemPrompt,
   });
 
-  const content = result.parsed?.narration || result.content || '';
+  const content = result.parsed?.content || result.content || '';
 
   return { content, section, subsection };
 }

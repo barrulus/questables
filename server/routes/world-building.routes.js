@@ -58,8 +58,8 @@ router.post(
         });
       }
 
-      const contextualService = req.app?.locals?.contextualLLMService;
-      if (!contextualService) {
+      const llmService = req.app?.locals?.llmService;
+      if (!llmService) {
         return res.status(503).json({ error: 'LLM service not available' });
       }
 
@@ -69,7 +69,7 @@ router.post(
         section,
         subsection: subsection ?? null,
         direction: direction ?? null,
-        contextualService,
+        llmService,
       });
 
       // Auto-save the generated content
