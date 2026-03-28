@@ -322,16 +322,23 @@ export async function generateWorldLore({
     schema: WORLD_LORE_SCHEMA,
   });
 
-  // Parse JSON response — the schema enforces { content: "..." }
+  // Extract content from structured response
+  // The Ollama provider returns { content: <raw JSON string>, parsed: <parsed object> }
   let content = '';
-  const raw = result.content || '';
-  try {
-    const parsed = JSON.parse(raw);
-    content = parsed.content || raw;
-  } catch {
-    // Fallback: if LLM didn't return valid JSON, use raw text
-    content = raw;
+  if (result.parsed?.content) {
+    // Schema-enforced JSON was parsed by the provider
+    content = result.parsed.content;
+  } else {
+    // Fallback: try parsing the raw response ourselves
+    const raw = result.content || '';
+    try {
+      const parsed = JSON.parse(raw);
+      content = parsed.content || raw;
+    } catch {
+      content = raw;
+    }
   }
+  logInfo('World lore content extracted', { contentLength: content.length, hadParsed: !!result.parsed });
 
   return { content, section, subsection };
 }
