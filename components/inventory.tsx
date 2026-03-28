@@ -30,7 +30,7 @@ export function Inventory({ characterId, onInventoryChange }: InventoryProps) {
   const [equipment, setEquipment] = useState<Equipment | null>(null);
   const [loading, setLoading] = useState(true);
   const [updating, setUpdating] = useState(false);
-  
+
   // Add item dialog state
   const [showAddDialog, setShowAddDialog] = useState(false);
   const [newItem, setNewItem] = useState<typeof INITIAL_NEW_ITEM>(INITIAL_NEW_ITEM);

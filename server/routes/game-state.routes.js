@@ -20,11 +20,22 @@ import { getAllLiveStates } from '../services/live-state/service.js';
 import { resolveDeathSave } from '../services/combat/death-saves.js';
 import { checkLevelUps } from '../services/levelling/service.js';
 import { logError } from '../utils/logger.js';
-import { getActiveSession, getActiveSessionForUpdate } from '../services/sessions/service.js';
+import { getActiveSession } from '../services/sessions/service.js';
 import { postNarrationToChat } from '../services/chat/dm-narrator.js';
 import { narrateWorldTurn } from '../services/narration/proactive-narrator.js';
 
 const router = Router();
+
+/** Helper: get active session or send 404 + ROLLBACK. Returns session row or null (response already sent). */
+const requireActiveSession = async (client, campaignId, res) => {
+  const session = await getActiveSession(client, campaignId);
+  if (!session) {
+    await client.query('ROLLBACK');
+    res.status(404).json({ error: 'no_active_session', message: 'No active session found' });
+    return null;
+  }
+  return session;
+};
 
 // ---------------------------------------------------------------------------
 // GET  /campaigns/:campaignId/game-state
@@ -47,20 +58,10 @@ router.get(
       await getViewerContextOrThrow(client, campaignId, req.user);
 
       // Find the active session for this campaign
-      const { rows: sessionRows } = await client.query(
-        `SELECT id, game_state
-           FROM public.sessions
-          WHERE campaign_id = $1 AND status = 'active'
-          ORDER BY session_number DESC
-          LIMIT 1`,
-        [campaignId],
-      );
-
-      if (sessionRows.length === 0) {
+      const session = await getActiveSession(client, campaignId);
+      if (!session) {
         return res.json({ gameState: null, sessionId: null });
       }
-
-      const session = sessionRows[0];
       const gameState = await getGameState(client, session.id);
       return res.json({ gameState, sessionId: session.id });
     } catch (error) {
@@ -106,22 +107,9 @@ router.put(
       ensureDmControl(viewer);
 
       // Find active session
-      const { rows: sessionRows } = await client.query(
-        `SELECT id FROM public.sessions
-          WHERE campaign_id = $1 AND status = 'active'
-          ORDER BY session_number DESC LIMIT 1`,
-        [campaignId],
-      );
-
-      if (sessionRows.length === 0) {
-        await client.query('ROLLBACK');
-        return res.status(404).json({
-          error: 'no_active_session',
-          message: 'No active session found for this campaign',
-        });
-      }
-
-      const sessionId = sessionRows[0].id;
+      const activeSession = await requireActiveSession(client, campaignId, res);
+      if (!activeSession) return;
+      const sessionId = activeSession.id;
 
       // Auto-initiate combat when transitioning to combat phase
       let combatEncounterId = encounterId ?? null;
@@ -198,23 +186,11 @@ router.post(
       const viewer = await getViewerContextOrThrow(client, campaignId, req.user);
 
       // Find active session
-      const { rows: sessionRows } = await client.query(
-        `SELECT id, game_state FROM public.sessions
-          WHERE campaign_id = $1 AND status = 'active'
-          ORDER BY session_number DESC LIMIT 1`,
-        [campaignId],
-      );
+      const activeSession = await requireActiveSession(client, campaignId, res);
+      if (!activeSession) return;
 
-      if (sessionRows.length === 0) {
-        await client.query('ROLLBACK');
-        return res.status(404).json({
-          error: 'no_active_session',
-          message: 'No active session found',
-        });
-      }
-
-      const sessionId = sessionRows[0].id;
-      const currentState = sessionRows[0].game_state;
+      const sessionId = activeSession.id;
+      const currentState = activeSession.game_state;
       const activePlayerId = currentState?.activePlayerId;
 
       // Must be the active player or the DM
@@ -331,22 +307,9 @@ router.post(
       const viewer = await getViewerContextOrThrow(client, campaignId, req.user);
       ensureDmControl(viewer);
 
-      const { rows: sessionRows } = await client.query(
-        `SELECT id FROM public.sessions
-          WHERE campaign_id = $1 AND status = 'active'
-          ORDER BY session_number DESC LIMIT 1`,
-        [campaignId],
-      );
-
-      if (sessionRows.length === 0) {
-        await client.query('ROLLBACK');
-        return res.status(404).json({
-          error: 'no_active_session',
-          message: 'No active session found',
-        });
-      }
-
-      const sessionId = sessionRows[0].id;
+      const activeSession = await requireActiveSession(client, campaignId, res);
+      if (!activeSession) return;
+      const sessionId = activeSession.id;
       const result = await executeDmWorldTurn(client, sessionId, { actorId: req.user.id });
       await client.query('COMMIT');
 
@@ -401,22 +364,9 @@ router.put(
       const viewer = await getViewerContextOrThrow(client, campaignId, req.user);
       ensureDmControl(viewer);
 
-      const { rows: sessionRows } = await client.query(
-        `SELECT id FROM public.sessions
-          WHERE campaign_id = $1 AND status = 'active'
-          ORDER BY session_number DESC LIMIT 1`,
-        [campaignId],
-      );
-
-      if (sessionRows.length === 0) {
-        await client.query('ROLLBACK');
-        return res.status(404).json({
-          error: 'no_active_session',
-          message: 'No active session found',
-        });
-      }
-
-      const sessionId = sessionRows[0].id;
+      const activeSession = await requireActiveSession(client, campaignId, res);
+      if (!activeSession) return;
+      const sessionId = activeSession.id;
       const result = await setTurnOrder(client, sessionId, {
         turnOrder: newTurnOrder,
         actorId: req.user.id,
@@ -471,22 +421,9 @@ router.post(
       const viewer = await getViewerContextOrThrow(client, campaignId, req.user);
       ensureDmControl(viewer);
 
-      const { rows: sessionRows } = await client.query(
-        `SELECT id FROM public.sessions
-          WHERE campaign_id = $1 AND status = 'active'
-          ORDER BY session_number DESC LIMIT 1`,
-        [campaignId],
-      );
-
-      if (sessionRows.length === 0) {
-        await client.query('ROLLBACK');
-        return res.status(404).json({
-          error: 'no_active_session',
-          message: 'No active session found',
-        });
-      }
-
-      const sessionId = sessionRows[0].id;
+      const activeSession = await requireActiveSession(client, campaignId, res);
+      if (!activeSession) return;
+      const sessionId = activeSession.id;
       const result = await skipTurn(client, sessionId, {
         targetPlayerId,
         actorId: req.user.id,
@@ -543,23 +480,11 @@ router.post(
       ensureDmControl(viewer);
 
       // Find active session
-      const { rows: sessionRows } = await client.query(
-        `SELECT id, game_state FROM public.sessions
-          WHERE campaign_id = $1 AND status = 'active'
-          ORDER BY session_number DESC LIMIT 1`,
-        [campaignId],
-      );
+      const activeSession = await requireActiveSession(client, campaignId, res);
+      if (!activeSession) return;
 
-      if (sessionRows.length === 0) {
-        await client.query('ROLLBACK');
-        return res.status(404).json({
-          error: 'no_active_session',
-          message: 'No active session found',
-        });
-      }
-
-      const sessionId = sessionRows[0].id;
-      const gameState = sessionRows[0].game_state;
+      const sessionId = activeSession.id;
+      const gameState = activeSession.game_state;
 
       if (gameState?.phase !== 'combat' || !gameState?.encounterId) {
         await client.query('ROLLBACK');

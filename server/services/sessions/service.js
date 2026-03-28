@@ -32,6 +32,19 @@ export const getActiveSessionForUpdate = async (client, campaignId) => {
   return rows[0] ?? null;
 };
 
+/**
+ * Get the character_id for a campaign player.
+ * One of the most repeated lookups across route files.
+ */
+export const getCampaignPlayerCharacterId = async (client, campaignId, userId) => {
+  const { rows } = await client.query(
+    `SELECT character_id FROM public.campaign_players
+      WHERE campaign_id = $1 AND user_id = $2 AND status = 'active'`,
+    [campaignId, userId],
+  );
+  return rows[0]?.character_id ?? null;
+};
+
 export const fetchSessionWithCampaign = async (client, sessionId, { forUpdate = false } = {}) => {
   const lockClause = forUpdate ? 'FOR UPDATE' : '';
   const { rows } = await client.query(

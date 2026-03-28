@@ -47,6 +47,7 @@ import {
 import { respondWithNarrativeError } from '../llm/narrative-errors.js';
 import { checkRegionTriggers } from '../services/regions/trigger-service.js';
 import { narrateAreaEntry } from '../services/narration/proactive-narrator.js';
+import { getActiveSession } from '../services/sessions/service.js';
 import { LLMProviderError, LLMServiceError } from '../llm/index.js';
 import {
   OBJECTIVE_RETURNING_FIELDS,
@@ -966,14 +967,11 @@ router.post(
           const contextualService = req.app?.locals?.contextualLLMService;
           if (contextualService) {
             // Find active session for this campaign
-            client.query(
-              `SELECT id FROM public.sessions WHERE campaign_id = $1 AND status = 'active' LIMIT 1`,
-              [campaignId],
-            ).then(({ rows: sessRows }) => {
-              if (sessRows.length) {
+            getActiveSession(client, campaignId).then((sess) => {
+              if (sess) {
                 return narrateAreaEntry({
                   campaignId,
-                  sessionId: sessRows[0].id,
+                  sessionId: sess.id,
                   movementContext: reason || `Moved to (${Math.round(finalTarget.x)}, ${Math.round(finalTarget.y)})`,
                   contextualService,
                   wsServer,
