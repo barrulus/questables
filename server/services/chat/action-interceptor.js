@@ -215,6 +215,15 @@ export async function interceptChatAction({
       recentNarrations,
     });
 
+    // Override: action types that are NEVER free, regardless of what the LLM says
+    const NEVER_FREE = new Set([
+      'move', 'interact', 'search', 'use_item', 'cast_spell', 'talk_to_npc',
+      'attack', 'dash', 'dodge', 'disengage', 'help', 'hide', 'ready', 'custom',
+    ]);
+    if (NEVER_FREE.has(intent.actionType)) {
+      intent.isFreeAction = false;
+    }
+
     logInfo('Chat action intent parsed', {
       campaignId,
       characterName: character.name,
@@ -223,6 +232,7 @@ export async function interceptChatAction({
     });
 
     // Free actions don't consume the turn — skip DM resolution
+    // (only 'pass' or truly OOC messages should reach here)
     if (intent.isFreeAction) {
       return;
     }
