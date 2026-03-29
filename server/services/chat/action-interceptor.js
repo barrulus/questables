@@ -300,10 +300,10 @@ export async function interceptChatAction({
     }
 
     // Step 5: Update action record
-    const finalStatus = dmResponse.requiredRolls?.length ? 'awaiting_roll' : 'completed';
+    const finalStatus = dmResponse.requiredRolls?.length ? 'awaiting_roll' : 'resolved';
     await client.query(
       `UPDATE public.session_player_actions
-          SET dm_response = $2, status = $3, resolved_at = CASE WHEN $3 = 'completed' THEN NOW() ELSE NULL END
+          SET dm_response = $2, status = $3, resolved_at = CASE WHEN $3 = 'resolved' THEN NOW() ELSE NULL END
         WHERE id = $1`,
       [actionId, JSON.stringify(dmResponse), finalStatus],
     );
