@@ -228,14 +228,22 @@ export async function interceptChatAction({
     }
 
     // Step 2: Record the action in session_player_actions
+    // Look up campaign_player_id for the player_id FK
+    const { rows: cpRows } = await client.query(
+      `SELECT id FROM campaign_players WHERE campaign_id = $1 AND user_id = $2 LIMIT 1`,
+      [campaignId, userId],
+    );
+    const campaignPlayerId = cpRows[0]?.id ?? null;
+
     const { rows: actionRows } = await client.query(
       `INSERT INTO public.session_player_actions
-         (session_id, campaign_id, user_id, character_id, action_type, action_payload, status)
-       VALUES ($1, $2, $3, $4, $5, $6, 'processing')
+         (session_id, campaign_id, player_id, user_id, character_id, action_type, action_data, status)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, 'processing')
        RETURNING id`,
       [
         sessionId,
         campaignId,
+        campaignPlayerId,
         userId,
         characterId,
         intent.actionType,
