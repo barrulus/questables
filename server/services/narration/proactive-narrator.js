@@ -16,16 +16,16 @@ import { generateNpcsForBurg } from '../npcs/auto-generator.js';
 
 // ── Session Opening ─────────────────────────────────────────────────────────
 
-const SESSION_OPENING_SYSTEM_PROMPT = `You are the Dungeon Master for a D&D 5e campaign. A new game session is beginning. Your role is to set the scene and draw the players into the world.
+const SESSION_OPENING_SYSTEM_PROMPT = `You are the Dungeon Master narrating the opening of a D&D 5e session. Write ONLY in-character narration — no meta-commentary, no feedback, no suggestions.
 
-RULES:
-- Write an immersive opening narration (3-6 sentences) describing where the party finds themselves.
-- Use the geographic context to ground the description in the actual world map — name real settlements, routes, terrain.
-- Reference the campaign objectives to hint at what lies ahead without being heavy-handed.
-- Set the mood based on the world tone and narrative voice settings.
-- End with a clear invitation for the first player to act.
-- Do NOT invent locations or NPCs not present in the context.
-- Respond with plain narrative text, not JSON.`;
+Write 3-6 sentences that:
+- Describe where the party finds themselves right now
+- Use any named locations, terrain, or weather from the provided context
+- Hint at the session objective without stating it outright
+- End by addressing the players and inviting their first action
+- Set an evocative mood appropriate to the setting
+
+Do NOT: review the world lore, give writing feedback, ask questions, or break character. You are the DM speaking to the players.`;
 
 /**
  * Generate and post opening narration when a session is activated.
@@ -39,7 +39,7 @@ RULES:
 export async function narrateSessionOpening({
   campaignId,
   sessionId,
-  contextualService,
+  llmService,
   wsServer,
 }) {
   try {
@@ -77,25 +77,39 @@ export async function narrateSessionOpening({
       { label: 'proactive-narrator.objectives' },
     );
 
-    // Build the opening prompt
-    const sections = [];
-    if (spawn.note) sections.push(`## Spawn Note\n${spawn.note}`);
-    if (objectives.length) {
-      const objList = objectives.map((o) => `- ${o.title}`).join('\n');
-      sections.push(`## Major Campaign Objectives\n${objList}`);
-    }
+    // Load party members for the opening
+    const { rows: partyRows } = await query(
+      `SELECT c.name, c.class, c.race, c.level
+         FROM campaign_players cp
+         JOIN characters c ON c.id = cp.character_id
+        WHERE cp.campaign_id = $1 AND cp.status = 'active'`,
+      [campaignId],
+      { label: 'proactive-narrator.party' },
+    );
 
-    const { result } = await contextualService.generateFromContext({
-      campaignId,
-      sessionId,
+    // Build a focused prompt — no full context dump
+    const promptParts = [];
+    promptParts.push(`Campaign: ${campaignRows[0].campaign_name}`);
+    if (spawn.name || spawn.note) {
+      promptParts.push(`Starting location: ${spawn.name || 'Unknown'}${spawn.note ? ` — ${spawn.note}` : ''}`);
+    }
+    if (partyRows.length) {
+      const partyList = partyRows.map((p) => `${p.name} (Level ${p.level} ${p.race} ${p.class})`).join(', ');
+      promptParts.push(`Party: ${partyList}`);
+    }
+    if (objectives.length) {
+      promptParts.push(`Session objective: ${objectives.map((o) => o.title).join('; ')}`);
+    }
+    promptParts.push('\nNarrate the opening scene for this session.');
+
+    // Use the LLM service directly — no full game context needed for opening narration
+    const result = await llmService.generate({
       type: NARRATIVE_TYPES.SESSION_OPENING,
-      request: {
-        extraSections: sections.join('\n\n'),
-        systemPromptOverride: SESSION_OPENING_SYSTEM_PROMPT,
-      },
+      prompt: promptParts.join('\n'),
+      systemPrompt: SESSION_OPENING_SYSTEM_PROMPT,
     });
 
-    const narration = result.parsed?.narration || result.content || null;
+    const narration = result.content || null;
     if (narration) {
       await postNarrationToChat({
         campaignId,

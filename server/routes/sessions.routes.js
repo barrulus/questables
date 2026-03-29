@@ -324,13 +324,13 @@ router.put(
         sessionRow.status === 'scheduled' &&
         session.status === 'active'
       ) {
-        const contextualService = req.app?.locals?.contextualLLMService;
+        const llmService = req.app?.locals?.llmService;
         const wsServer = req.app?.locals?.wsServer;
-        if (contextualService) {
+        if (llmService) {
           narrateSessionOpening({
             campaignId: sessionRow.campaign_id,
             sessionId,
-            contextualService,
+            llmService,
             wsServer,
           }).catch((err) => logError('Session opening narration failed', { error: err.message }));
         }
