@@ -238,7 +238,7 @@ export async function interceptChatAction({
     const { rows: actionRows } = await client.query(
       `INSERT INTO public.session_player_actions
          (session_id, campaign_id, player_id, user_id, character_id, action_type, action_data, status)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, 'processing')
+       VALUES ($1, $2, $3, $4, $5, $6, $7, 'pending')
        RETURNING id`,
       [
         sessionId,
