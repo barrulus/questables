@@ -87,7 +87,37 @@ export async function narrateSessionOpening({
       { label: 'proactive-narrator.party' },
     );
 
-    // Build a focused prompt — no full context dump
+    // Load nearby geographic features for grounding
+    const worldMapId = campaignRows[0].world_map_id;
+    const sx = spawn.x;
+    const sy = spawn.y;
+
+    const { rows: nearbyBurgs } = await query(
+      `SELECT name, statefull, population, culture, religion,
+              ST_Distance(geom, ST_SetSRID(ST_MakePoint($2, $3), 0)) AS distance
+         FROM maps_burgs WHERE world_id = $1
+         ORDER BY geom <-> ST_SetSRID(ST_MakePoint($2, $3), 0) LIMIT 5`,
+      [worldMapId, sx, sy],
+      { label: 'proactive-narrator.nearby-burgs' },
+    );
+
+    const { rows: nearbyRivers } = await query(
+      `SELECT name, type
+         FROM maps_rivers WHERE world_id = $1
+         ORDER BY geom <-> ST_SetSRID(ST_MakePoint($2, $3), 0) LIMIT 2`,
+      [worldMapId, sx, sy],
+      { label: 'proactive-narrator.nearby-rivers' },
+    );
+
+    const { rows: terrainCell } = await query(
+      `SELECT biome, type AS terrain_type, state, culture, religion
+         FROM maps_cells WHERE world_id = $1
+          AND ST_Contains(geom, ST_SetSRID(ST_MakePoint($2, $3), 0)) LIMIT 1`,
+      [worldMapId, sx, sy],
+      { label: 'proactive-narrator.terrain' },
+    );
+
+    // Build a focused prompt with real geographic data
     const promptParts = [];
     promptParts.push(`Campaign: ${campaignRows[0].campaign_name}`);
     if (spawn.name || spawn.note) {
@@ -100,7 +130,22 @@ export async function narrateSessionOpening({
     if (objectives.length) {
       promptParts.push(`Session objective: ${objectives.map((o) => o.title).join('; ')}`);
     }
-    promptParts.push('\nNarrate the opening scene for this session.');
+
+    // Geographic context — real names only
+    if (terrainCell.length) {
+      const t = terrainCell[0];
+      const parts = [t.biome, t.terrain_type].filter(Boolean).join(', ');
+      promptParts.push(`Terrain: ${parts}${t.state ? ` (territory of ${t.state})` : ''}${t.culture ? `, ${t.culture} culture` : ''}`);
+    }
+    if (nearbyBurgs.length) {
+      const burgList = nearbyBurgs.map((b) => `${b.name} (${b.statefull}, pop ${b.population})`).join('; ');
+      promptParts.push(`Nearby settlements: ${burgList}`);
+    }
+    if (nearbyRivers.length) {
+      promptParts.push(`Nearby rivers: ${nearbyRivers.map((r) => `${r.name} (${r.type})`).join(', ')}`);
+    }
+
+    promptParts.push('\nUsing ONLY the real place names above, narrate the opening scene for this session.');
 
     // Use the LLM service directly — no full game context needed for opening narration
     const result = await llmService.generate({
