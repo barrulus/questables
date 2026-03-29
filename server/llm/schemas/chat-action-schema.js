@@ -30,7 +30,7 @@ export const CHAT_ACTION_PARSE_SCHEMA = {
     },
     isFreeAction: {
       type: 'boolean',
-      description: 'True if this is a free action that does not consume the player turn (looking around, checking inventory, asking a question OOC)',
+      description: 'True ONLY for out-of-character questions or pure OOC chat. In-game actions like looking around, checking inventory, searching, or interacting with anything are NEVER free actions.',
     },
     narrationHint: {
       type: 'string',
