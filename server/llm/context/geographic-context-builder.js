@@ -9,7 +9,6 @@
 import { query } from '../../db/pool.js';
 import { logError } from '../../utils/logger.js';
 
-const DEFAULT_RADIUS_PX = 200;
 const MAX_NEARBY_BURGS = 8;
 const MAX_NEARBY_MARKERS = 10;
 const MAX_NEARBY_ROUTES = 6;
@@ -33,7 +32,6 @@ export async function buildGeographicContext({
   y,
   campaignId = null,
   insideBurgId = null,
-  radiusPx = DEFAULT_RADIUS_PX,
 }) {
   if (!worldMapId || x == null || y == null) {
     return null;
@@ -53,10 +51,10 @@ export async function buildGeographicContext({
       settlementDetail,
     ] = await Promise.all([
       queryWorldMeta(worldMapId),
-      queryNearbyBurgs(worldMapId, pointWkt, radiusPx),
-      queryNearbyMarkers(worldMapId, pointWkt, radiusPx),
-      queryNearbyRoutes(worldMapId, pointWkt, radiusPx),
-      queryNearbyRivers(worldMapId, pointWkt, radiusPx),
+      queryNearbyBurgs(worldMapId, pointWkt),
+      queryNearbyMarkers(worldMapId, pointWkt),
+      queryNearbyRoutes(worldMapId, pointWkt),
+      queryNearbyRivers(worldMapId, pointWkt),
       queryTerrainCell(worldMapId, pointWkt),
       campaignId ? queryCampaignRegions(campaignId, pointWkt) : Promise.resolve([]),
       insideBurgId ? querySettlementDetail(insideBurgId) : Promise.resolve(null),
@@ -117,7 +115,7 @@ async function queryWorldMeta(worldMapId) {
   return rows[0] ?? null;
 }
 
-async function queryNearbyBurgs(worldMapId, pointWkt, radiusPx) {
+async function queryNearbyBurgs(worldMapId, pointWkt) {
   const { rows } = await query(
     `SELECT
        name, statefull, provincefull, culture, religion,
@@ -127,52 +125,52 @@ async function queryNearbyBurgs(worldMapId, pointWkt, radiusPx) {
        ST_X(geom) AS x_px, ST_Y(geom) AS y_px
      FROM public.maps_burgs
      WHERE world_id = $1
-       AND ST_DWithin(geom, ${pointWkt}, $2)
-     ORDER BY distance_px
-     LIMIT $3`,
-    [worldMapId, radiusPx, MAX_NEARBY_BURGS],
+     ORDER BY geom <-> ${pointWkt}
+     LIMIT $2`,
+    [worldMapId, MAX_NEARBY_BURGS],
     { label: 'geo-ctx.nearby-burgs' },
   );
   return rows;
 }
 
-async function queryNearbyMarkers(worldMapId, pointWkt, radiusPx) {
+async function queryNearbyMarkers(worldMapId, pointWkt) {
   const { rows } = await query(
     `SELECT
        type, icon, note,
        ST_Distance(geom, ${pointWkt}) AS distance_px
      FROM public.maps_markers
      WHERE world_id = $1
-       AND ST_DWithin(geom, ${pointWkt}, $2)
-     ORDER BY distance_px
-     LIMIT $3`,
-    [worldMapId, radiusPx, MAX_NEARBY_MARKERS],
+     ORDER BY geom <-> ${pointWkt}
+     LIMIT $2`,
+    [worldMapId, MAX_NEARBY_MARKERS],
     { label: 'geo-ctx.nearby-markers' },
   );
   return rows;
 }
 
-async function queryNearbyRoutes(worldMapId, pointWkt, radiusPx) {
+async function queryNearbyRoutes(worldMapId, pointWkt) {
   const { rows } = await query(
-    `SELECT name, type
+    `SELECT name, type,
+       ST_Distance(geom, ${pointWkt}) AS distance_px
      FROM public.maps_routes
-     WHERE world_id = $1
-       AND ST_DWithin(geom, ${pointWkt}, $2)
-     LIMIT $3`,
-    [worldMapId, radiusPx, MAX_NEARBY_ROUTES],
+     WHERE world_id = $1 AND name IS NOT NULL
+     ORDER BY geom <-> ${pointWkt}
+     LIMIT $2`,
+    [worldMapId, MAX_NEARBY_ROUTES],
     { label: 'geo-ctx.nearby-routes' },
   );
   return rows;
 }
 
-async function queryNearbyRivers(worldMapId, pointWkt, radiusPx) {
+async function queryNearbyRivers(worldMapId, pointWkt) {
   const { rows } = await query(
-    `SELECT name, type, width
+    `SELECT name, type, width,
+       ST_Distance(geom, ${pointWkt}) AS distance_px
      FROM public.maps_rivers
-     WHERE world_id = $1
-       AND ST_DWithin(geom, ${pointWkt}, $2)
-     LIMIT $3`,
-    [worldMapId, radiusPx, MAX_NEARBY_RIVERS],
+     WHERE world_id = $1 AND name IS NOT NULL
+     ORDER BY geom <-> ${pointWkt}
+     LIMIT $2`,
+    [worldMapId, MAX_NEARBY_RIVERS],
     { label: 'geo-ctx.nearby-rivers' },
   );
   return rows;
