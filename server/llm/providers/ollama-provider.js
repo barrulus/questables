@@ -174,19 +174,16 @@ export class OllamaProvider extends EnhancedLLMProvider {
         requestId,
       });
 
-      // Use caller's signal or create a timeout-based one
+      // Wrap in a timeout race — the Ollama SDK may not respect AbortSignal
       const timeoutMs = options.timeoutMs ?? this.timeoutMs;
-      let controller;
-      let signal = options.signal;
-      if (!signal && timeoutMs > 0) {
-        controller = new AbortController();
-        signal = controller.signal;
-        setTimeout(() => controller.abort(), timeoutMs);
-      }
+      const generatePromise = this.client.generate(generationOptions);
+      const timeoutPromise = timeoutMs > 0
+        ? new Promise((_, reject) => setTimeout(() => reject(new Error(`Ollama generation timed out after ${timeoutMs}ms`)), timeoutMs))
+        : null;
 
-      const response = await this.client.generate(generationOptions, {
-        signal,
-      });
+      const response = timeoutPromise
+        ? await Promise.race([generatePromise, timeoutPromise])
+        : await generatePromise;
 
       const latencyMs = Date.now() - startedAt;
       const promptTokens = typeof response?.prompt_eval_count === 'number' ? response.prompt_eval_count : null;
