@@ -2,6 +2,7 @@ import process from 'node:process';
 import { LLMProviderRegistry } from './provider-registry.js';
 import { createEnhancedLLMService } from './enhanced-llm-service.js';
 import { OllamaProvider } from './providers/ollama-provider.js';
+import { AnthropicProvider } from './providers/anthropic-provider.js';
 import { logError, logInfo, logWarn } from '../utils/logger.js';
 import { LLMConfigurationError } from './errors.js';
 
@@ -37,6 +38,30 @@ const ADAPTERS = {
       },
     });
   },
+  anthropic: (config) => {
+    const missing = [];
+    if (!config.apiKey) missing.push('apiKey');
+    if (!config.model) missing.push('model');
+
+    if (missing.length > 0) {
+      throw new LLMConfigurationError('Anthropic provider configuration is incomplete', {
+        provider: config.name,
+        missing,
+      });
+    }
+
+    return new AnthropicProvider({
+      name: config.name,
+      apiKey: config.apiKey,
+      model: config.model,
+      timeoutMs: parseInteger(config.timeoutMs, parseInteger(process.env.LLM_ANTHROPIC_TIMEOUT_MS, 60000)),
+      maxTokens: parseInteger(config.options?.maxTokens, parseInteger(process.env.LLM_ANTHROPIC_MAX_TOKENS, 1024)),
+      defaultOptions: {
+        temperature: config.options?.temperature ?? (process.env.LLM_ANTHROPIC_TEMPERATURE ? Number(process.env.LLM_ANTHROPIC_TEMPERATURE) : undefined),
+        ...config.options,
+      },
+    });
+  },
 };
 
 const sanitizeProviderConfig = (rawConfig = {}) => ({
@@ -51,20 +76,42 @@ const sanitizeProviderConfig = (rawConfig = {}) => ({
   defaultProvider: rawConfig.defaultProvider || rawConfig.default_provider || false,
 });
 
-const buildEnvProviderConfig = (env) => sanitizeProviderConfig({
-  name: env.LLM_PROVIDER_NAME || 'ollama',
-  adapter: env.LLM_PROVIDER_ADAPTER || 'ollama',
-  host: env.LLM_OLLAMA_HOST || 'http://192.168.1.34',
-  model: env.LLM_OLLAMA_MODEL || 'qwen3:8b',
-  apiKey: env.LLM_OLLAMA_API_KEY,
-  timeoutMs: env.LLM_OLLAMA_TIMEOUT_MS ? Number(env.LLM_OLLAMA_TIMEOUT_MS) : undefined,
-  options: {
-    temperature: env.LLM_OLLAMA_TEMPERATURE ? Number(env.LLM_OLLAMA_TEMPERATURE) : undefined,
-    top_p: env.LLM_OLLAMA_TOP_P ? Number(env.LLM_OLLAMA_TOP_P) : undefined,
-  },
-  enabled: true,
-  defaultProvider: true,
-});
+const buildEnvProviderConfig = (env) => {
+  // Prefer Anthropic when an API key is set, otherwise fall back to Ollama.
+  const adapter = env.LLM_PROVIDER_ADAPTER
+    || (env.ANTHROPIC_API_KEY ? 'anthropic' : 'ollama');
+
+  if (adapter === 'anthropic') {
+    return sanitizeProviderConfig({
+      name: env.LLM_PROVIDER_NAME || 'anthropic',
+      adapter: 'anthropic',
+      apiKey: env.ANTHROPIC_API_KEY,
+      model: env.LLM_ANTHROPIC_MODEL || 'claude-haiku-4-5-20251001',
+      timeoutMs: env.LLM_ANTHROPIC_TIMEOUT_MS ? Number(env.LLM_ANTHROPIC_TIMEOUT_MS) : undefined,
+      options: {
+        temperature: env.LLM_ANTHROPIC_TEMPERATURE ? Number(env.LLM_ANTHROPIC_TEMPERATURE) : undefined,
+        maxTokens: env.LLM_ANTHROPIC_MAX_TOKENS ? Number(env.LLM_ANTHROPIC_MAX_TOKENS) : undefined,
+      },
+      enabled: true,
+      defaultProvider: true,
+    });
+  }
+
+  return sanitizeProviderConfig({
+    name: env.LLM_PROVIDER_NAME || 'ollama',
+    adapter: 'ollama',
+    host: env.LLM_OLLAMA_HOST || 'http://192.168.1.34',
+    model: env.LLM_OLLAMA_MODEL || 'qwen3:8b',
+    apiKey: env.LLM_OLLAMA_API_KEY,
+    timeoutMs: env.LLM_OLLAMA_TIMEOUT_MS ? Number(env.LLM_OLLAMA_TIMEOUT_MS) : undefined,
+    options: {
+      temperature: env.LLM_OLLAMA_TEMPERATURE ? Number(env.LLM_OLLAMA_TEMPERATURE) : undefined,
+      top_p: env.LLM_OLLAMA_TOP_P ? Number(env.LLM_OLLAMA_TOP_P) : undefined,
+    },
+    enabled: true,
+    defaultProvider: true,
+  });
+};
 
 export function initializeLLMService({ env = process.env, providerConfigs = [] } = {}) {
   const registry = new LLMProviderRegistry();

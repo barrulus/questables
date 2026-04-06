@@ -8,6 +8,7 @@
 import { query } from '../../db/pool.js';
 import { logInfo, logError } from '../../utils/logger.js';
 import { extractAndPersistLore } from '../world-building/lore-extractor.js';
+import { extractAndPersistNpcs } from '../world-building/npc-extractor.js';
 
 // Module-level LLM service ref — set once at startup via setLLMService()
 let _llmService = null;
@@ -41,6 +42,8 @@ export async function postNarrationToChat({
   locY = null,
   insideBurgId = null,
   llmService = null,
+  actingCharacterId = null,
+  currentScene = null,
 }) {
   try {
     // Look up the campaign DM to use as sender
@@ -122,7 +125,7 @@ export async function postNarrationToChat({
       messageId: message?.id,
     });
 
-    // Fire-and-forget: extract lore facts from the narration
+    // Fire-and-forget: extract lore facts and NPCs from the narration
     const svc = llmService || _llmService;
     if (svc && content && messageType !== 'system_event' && messageType !== 'roll_request') {
       extractAndPersistLore({
@@ -134,6 +137,20 @@ export async function postNarrationToChat({
         insideBurgId,
       }).catch((err) => {
         logError('Lore extraction failed (non-blocking)', { campaignId, error: err.message });
+      });
+
+      extractAndPersistNpcs({
+        campaignId,
+        narrationContent: content,
+        llmService: svc,
+        sessionId,
+        actingCharacterId,
+        locX,
+        locY,
+        insideBurgId,
+        currentScene,
+      }).catch((err) => {
+        logError('NPC extraction failed (non-blocking)', { campaignId, error: err.message });
       });
     }
 

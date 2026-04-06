@@ -66,6 +66,21 @@ export const DM_RESPONSE_SCHEMA = {
         reason: { type: 'string' },
       },
     },
+    sceneTransition: {
+      type: ['object', 'null'],
+      description: 'Set when the player moves to a new sub-location (e.g. enters a building, leaves a room). Used to anchor NPCs and future narration.',
+      properties: {
+        newScene: {
+          type: 'string',
+          description: 'Short descriptor of the new scene, e.g. "inside Kael\'s cottage", "at the village shrine", "outside Dure village square"',
+        },
+        npcsInScene: {
+          type: 'array',
+          items: { type: 'string' },
+          description: 'Names of NPCs that are physically present in the new scene. These will be tagged so future narration knows where they are.',
+        },
+      },
+    },
   },
 };
 

@@ -1,7 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { io, Socket } from 'socket.io-client';
 import { useUser } from "../contexts/UserContext";
-import { getApiBaseUrl } from "../utils/api-client";
 
 interface SocketEnvelope<T = unknown> {
   type: string;
@@ -26,7 +25,6 @@ export const useWebSocket = (campaignId: string) => {
   const socketRef = useRef<Socket | null>(null);
   const retryTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const attemptsRef = useRef(0);
-  const baseUrlRef = useRef<string | null>(null);
 
   const [connected, setConnected] = useState(false);
   const [messages, setMessages] = useState<SocketEnvelope[]>([]);
@@ -85,22 +83,13 @@ export const useWebSocket = (campaignId: string) => {
       return;
     }
 
-    if (!baseUrlRef.current) {
-      try {
-        baseUrlRef.current = getApiBaseUrl();
-      } catch (error) {
-        console.error('[Socket.io] Unable to resolve API base URL', error);
-        return;
-      }
-    }
-
     if (socketRef.current?.connected) {
       return;
     }
 
     console.log('[Socket.io] Attempting to connect to campaign:', campaignId);
 
-    socketRef.current = io(baseUrlRef.current!, {
+    socketRef.current = io({
       auth: {
         token: authToken || user.id,
         userId: user.id,

@@ -59,7 +59,10 @@ export const logSecurityEvent = (event, severity = "low", details) => {
   });
 };
 
+const SILENT_PATHS = new Set(['/api/health', '/api/websocket/status']);
+
 export const createRequestLogger = () => (req, res, next) => {
+  if (SILENT_PATHS.has(req.originalUrl)) return next();
   const start = Date.now();
   logHttp(`${req.method} ${req.originalUrl}`, {
     method: req.method,

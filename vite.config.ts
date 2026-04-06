@@ -114,6 +114,17 @@ export default defineConfig(({ mode }: ConfigEnv): UserConfig => {
       https: httpsOptions,
       cors: true,
       hmr: hmrConfig ?? { host: 'localhost', protocol: httpsOptions ? 'wss' : 'ws' },
+      proxy: {
+        '/api': {
+          target: `http://localhost:${env.DATABASE_SERVER_PORT || '3001'}`,
+          changeOrigin: true,
+        },
+        '/socket.io': {
+          target: `http://localhost:${env.DATABASE_SERVER_PORT || '3001'}`,
+          changeOrigin: true,
+          ws: true,
+        },
+      },
       watch: {
         ignored: ['**/map_data/**', '**/public/**'],
       },

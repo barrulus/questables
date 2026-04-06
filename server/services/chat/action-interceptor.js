@@ -23,6 +23,7 @@ import {
 } from '../dm-action/service.js';
 import { getAllLiveStates } from '../live-state/service.js';
 import { postNarrationToChat, postPrivateNarration } from './dm-narrator.js';
+import { applySceneTransition } from '../scene/scene-tracker.js';
 
 /**
  * Determine if a chat message should be intercepted as a game action.
@@ -52,14 +53,20 @@ export async function shouldInterceptAsAction({
 
     if (!gameState) return { shouldIntercept: false };
 
-    // Check if this user is the active player
-    if (gameState.activePlayerId !== userId) {
-      return { shouldIntercept: false };
-    }
-
     // Check phase allows actions (exploration, combat, social)
     const actionPhases = new Set(['exploration', 'combat', 'social']);
     if (!actionPhases.has(gameState.phase)) {
+      return { shouldIntercept: false };
+    }
+
+    // In exploration/social, any player in the turn order can act freely.
+    // In combat, only the active player may act.
+    const isInTurnOrder = Array.isArray(gameState.turnOrder) && gameState.turnOrder.includes(userId);
+    if (gameState.phase === 'combat') {
+      if (gameState.activePlayerId !== userId) {
+        return { shouldIntercept: false };
+      }
+    } else if (!isInTurnOrder) {
       return { shouldIntercept: false };
     }
 
@@ -192,15 +199,17 @@ export async function interceptChatAction({
       [campaignId],
     );
 
-    // Load recent narrations
-    const { rows: recentActions } = await client.query(
-      `SELECT dm_response->>'narration' AS narration
-         FROM public.session_player_actions
-        WHERE session_id = $1 AND status = 'completed' AND dm_response IS NOT NULL
+    // Load recent DM narrations from chat (broader source than session_player_actions
+    // so seed scripts and dm_broadcasts are included).
+    const { rows: recentChat } = await client.query(
+      `SELECT content
+         FROM public.chat_messages
+        WHERE campaign_id = $1
+          AND (channel_type = 'dm_broadcast' OR message_type IN ('narration', 'action_result'))
         ORDER BY created_at DESC LIMIT 5`,
-      [sessionId],
+      [campaignId],
     );
-    const recentNarrations = recentActions.map((r) => r.narration).filter(Boolean).reverse();
+    const recentNarrations = recentChat.map((r) => r.content).filter(Boolean).reverse();
 
     // Step 1: Parse intent
     const intent = await parseActionIntent(contextualService, {
@@ -224,11 +233,45 @@ export async function interceptChatAction({
       intent.isFreeAction = false;
     }
 
+    // Resolve NPC target → npcId so the social action path uses the right NPC.
+    // The intent parser only gives us a string `target`. We try to match it to
+    // an existing NPC in the campaign by token overlap on the name.
+    if (intent.actionType === 'talk_to_npc' && intent.target) {
+      const targetTokens = intent.target.toLowerCase().replace(/[^a-z0-9 ]+/g, '').split(/\s+/).filter(Boolean);
+      if (targetTokens.length > 0) {
+        const { rows: npcMatches } = await client.query(
+          `SELECT id, name FROM public.npcs WHERE campaign_id = $1`,
+          [campaignId],
+        );
+        // Find the NPC whose normalised name shares the most tokens with the target
+        let bestMatch = null;
+        let bestScore = 0;
+        for (const npc of npcMatches) {
+          const npcTokens = npc.name.toLowerCase().replace(/[^a-z0-9 ]+/g, '').split(/\s+/).filter(Boolean);
+          const overlap = targetTokens.filter((t) => npcTokens.includes(t)).length;
+          if (overlap > bestScore) {
+            bestScore = overlap;
+            bestMatch = npc;
+          }
+        }
+        if (bestMatch && bestScore > 0) {
+          intent.npcId = bestMatch.id;
+          logInfo('Chat action: resolved target to NPC', {
+            campaignId,
+            target: intent.target,
+            npcId: bestMatch.id,
+            npcName: bestMatch.name,
+          });
+        }
+      }
+    }
+
     logInfo('Chat action intent parsed', {
       campaignId,
       characterName: character.name,
       actionType: intent.actionType,
       isFreeAction: intent.isFreeAction,
+      npcId: intent.npcId,
     });
 
     // Free actions don't consume the turn — skip DM resolution
@@ -299,6 +342,15 @@ export async function interceptChatAction({
       });
     }
 
+    // Step 4b: Apply scene transition (updates player.current_scene and NPC scene_tag)
+    if (dmResponse.sceneTransition) {
+      await applySceneTransition(client, {
+        campaignId,
+        userId,
+        sceneTransition: dmResponse.sceneTransition,
+      });
+    }
+
     // Step 5: Update action record
     const finalStatus = dmResponse.requiredRolls?.length ? 'awaiting_roll' : 'resolved';
     await client.query(
@@ -310,12 +362,22 @@ export async function interceptChatAction({
 
     // Step 6: Post narration to Adventure channel
     if (dmResponse.narration) {
+      // If a scene transition just fired, use the new scene; otherwise fall back to the prior scene.
+      const effectiveScene = dmResponse.sceneTransition?.newScene
+        ?? actionContext.currentScene
+        ?? null;
+
       await postNarrationToChat({
         campaignId,
         content: dmResponse.narration,
         messageType: 'action_result',
         sessionId,
         wsServer,
+        actingCharacterId: characterId,
+        locX: actionContext.playerLocation?.locX ?? null,
+        locY: actionContext.playerLocation?.locY ?? null,
+        insideBurgId: actionContext.playerLocation?.insideBurgId ?? null,
+        currentScene: effectiveScene,
       });
     }
 

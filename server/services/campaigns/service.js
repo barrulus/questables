@@ -240,8 +240,8 @@ export const performPlayerMovement = async ({
   await client.query(
     `UPDATE public.campaign_players
         SET loc_current = ST_SetSRID(ST_MakePoint($1, $2), 0),
-            inside_burg_id = $5,
-            current_map_level = CASE WHEN $5 IS NOT NULL THEN 'settlement' ELSE 'world' END,
+            inside_burg_id = $5::uuid,
+            current_map_level = CASE WHEN $5::uuid IS NOT NULL THEN 'settlement' ELSE 'world' END,
             last_located_at = NOW()
       WHERE campaign_id = $3
         AND id = $4`,

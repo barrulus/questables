@@ -43,35 +43,123 @@ export const buildActionContext = async (client, {
   );
   const liveState = liveRows[0] ?? null;
 
-  // Scene context: DM context markdown from session
+  // Session context: title, summary, DM notes, current focus
   const { rows: sessionRows } = await client.query(
-    `SELECT dm_context_md, dm_focus FROM public.sessions WHERE id = $1`,
+    `SELECT title, summary, dm_notes, dm_focus, dm_context_md FROM public.sessions WHERE id = $1`,
     [sessionId],
   );
   const session = sessionRows[0] ?? {};
 
-  // Visible NPCs near the player
-  const { rows: nearbyNpcs } = await client.query(
-    `SELECT n.id, n.name, n.occupation, n.personality
-       FROM public.npcs n
-      WHERE n.campaign_id = $1
-      LIMIT 10`,
+  // Campaign brief: name, description, setting
+  const { rows: campaignRows } = await client.query(
+    `SELECT name, description, setting FROM public.campaigns WHERE id = $1`,
     [campaignId],
   );
+  const campaign = campaignRows[0] ?? {};
 
-  // Last 5 narrations from completed actions this session
-  const { rows: recentActions } = await client.query(
-    `SELECT dm_response->>'narration' AS narration
-       FROM public.session_player_actions
-      WHERE session_id = $1 AND status = 'completed' AND dm_response IS NOT NULL
-      ORDER BY created_at DESC
-      LIMIT 5`,
-    [sessionId],
+  // Other player characters in the same campaign (active, with location)
+  const { rows: otherPlayers } = await client.query(
+    `SELECT ch.name AS character_name, ch.class AS character_class, ch.level AS character_level,
+            ch.race AS character_race, up.username,
+            ST_X(cp.loc_current) AS loc_x, ST_Y(cp.loc_current) AS loc_y,
+            cp.visibility_state
+       FROM public.campaign_players cp
+       JOIN public.characters ch ON cp.character_id = ch.id
+       JOIN public.user_profiles up ON cp.user_id = up.id
+      WHERE cp.campaign_id = $1 AND cp.status = 'active' AND cp.character_id != $2`,
+    [campaignId, characterId],
   );
-  const recentNarrations = recentActions
-    .map((r) => r.narration)
-    .filter(Boolean)
-    .reverse();
+
+  // Resolve the acting player's geographic location AND current scene
+  const { rows: playerLocRows } = await client.query(
+    `SELECT ST_X(cp.loc_current) AS loc_x, ST_Y(cp.loc_current) AS loc_y,
+            cp.inside_burg_id, cp.current_scene, b.name AS burg_name
+       FROM public.campaign_players cp
+       LEFT JOIN public.maps_burgs b ON cp.inside_burg_id = b.id
+      WHERE cp.campaign_id = $1 AND cp.user_id = $2 AND cp.loc_current IS NOT NULL
+      LIMIT 1`,
+    [campaignId, actingUserId],
+  );
+  const playerLoc = playerLocRows[0] ?? null;
+  const currentScene = playerLoc?.current_scene ?? null;
+
+  // NPCs at the player's current location AND scene.
+  // Scene filtering: if the player has a current_scene, only NPCs tagged
+  // with that exact scene OR with no scene tag (general village population)
+  // are visible. NPCs tagged with a *different* scene are excluded — they're
+  // somewhere else in the village.
+  let nearbyNpcs = [];
+  if (playerLoc?.loc_x != null && playerLoc?.loc_y != null) {
+    const NEARBY_RADIUS_PX = 5000;
+    const { rows } = await client.query(
+      `SELECT n.id, n.name, n.race, n.gender, n.age_group, n.occupation, n.personality, n.appearance, n.scene_tag,
+              ST_Distance(n.world_position, ST_SetSRID(ST_MakePoint($2, $3), 0)) AS distance
+         FROM public.npcs n
+        WHERE n.campaign_id = $1
+          AND (
+            n.world_position IS NULL
+            OR ST_Distance(n.world_position, ST_SetSRID(ST_MakePoint($2, $3), 0)) <= $4
+          )
+          AND (
+            $5::text IS NULL
+            OR n.scene_tag IS NULL
+            OR n.scene_tag = $5::text
+          )
+        ORDER BY n.world_position IS NULL, distance ASC NULLS LAST
+        LIMIT 10`,
+      [campaignId, playerLoc.loc_x, playerLoc.loc_y, NEARBY_RADIUS_PX, currentScene],
+    );
+    nearbyNpcs = rows;
+  } else {
+    const { rows } = await client.query(
+      `SELECT id, name, race, gender, age_group, occupation, personality, appearance, scene_tag
+         FROM public.npcs
+        WHERE campaign_id = $1
+          AND ($2::text IS NULL OR scene_tag IS NULL OR scene_tag = $2::text)
+        ORDER BY created_at DESC
+        LIMIT 10`,
+      [campaignId, currentScene],
+    );
+    nearbyNpcs = rows;
+  }
+
+  // If not inside a burg, find the nearest one for geographic context
+  let nearestBurgName = playerLoc?.burg_name ?? null;
+  if (!nearestBurgName && playerLoc?.loc_x != null) {
+    const { rows: burgRows } = await client.query(
+      `SELECT b.name
+         FROM public.maps_burgs b
+         JOIN public.campaigns c ON c.world_map_id = b.world_id
+        WHERE c.id = $1
+        ORDER BY ST_Distance(b.geom, ST_SetSRID(ST_MakePoint($2, $3), 0))
+        LIMIT 1`,
+      [campaignId, playerLoc.loc_x, playerLoc.loc_y],
+    );
+    nearestBurgName = burgRows[0]?.name ?? null;
+  }
+
+  // Recent chat history — both player messages and DM narrations, in order.
+  // This is what the players have actually seen, regardless of how it got there
+  // (action interceptor, seed script, or DM broadcast).
+  const { rows: recentChat } = await client.query(
+    `SELECT cm.content, cm.message_type, cm.channel_type, cm.sender_name, c.name AS character_name
+       FROM public.chat_messages cm
+       LEFT JOIN public.characters c ON cm.character_id = c.id
+      WHERE cm.campaign_id = $1
+        AND cm.channel_type IN ('party', 'dm_broadcast')
+      ORDER BY cm.created_at DESC
+      LIMIT 12`,
+    [campaignId],
+  );
+  const recentNarrations = recentChat
+    .reverse()
+    .map((row) => {
+      if (row.channel_type === 'dm_broadcast' || row.message_type === 'narration' || row.message_type === 'action_result') {
+        return `[DM] ${row.content}`;
+      }
+      const speaker = row.character_name || row.sender_name || 'Player';
+      return `${speaker}: ${row.content}`;
+    });
 
   // Load NPC context for social dialogue actions
   let npcContext = null;
@@ -110,15 +198,44 @@ export const buildActionContext = async (client, {
     npcContext = { npc, memories, relationship };
   }
 
+  // Build location name from actual map data, falling back to session dm_focus
+  const locationName = playerLoc?.burg_name
+    ? `In ${playerLoc.burg_name}`
+    : nearestBurgName
+      ? `Near ${nearestBurgName}`
+      : session.dm_focus ?? 'Unknown';
+
   return {
     character,
     liveState,
     actionType,
     actionPayload,
+    campaignBrief: {
+      name: campaign.name ?? null,
+      description: campaign.description ?? null,
+      setting: campaign.setting ?? null,
+    },
+    sessionBrief: {
+      title: session.title ?? null,
+      summary: session.summary ?? null,
+      dmNotes: session.dm_notes ?? null,
+      dmFocus: session.dm_focus ?? null,
+    },
+    playerLocation: playerLoc
+      ? {
+          locX: playerLoc.loc_x != null ? Number(playerLoc.loc_x) : null,
+          locY: playerLoc.loc_y != null ? Number(playerLoc.loc_y) : null,
+          insideBurgId: playerLoc.inside_burg_id ?? null,
+          burgName: playerLoc.burg_name ?? null,
+          currentScene,
+        }
+      : null,
+    currentScene,
     sceneContext: {
-      locationName: session.dm_focus ?? 'Unknown',
+      locationName,
       description: session.dm_context_md ?? null,
       visibleNpcs: nearbyNpcs,
+      otherPlayers,
       regionTags: [],
     },
     recentNarrations,

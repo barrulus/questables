@@ -304,6 +304,7 @@ CREATE TABLE IF NOT EXISTS public.campaign_players (
     loc_current geometry(Point, 0),
     inside_burg_id UUID REFERENCES public.maps_burgs(id) ON DELETE SET NULL,
     current_map_level TEXT NOT NULL DEFAULT 'world' CHECK (current_map_level IN ('world', 'settlement')),
+    current_scene TEXT,
     last_located_at TIMESTAMP WITH TIME ZONE DEFAULT NOW() NOT NULL,
     CONSTRAINT campaign_players_loc_current_srid CHECK (loc_current IS NULL OR ST_SRID(loc_current) = 0),
     UNIQUE(campaign_id, user_id)
@@ -784,6 +785,9 @@ CREATE TABLE IF NOT EXISTS public.npcs (
     voice_config JSONB DEFAULT '{}'::jsonb,
     auto_generated BOOLEAN DEFAULT false,
     linked_burg_id UUID REFERENCES public.maps_burgs(id) ON DELETE SET NULL,
+    gender TEXT,
+    age_group TEXT CHECK (age_group IS NULL OR age_group IN ('child', 'teen', 'young_adult', 'adult', 'middle_aged', 'elder')),
+    scene_tag TEXT,
     created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW() NOT NULL,
     updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW() NOT NULL
 );
@@ -791,6 +795,7 @@ CREATE INDEX IF NOT EXISTS idx_npcs_campaign_id ON public.npcs(campaign_id);
 CREATE INDEX IF NOT EXISTS idx_npcs_location_id ON public.npcs(current_location_id);
 CREATE INDEX IF NOT EXISTS idx_npcs_world_position_gix
     ON public.npcs USING GIST (world_position) WHERE world_position IS NOT NULL;
+CREATE INDEX IF NOT EXISTS idx_npcs_linked_burg ON public.npcs(linked_burg_id) WHERE linked_burg_id IS NOT NULL;
 DROP TRIGGER IF EXISTS _touch_npcs ON public.npcs;
 CREATE TRIGGER _touch_npcs
 BEFORE UPDATE ON public.npcs
@@ -830,7 +835,7 @@ WHERE COALESCE(npc.world_position, loc.world_position) IS NOT NULL;
 CREATE TABLE IF NOT EXISTS public.llm_providers (
     id UUID DEFAULT uuid_generate_v4() PRIMARY KEY,
     name TEXT NOT NULL UNIQUE,
-    adapter TEXT NOT NULL CHECK (adapter IN ('ollama')),
+    adapter TEXT NOT NULL CHECK (adapter IN ('ollama', 'anthropic')),
     host TEXT,
     model TEXT,
     api_key TEXT,

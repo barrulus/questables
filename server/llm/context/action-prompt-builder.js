@@ -39,16 +39,43 @@ const formatLiveState = (liveState) => {
   return parts.join(' | ');
 };
 
-const DM_SYSTEM_PROMPT = `You are the Dungeon Master for a D&D 5e campaign. You are processing a player's declared action during the exploration phase.
+const DM_SYSTEM_PROMPT = `You are the Dungeon Master for a D&D 5e campaign. Act like a tabletop DM running a live game with friends — not a novelist.
 
-RULES:
+RESPONSE LENGTH (STRICT):
+- Maximum 3 sentences in "narration". Hard limit.
+- No scene-setting, no weather, no atmosphere, no character descriptions, no internal monologue.
+- Describe ONLY what happens as a direct result of the player's action.
+- If a player asks a question, answer it as the world/an NPC would. Do not narrate around it.
+
+CONTINUITY (CRITICAL):
+- The "Session Transcript So Far" is the canonical history. Treat it like a stenographer's record.
+- Any NPC mentioned in the transcript MUST keep the same gender, name, appearance, and role. Never introduce a "new" NPC to fill the same role.
+- Any location, direction, or detail mentioned in the transcript MUST stay consistent. If the transcript says "western hills", do NOT say "eastern slopes".
+- Continue exactly from where the last entry left off. Do not restart, recap, or re-establish the scene.
+- Use the Campaign Brief and Session Brief to ground the story.
+
+SCENES AND SCENE TRANSITIONS (CRITICAL):
+- A "scene" is a specific sub-location: a room, a building, a corner of a square, an open shrine. The "Current sub-scene" line in the Scene Context tells you exactly where the player is right now.
+- The "NPCs at this location" list is already filtered to only NPCs in the player's current scene. Use them — and ONLY them — when narrating who is present.
+- When the player's action moves them to a NEW scene (entering a building, walking to a different group of people, going outside, leaving a room), you MUST populate the "sceneTransition" field in your response:
+    sceneTransition: { newScene: "inside Kael's cottage", npcsInScene: ["young Kael"] }
+  - "newScene" is a short descriptor of where the player now is.
+  - "npcsInScene" lists the NPCs (by name) who are physically present in the new scene. ONLY include NPCs that should be there.
+- Once you set a sceneTransition, the listed NPCs become anchored to that scene. Other NPCs from the previous scene are NOT present.
+- If no scene change occurs, leave sceneTransition null.
+- If the player addresses a SPECIFIC NPC by name, that NPC alone is the speaker. Do not have other NPCs present unless the player explicitly addresses them too.
+
+GROUNDING:
+- ONLY reference locations, NPCs, and landmarks that appear in the provided context (Campaign Brief, Session Brief, Scene Context, nearby burgs/routes/markers).
+- NEVER invent place names, NPCs, or lore. If you don't have information, say the character doesn't know or have an NPC say so.
+- If the player asks for directions, use the real nearby burgs/routes from the geographic context.
+
+MECHANICS:
 - Respond ONLY with valid JSON matching the required schema.
-- The "narration" field is always required: a vivid, immersive description of what happens (2-4 sentences).
-- If the action requires a dice roll (ability check, saving throw, attack roll, or skill check), populate "requiredRolls" with the roll details and set DC appropriately.
+- If the action requires a dice roll, populate "requiredRolls" with roll details and set DC appropriately.
 - If the action has immediate mechanical effects (damage, healing, conditions), populate "mechanicalOutcome".
 - If the action should trigger a phase transition (e.g., a search reveals enemies → combat), populate "phaseTransition".
 - "privateMessage" is for information only the acting player should see (secrets, hidden knowledge).
-- Do NOT invent NPCs, locations, or items not present in the scene context.
 - Keep DCs reasonable: easy=10, medium=15, hard=20, very hard=25.`;
 
 /**
@@ -59,11 +86,37 @@ export function buildActionPrompt({
   liveState,
   actionType,
   actionPayload,
+  campaignBrief,
+  sessionBrief,
   sceneContext,
+  currentScene,
   recentNarrations,
   rollResult,
 }) {
   const sections = [];
+
+  // Campaign brief — what is this campaign about?
+  if (campaignBrief) {
+    const briefParts = [];
+    if (campaignBrief.name) briefParts.push(`Name: ${campaignBrief.name}`);
+    if (campaignBrief.description) briefParts.push(`Premise: ${campaignBrief.description}`);
+    if (campaignBrief.setting) briefParts.push(`Setting: ${campaignBrief.setting}`);
+    if (briefParts.length > 0) {
+      sections.push(`## Campaign Brief\n${briefParts.join('\n')}`);
+    }
+  }
+
+  // Session brief — what is happening in this session?
+  if (sessionBrief) {
+    const sessionParts = [];
+    if (sessionBrief.title) sessionParts.push(`Title: ${sessionBrief.title}`);
+    if (sessionBrief.summary) sessionParts.push(`Summary: ${sessionBrief.summary}`);
+    if (sessionBrief.dmFocus) sessionParts.push(`Current focus: ${sessionBrief.dmFocus}`);
+    if (sessionBrief.dmNotes) sessionParts.push(`DM notes: ${sessionBrief.dmNotes}`);
+    if (sessionParts.length > 0) {
+      sections.push(`## Session Brief\n${sessionParts.join('\n')}`);
+    }
+  }
 
   // Character stat block
   sections.push(`## Acting Character
@@ -76,9 +129,10 @@ Live State: ${formatLiveState(liveState)}`);
 
   // Declared action
   const actionLabel = ACTION_TYPE_LABELS[actionType] || actionType;
+  const playerMessage = actionPayload?.originalChatMessage;
   sections.push(`## Declared Action
 Type: ${actionLabel}
-Details: ${JSON.stringify(actionPayload)}`);
+${playerMessage ? `Player says: "${playerMessage}"` : `Details: ${JSON.stringify(actionPayload)}`}`);
 
   // Roll result (if re-invocation after roll)
   if (rollResult) {
@@ -89,9 +143,23 @@ ${JSON.stringify(rollResult)}`);
   // Scene context
   if (sceneContext) {
     const sceneParts = [];
-    if (sceneContext.locationName) sceneParts.push(`Location: ${sceneContext.locationName}`);
+    if (sceneContext.locationName) sceneParts.push(`Geographic location: ${sceneContext.locationName}`);
+    if (currentScene) sceneParts.push(`Current sub-scene: ${currentScene} (only NPCs in this sub-scene are present)`);
     if (sceneContext.visibleNpcs?.length > 0) {
-      sceneParts.push(`Visible NPCs: ${sceneContext.visibleNpcs.map((n) => n.name).join(', ')}`);
+      const npcLines = sceneContext.visibleNpcs.map((n) => {
+        const demo = [n.gender, n.age_group, n.race].filter(Boolean).join(' ');
+        const parts = [`- ${n.name}`];
+        if (demo) parts.push(`(${demo}${n.occupation ? `, ${n.occupation}` : ''})`);
+        if (n.personality) parts.push(`— ${n.personality}`);
+        return parts.join(' ');
+      }).join('\n');
+      sceneParts.push(`NPCs at this location (use these EXACT NPCs — do not invent new ones for the same role):\n${npcLines}`);
+    }
+    if (sceneContext.otherPlayers?.length > 0) {
+      const playerList = sceneContext.otherPlayers
+        .map((p) => `${p.character_name} (${p.character_race} ${p.character_class}, Level ${p.character_level}, played by ${p.username})`)
+        .join(', ');
+      sceneParts.push(`Other party members: ${playerList}`);
     }
     if (sceneContext.regionTags?.length > 0) {
       sceneParts.push(`Region Tags: ${sceneContext.regionTags.join(', ')}`);
@@ -102,13 +170,13 @@ ${JSON.stringify(rollResult)}`);
     }
   }
 
-  // Recent narrations
+  // Recent transcript — what the players have actually seen so far this session.
+  // Includes both [DM] narrations and player chat messages, in chronological order.
+  // This is the canonical history. NPCs, locations, and details mentioned here MUST
+  // remain consistent in the new narration.
   if (recentNarrations?.length > 0) {
-    const narrationText = recentNarrations
-      .slice(-5)
-      .map((n, i) => `${i + 1}. ${n}`)
-      .join('\n');
-    sections.push(`## Recent Narrations\n${narrationText}`);
+    const transcript = recentNarrations.join('\n\n');
+    sections.push(`## Session Transcript So Far (canonical — DO NOT contradict)\n${transcript}`);
   }
 
   return sections.join('\n\n');

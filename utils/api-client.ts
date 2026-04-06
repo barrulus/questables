@@ -1,10 +1,4 @@
-const ENV_VAR_NAME = "VITE_DATABASE_SERVER_URL";
 export const AUTH_LOGOUT_EVENT = "questables:auth:logout";
-
-function normalizeBaseUrl(rawValue: string): string {
-  const trimmed = rawValue.trim();
-  return trimmed.replace(/\/+$/, "");
-}
 
 export class HttpError extends Error {
   status: number;
@@ -23,37 +17,9 @@ function broadcastAuthLogout(detail: { message: string }) {
   window.dispatchEvent(new CustomEvent(AUTH_LOGOUT_EVENT, { detail }));
 }
 
-const resolveBaseUrlEnv = (): string | undefined => {
-  const metaEnv = typeof import.meta !== "undefined"
-    ? ((import.meta as { env?: Record<string, unknown> }).env?.VITE_DATABASE_SERVER_URL as string | undefined)
-    : undefined;
-
-  if (typeof metaEnv === "string" && metaEnv.trim()) {
-    return metaEnv;
-  }
-
-  const processEnv = typeof process !== "undefined"
-    ? process.env?.VITE_DATABASE_SERVER_URL
-    : undefined;
-
-  return typeof processEnv === "string" && processEnv.trim() ? processEnv : undefined;
-};
-
+/** API base URL — always same-origin; the server infrastructure proxies to the backend. */
 export function getApiBaseUrl(): string {
-  const envValue = resolveBaseUrlEnv();
-
-  if (!envValue || !envValue.trim()) {
-    throw new Error(
-      `${ENV_VAR_NAME} is not configured. Set it to the fully qualified URL of the database server (e.g., https://localhost:3001).`
-    );
-  }
-
-  const normalized = normalizeBaseUrl(envValue);
-  if (!/^https?:\/\//i.test(normalized)) {
-    throw new Error(`${ENV_VAR_NAME} must include the http(s) protocol (received "${envValue}").`);
-  }
-
-  return normalized;
+  return "";
 }
 
 export function buildApiUrl(path: string): string {
