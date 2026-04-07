@@ -193,7 +193,7 @@ export function ChatPanel() {
         )}
         {error && <p className="text-sm text-red-500">{error}</p>}
       </CardHeader>
-      <CardContent className="flex-1 p-0">
+      <CardContent className="flex-1 min-h-0 p-0">
         {loading ? (
           <div className="flex h-full flex-col gap-4 p-4">
             <Skeleton className="h-10 w-full" />

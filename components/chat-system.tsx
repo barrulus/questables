@@ -145,6 +145,7 @@ export function ChatSystem({ campaignId, campaignName, campaignRole, dmUserId }:
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const messageInputRef = useRef<HTMLInputElement | null>(null);
   const typingActiveRef = useRef(false);
+  const lastProcessedWsIndexRef = useRef(0);
 
   const {
     connected,
@@ -350,40 +351,73 @@ export function ChatSystem({ campaignId, campaignName, campaignRole, dmUserId }:
     };
   }, [campaignId, loadMessages]);
 
+  // Re-sync on reconnect: if the WS dropped and reconnected, any messages
+  // emitted while we were offline are gone — refetch from REST to fill gaps.
+  const hasEverConnectedRef = useRef(false);
   useEffect(() => {
-    if (wsMessages.length === 0) {
+    if (!connected) return;
+    if (hasEverConnectedRef.current) {
+      // This is a reconnect, not the initial connect — refetch missed messages.
+      loadMessages({ showSpinner: false }).catch(() => {});
+    }
+    hasEverConnectedRef.current = true;
+  }, [connected, loadMessages]);
+
+  useEffect(() => {
+    if (wsMessages.length < lastProcessedWsIndexRef.current) {
+      // wsMessages was reset (e.g. on reconnect) — restart from the beginning
+      lastProcessedWsIndexRef.current = 0;
+    }
+    if (wsMessages.length === lastProcessedWsIndexRef.current) {
       return;
     }
 
-    const latestEnvelope = wsMessages[wsMessages.length - 1];
-    if (!latestEnvelope || latestEnvelope.type !== "new_message" || !latestEnvelope.data) {
-      return;
+    const newEnvelopes = wsMessages.slice(lastProcessedWsIndexRef.current);
+    lastProcessedWsIndexRef.current = wsMessages.length;
+
+    const incomingMessages: ChatMessage[] = [];
+    for (const envelope of newEnvelopes) {
+      if (!envelope || envelope.type !== "new_message" || !envelope.data) {
+        continue;
+      }
+      incomingMessages.push(normalizeChatMessage(envelope.data as ApiChatMessage));
     }
 
-    const incoming = normalizeChatMessage(latestEnvelope.data as ApiChatMessage);
+    if (incomingMessages.length === 0) {
+      return;
+    }
 
     setMessages((prev) => {
-      if (prev.some((message) => message.id === incoming.id)) {
+      const seen = new Set(prev.map((m) => m.id));
+      const additions = incomingMessages.filter((m) => !seen.has(m.id));
+      if (additions.length === 0) {
         return prev;
       }
-
-      const next = [...prev, incoming];
+      const next = [...prev, ...additions];
       next.sort((a, b) => new Date(a.created_at).getTime() - new Date(b.created_at).getTime());
       return next;
     });
 
-    // Increment unread for non-active channels
-    const incomingKey = channelKey(incoming.channel_type ?? "party", incoming.channel_target_user_id);
     const activeKey = channelKey(activeChannel.channelType, activeChannel.targetUserId);
-    if (incomingKey !== activeKey && incoming.sender_id !== user?.id) {
-      setUnreadCounts((prev) => ({
-        ...prev,
-        [incomingKey]: (prev[incomingKey] ?? 0) + 1,
-      }));
+    const unreadDeltas: Record<string, number> = {};
+    for (const incoming of incomingMessages) {
+      const incomingKey = channelKey(incoming.channel_type ?? "party", incoming.channel_target_user_id);
+      if (incomingKey !== activeKey && incoming.sender_id !== user?.id) {
+        unreadDeltas[incomingKey] = (unreadDeltas[incomingKey] ?? 0) + 1;
+      }
+      if (incoming.sender_id !== user?.id) {
+        toast.success(`New message from ${incoming.sender_name}`);
+      }
     }
 
-    if (incoming.sender_id !== user?.id) {
-      toast.success(`New message from ${incoming.sender_name}`);
+    if (Object.keys(unreadDeltas).length > 0) {
+      setUnreadCounts((prev) => {
+        const next = { ...prev };
+        for (const [key, delta] of Object.entries(unreadDeltas)) {
+          next[key] = (next[key] ?? 0) + delta;
+        }
+        return next;
+      });
     }
   }, [wsMessages, user, activeChannel, channelKey]);
 
@@ -675,7 +709,7 @@ export function ChatSystem({ campaignId, campaignName, campaignRole, dmUserId }:
   }
 
   return (
-    <div className="flex h-full flex-col">
+    <div className="flex h-full min-h-0 flex-col">
       <div className="flex items-center justify-between border-b px-4 py-3">
         <div className="flex items-center gap-2">
           <Users className="w-5 h-5" />
@@ -748,7 +782,7 @@ export function ChatSystem({ campaignId, campaignName, campaignRole, dmUserId }:
         )}
       </div>
 
-      <ScrollArea className="flex-1 px-4">
+      <ScrollArea className="flex-1 min-h-0 px-4">
         <div className="space-y-3 py-4">
           {filteredMessages.map((message) => (
             <div key={message.id} className={`flex gap-3 rounded p-2 ${getMessageStyling(message)}`}>
@@ -831,15 +865,18 @@ export function ChatSystem({ campaignId, campaignName, campaignRole, dmUserId }:
           <Button
             variant="outline"
             size="sm"
+            title="Post a freeform dice roll to chat. Does not satisfy DM-requested rolls — use the Roll Required panel for those."
             onClick={() => {
-          const dice = prompt("Enter dice expression (e.g., 1d20+5, 2d6):");
-          if (dice) {
-            void rollDice(dice);
-          }
-        }}
-      >
+              const dice = prompt(
+                "Freeform roll — enter dice expression (e.g., 1d20+5, 2d6).\n\nThis posts to chat only. To satisfy a DM-requested check, use the Roll Required panel below the map.",
+              );
+              if (dice) {
+                void rollDice(dice);
+              }
+            }}
+          >
             <Dice6 className="mr-1 h-4 w-4" />
-            Roll Dice
+            Freeform Roll
           </Button>
           <Button
             variant="outline"

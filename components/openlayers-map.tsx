@@ -1542,6 +1542,17 @@ export function OpenLayersMap() {
     map.on('pointermove', pointerMoveListener);
     view.on('change:resolution', zoomChangeListener);
 
+    // Re-measure the canvas whenever the container resizes (column flex
+    // changes, panel toggles, window resize, etc.). Without this, switching
+    // from a fixed pixel height to a flex-grown height leaves OL stuck at
+    // its initial size.
+    const resizeObserver = typeof ResizeObserver !== 'undefined'
+      ? new ResizeObserver(() => map.updateSize())
+      : null;
+    if (resizeObserver && mapRef.current) {
+      resizeObserver.observe(mapRef.current);
+    }
+
     // Load initial data
     loadInitialDataRef.current?.();
 
@@ -1550,6 +1561,7 @@ export function OpenLayersMap() {
       map.un('moveend', mapMoveEndListener);
       map.un('pointermove', pointerMoveListener);
       view.un('change:resolution', zoomChangeListener);
+      resizeObserver?.disconnect();
       map.dispose();
       mapInstanceRef.current = null;
     };
@@ -2025,12 +2037,11 @@ export function OpenLayersMap() {
         </div>
       </CardHeader>
 
-      <CardContent className="p-0 relative">
-        <div className="relative">
+      <CardContent className="flex-1 min-h-0 p-0 relative">
+        <div className="relative h-full">
           <div
             ref={mapRef}
-            className="w-full bg-blue-50"
-            style={{ height: 'calc(100vh - 200px)' }}
+            className="h-full w-full bg-blue-50"
           />
 
           {hoverInfo ? (

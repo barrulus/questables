@@ -180,7 +180,7 @@ export function ExpandablePanel({ activePanel, onClose }: ExpandablePanelProps) 
   };
 
   return (
-    <div className="fixed inset-y-0 left-0 z-40 w-full sm:w-72 lg:w-96 md:static md:z-auto border-r bg-card flex flex-col">
+    <div className="fixed inset-y-0 left-0 z-40 w-full sm:w-72 lg:w-96 md:static md:z-auto md:h-full border-r bg-card flex flex-col min-h-0">
       <div className="border-b p-4">
         <div className="flex items-center justify-between mb-3">
           <div className="flex items-center gap-2">
@@ -231,7 +231,7 @@ export function ExpandablePanel({ activePanel, onClose }: ExpandablePanelProps) 
           {renderPanelContent()}
         </div>
       ) : (
-        <ScrollArea className="flex-1">
+        <ScrollArea className="flex-1 min-h-0">
           <div className="p-4">
             {renderPanelContent()}
           </div>

@@ -34,8 +34,8 @@ npm run dev:local
 
 Application endpoints:
 - **Frontend:** http://localhost:3000
-- **Backend API:** http://localhost:3001
-- **Health Check:** http://localhost:3001/api/health
+- **Backend API:** http://localhost:5101
+- **Health Check:** http://localhost:5101/api/health
 
 ## Environment Variables
 
@@ -43,13 +43,13 @@ Create `.env` in the project root:
 
 ```env
 # Required
-VITE_DATABASE_SERVER_URL=http://localhost:3001
+VITE_DATABASE_SERVER_URL=http://localhost:5101
 DATABASE_HOST=localhost
 DATABASE_PORT=5432
 DATABASE_NAME=dnd_app
 DATABASE_USER=your_username
 DATABASE_PASSWORD=your_password
-DATABASE_SERVER_PORT=3001
+DATABASE_SERVER_PORT=5101
 FRONTEND_URL=http://localhost:3000
 
 # Optional: HTTPS
@@ -73,7 +73,7 @@ LLM_OLLAMA_MODEL=qwen3:8b
 | Script | Description |
 |--------|-------------|
 | `npm run dev` | Start Vite dev server (frontend only, port 3000) |
-| `npm run db:server` | Start Express backend (port 3001) |
+| `npm run db:server` | Start Express backend (port 5101) |
 | `npm run dev:local` | Start both frontend and backend concurrently |
 | `npm run db:setup` | Install server dependencies and initialize database |
 | `npm run build` | TypeScript check + Vite production build |
@@ -160,7 +160,7 @@ tests/
 Integration tests require a running backend:
 
 ```bash
-LIVE_API_BASE_URL=http://localhost:3001 \
+LIVE_API_BASE_URL=http://localhost:5101 \
 LIVE_API_ADMIN_EMAIL=admin@questables.example \
 LIVE_API_ADMIN_PASSWORD=changeme \
 npm test -- --runTestsByPath tests/live-api.integration.test.js
@@ -255,7 +255,7 @@ psql -l | grep dnd_app
 psql -d dnd_app -c "SELECT PostGIS_version();"
 
 # Check health endpoint
-curl http://localhost:3001/api/health
+curl http://localhost:5101/api/health
 ```
 
 ### Frontend Build Issues

@@ -95,7 +95,11 @@ export const useWebSocket = (campaignId: string) => {
         userId: user.id,
         username: user.username || user.email,
       },
-      transports: ['websocket'],
+      // Allow polling fallback: when running through proxies (Vite dev proxy,
+      // Tailscale, etc.) the WS upgrade can fail with ECONNRESET. Polling
+      // works over plain HTTP(S) and socket.io will upgrade to WS once it can.
+      transports: ['polling', 'websocket'],
+      upgrade: true,
       withCredentials: true,
       forceNew: true,
     });

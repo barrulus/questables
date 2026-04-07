@@ -49,7 +49,7 @@ export type AppConfig = z.infer<typeof envSchema>;
 
 // Default configuration values
 const DEFAULT_CONFIG: AppConfig = {
-  DATABASE_SERVER_PORT: '3001',
+  DATABASE_SERVER_PORT: '5101',
   DATABASE_HOST: 'localhost',
   DATABASE_PORT: '5432',
   DATABASE_NAME: 'dnd_app',
@@ -58,7 +58,7 @@ const DEFAULT_CONFIG: AppConfig = {
   DATABASE_SSL: 'false',
   
   FRONTEND_URL: 'http://localhost:3000',
-  VITE_DATABASE_URL: 'http://localhost:3001',
+  VITE_DATABASE_URL: 'http://localhost:5101',
   
   JWT_SECRET: 'your-super-secret-jwt-key-change-this-in-production',
   JWT_EXPIRES_IN: '24h',

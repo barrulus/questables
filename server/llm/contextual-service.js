@@ -50,30 +50,17 @@ export function createContextualLLMService({ pool, llmService, providerName, pro
     }
   };
 
-  const generateFromContext = async ({
-    campaignId,
-    sessionId,
-    type,
-    provider: providerOverride,
-    parameters,
-    metadata = {},
-    request = {},
-  }) => {
-    // Load campaign LLM settings for prompt customisation and provider overrides
+  /**
+   * Resolve provider config for a campaign, merging caller overrides over
+   * campaign LLM settings. Returns { providerConfig, campaignLLMSettings }.
+   */
+  const resolveCampaignProviderConfig = async ({ campaignId, providerOverride }) => {
     let campaignLLMSettings = null;
     try {
       campaignLLMSettings = await getCampaignLLMSettings(campaignId);
     } catch {
       // Non-fatal: proceed with defaults if settings table doesn't exist yet
     }
-
-    const llmSettings = campaignLLMSettings ? {
-      chatHistoryDepth: campaignLLMSettings.chat_history_depth,
-      npcMemoryDepth: campaignLLMSettings.npc_memory_depth,
-      includeUndiscoveredLocations: campaignLLMSettings.include_undiscovered_locations,
-    } : undefined;
-
-    const gameContext = await contextManager.buildGameContext({ campaignId, sessionId, llmSettings });
 
     // Merge provider overrides: caller takes precedence over campaign settings
     const effectiveProviderOverride = { ...providerOverride };
@@ -95,6 +82,30 @@ export function createContextualLLMService({ pool, llmService, providerName, pro
 
     const provider = resolveProvider(effectiveProviderOverride?.name);
     const providerConfig = extractProviderConfig(provider, effectiveProviderOverride);
+    return { providerConfig, campaignLLMSettings };
+  };
+
+  const generateFromContext = async ({
+    campaignId,
+    sessionId,
+    type,
+    provider: providerOverride,
+    parameters,
+    metadata = {},
+    request = {},
+  }) => {
+    const { providerConfig, campaignLLMSettings } = await resolveCampaignProviderConfig({
+      campaignId,
+      providerOverride,
+    });
+
+    const llmSettings = campaignLLMSettings ? {
+      chatHistoryDepth: campaignLLMSettings.chat_history_depth,
+      npcMemoryDepth: campaignLLMSettings.npc_memory_depth,
+      includeUndiscoveredLocations: campaignLLMSettings.include_undiscovered_locations,
+    } : undefined;
+
+    const gameContext = await contextManager.buildGameContext({ campaignId, sessionId, llmSettings });
 
     // Pass campaign LLM settings to prompt builder
     const enrichedRequest = {
@@ -141,9 +152,62 @@ export function createContextualLLMService({ pool, llmService, providerName, pro
     };
   };
 
+  /**
+   * Generate using a caller-supplied system prompt and user prompt verbatim.
+   *
+   * Bypasses `buildStructuredPrompt` and the generic context dump entirely.
+   * Use this for action/social/combat/world-turn pipelines that already build
+   * their own focused prompts via `action-prompt-builder.js`. Campaign LLM
+   * settings (preferred provider, model, temperature) are still honored.
+   */
+  const generateDirect = async ({
+    campaignId,
+    sessionId,
+    type,
+    systemPrompt,
+    prompt,
+    provider: providerOverride,
+    parameters,
+    metadata = {},
+  }) => {
+    const { providerConfig } = await resolveCampaignProviderConfig({
+      campaignId,
+      providerOverride,
+    });
+
+    const result = await llmService.generate({
+      type,
+      providerName: providerConfig.name,
+      model: providerConfig.model,
+      prompt,
+      systemPrompt,
+      metadata: {
+        ...metadata,
+        campaignId,
+        sessionId: sessionId ?? null,
+        providerModel: providerConfig.model,
+        providerName: providerConfig.name,
+      },
+      context: {
+        provider: providerConfig,
+      },
+      parameters,
+    });
+
+    return {
+      result,
+      prompt: {
+        system: systemPrompt,
+        user: prompt,
+      },
+      provider: providerConfig,
+    };
+  };
+
   return {
     contextManager,
     generateFromContext,
+    generateDirect,
   };
 }
 

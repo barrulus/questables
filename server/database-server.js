@@ -62,7 +62,7 @@ import {
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
 const app = express();
-const port = process.env.DATABASE_SERVER_PORT || 3001;
+const port = process.env.DATABASE_SERVER_PORT || 5101;
 
 const defaultTlsCertPath = process.env.DATABASE_SERVER_TLS_CERT
   || join(__dirname, '..', 'quixote.tail3f19fe.ts.net.crt');

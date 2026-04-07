@@ -25,6 +25,7 @@ import { writeNpcMemoryInternal } from '../services/npcs/service.js';
 import { consumeAction } from '../services/combat/service.js';
 import { logError, logInfo } from '../utils/logger.js';
 import { postNarrationToChat, postPrivateNarration } from '../services/chat/dm-narrator.js';
+import { endTurn, getGameState } from '../services/game-state/service.js';
 
 const router = Router();
 
@@ -103,15 +104,33 @@ router.post(
         throw err;
       }
 
+      // Look up campaign_players.id for the player_id FK on session_player_actions.
+      // The table has both user_id and player_id NOT NULL — the latter references
+      // campaign_players(id), not user_profiles(id).
+      const { rows: cpRows } = await client.query(
+        `SELECT id FROM public.campaign_players
+          WHERE campaign_id = $1 AND user_id = $2 AND status = 'active'
+          LIMIT 1`,
+        [campaignId, req.user.id],
+      );
+      const campaignPlayerId = cpRows[0]?.id ?? null;
+      if (!campaignPlayerId) {
+        const err = new Error('Player is not enrolled in this campaign');
+        err.status = 400;
+        err.code = 'not_enrolled';
+        throw err;
+      }
+
       // Insert the action
       const { rows: actionRows } = await client.query(
         `INSERT INTO public.session_player_actions
-          (session_id, campaign_id, user_id, character_id, round_number, action_type, action_payload, status)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, 'processing')
+          (session_id, campaign_id, player_id, user_id, character_id, round_number, action_type, action_payload, status)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, 'processing')
          RETURNING id, status, created_at`,
         [
           session.id,
           campaignId,
+          campaignPlayerId,
           req.user.id,
           characterId,
           gameState?.roundNumber ?? 1,
@@ -196,7 +215,7 @@ router.post(
 
           // Check if rolls are required
           const needsRoll = Array.isArray(dmResponse.requiredRolls) && dmResponse.requiredRolls.length > 0;
-          const finalStatus = needsRoll ? 'awaiting_roll' : 'completed';
+          const finalStatus = needsRoll ? 'awaiting_roll' : 'resolved';
 
           // Apply mechanical outcomes if no roll needed
           if (!needsRoll && dmResponse.mechanicalOutcome) {
@@ -208,7 +227,7 @@ router.post(
           }
 
           // Auto-write NPC memory after social dialogue
-          if (isSocialDialogue && dmResponse.npcSentimentUpdate && finalStatus === 'completed') {
+          if (isSocialDialogue && dmResponse.npcSentimentUpdate && finalStatus === 'resolved') {
             try {
               await writeNpcMemoryInternal(asyncClient, {
                 npcId: actionPayload.npcId,
@@ -230,7 +249,7 @@ router.post(
           // Update the action record
           await asyncClient.query(
             `UPDATE public.session_player_actions
-                SET dm_response = $2, status = $3, resolved_at = CASE WHEN $3 = 'completed' THEN NOW() ELSE NULL END
+                SET dm_response = $2, status = $3, resolved_at = CASE WHEN $3 = 'resolved' THEN NOW() ELSE NULL END
               WHERE id = $1`,
             [action.id, JSON.stringify(dmResponse), finalStatus],
           );
@@ -270,7 +289,7 @@ router.post(
             }
 
             // Action completed broadcast
-            if (finalStatus === 'completed') {
+            if (finalStatus === 'resolved') {
               wsServer.emitActionCompleted(campaignId, {
                 actionId: action.id,
                 characterId,
@@ -378,17 +397,21 @@ router.post(
         }
       }
 
-      // Store the roll result
+      // Store the roll result and mark the action resolved. The valid status
+      // values for session_player_actions are pending|awaiting_roll|resolved|cancelled
+      // (see database/migrations/001_llm_dm_pivot.sql) — there is no intermediate
+      // 'processing' state. The async LLM resolution below appends dm_response
+      // without further status changes.
       await client.query(
         `UPDATE public.session_player_actions
-            SET roll_result = $2, status = 'processing'
+            SET roll_result = $2, status = 'resolved', resolved_at = NOW()
           WHERE id = $1`,
         [actionId, JSON.stringify(rollResult)],
       );
 
       await client.query('COMMIT');
 
-      res.json({ actionId, status: 'processing' });
+      res.json({ actionId, status: 'resolved' });
 
       // ── Async: re-invoke LLM with roll result ──────────────────────────
       const wsServer = req.app?.locals?.wsServer;
@@ -411,11 +434,42 @@ router.post(
             gameState: null,
           });
 
+          // Enrich rollResult with the DC from the previous DM response so the
+          // post-roll prompt can compute success/failure. The frontend submits
+          // only total/natural/modifier/skill — the DC was set by the DM in the
+          // first invocation and lives in action.dm_response.requiredRolls.
+          let dcFromPrevious = null;
+          let skillFromPrevious = null;
+          let abilityFromPrevious = null;
+          try {
+            const prev = typeof action.dm_response === 'string'
+              ? JSON.parse(action.dm_response)
+              : action.dm_response;
+            const reqRolls = Array.isArray(prev?.requiredRolls) ? prev.requiredRolls : [];
+            // Match by skill/ability if present, otherwise take the first roll.
+            const match = reqRolls.find((r) =>
+              (rollResult.skill && r.skill && r.skill === rollResult.skill) ||
+              (rollResult.ability && r.ability && r.ability === rollResult.ability),
+            ) ?? reqRolls[0] ?? null;
+            if (match) {
+              dcFromPrevious = typeof match.dc === 'number' ? match.dc : null;
+              skillFromPrevious = match.skill ?? null;
+              abilityFromPrevious = match.ability ?? null;
+            }
+          } catch { /* leave dc null */ }
+
+          const enrichedRollResult = {
+            ...rollResult,
+            dc: rollResult.dc ?? dcFromPrevious,
+            skill: rollResult.skill ?? skillFromPrevious,
+            ability: rollResult.ability ?? abilityFromPrevious,
+          };
+
           const dmResponse = await invokeDmForAction(contextualService, {
             campaignId,
             sessionId: action.session_id,
             actionContext,
-            rollResult,
+            rollResult: enrichedRollResult,
           });
 
           // Apply outcomes
@@ -427,10 +481,11 @@ router.post(
             });
           }
 
-          // Update action as completed
+          // Append the DM response. Status was already set to 'resolved' in the
+          // synchronous handler above; we only need to attach dm_response here.
           await asyncClient.query(
             `UPDATE public.session_player_actions
-                SET dm_response = $2, status = 'completed', resolved_at = NOW()
+                SET dm_response = $2
               WHERE id = $1`,
             [actionId, JSON.stringify(dmResponse)],
           );
@@ -465,6 +520,27 @@ router.post(
                 reason: `roll resolved: ${action.action_type}`,
               });
             }
+          }
+
+          // Auto-advance the turn after a roll-resolved action in
+          // exploration/social phases. Combat keeps manual End-Turn so the
+          // player can use their full action budget.
+          try {
+            const gs = await getGameState(asyncClient, action.session_id);
+            if (gs && (gs.phase === 'exploration' || gs.phase === 'social')) {
+              const advanceResult = await endTurn(asyncClient, action.session_id, { actorId: action.user_id });
+              if (wsServer && advanceResult?.newState) {
+                wsServer.emitTurnAdvanced(campaignId, {
+                  sessionId: action.session_id,
+                  gameState: advanceResult.newState,
+                });
+              }
+            }
+          } catch (advanceError) {
+            logError('Auto-advance after roll resolution failed (non-fatal)', {
+              actionId,
+              error: advanceError.message,
+            });
           }
         } catch (asyncError) {
           await asyncClient.query('ROLLBACK').catch(() => {});

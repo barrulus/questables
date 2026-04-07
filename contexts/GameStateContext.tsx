@@ -144,6 +144,11 @@ export function GameStateProvider({ children }: { children: ReactNode }) {
 
   // ── Listen to WebSocket events ──────────────────────────────────────
   useEffect(() => {
+    // Reset the cursor when useWebSocket clears its message buffer on reconnect.
+    // See ActionContext for the longer explanation.
+    if (wsMessages.length < lastWsMsgCountRef.current) {
+      lastWsMsgCountRef.current = 0;
+    }
     if (wsMessages.length <= lastWsMsgCountRef.current) return;
 
     for (let i = lastWsMsgCountRef.current; i < wsMessages.length; i++) {

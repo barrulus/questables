@@ -24,6 +24,7 @@ import {
 import { getAllLiveStates } from '../live-state/service.js';
 import { postNarrationToChat, postPrivateNarration } from './dm-narrator.js';
 import { applySceneTransition } from '../scene/scene-tracker.js';
+import { endTurn } from '../game-state/service.js';
 
 /**
  * Determine if a chat message should be intercepted as a game action.
@@ -290,7 +291,7 @@ export async function interceptChatAction({
 
     const { rows: actionRows } = await client.query(
       `INSERT INTO public.session_player_actions
-         (session_id, campaign_id, player_id, user_id, character_id, action_type, action_data, status)
+         (session_id, campaign_id, player_id, user_id, character_id, action_type, action_payload, status)
        VALUES ($1, $2, $3, $4, $5, $6, $7, 'pending')
        RETURNING id`,
       [
@@ -401,7 +402,7 @@ export async function interceptChatAction({
         });
       }
 
-      if (finalStatus === 'completed') {
+      if (finalStatus === 'resolved') {
         wsServer.emitActionCompleted(campaignId, {
           actionId,
           characterId,
@@ -416,6 +417,31 @@ export async function interceptChatAction({
           sessionId,
           liveStates: updatedStates,
           reason: `chat action: ${intent.actionType}`,
+        });
+      }
+    }
+
+    // Auto-advance the turn after a fully-resolved exploration/social action.
+    // In combat we leave turn advancement to the explicit "End Turn" button so
+    // players can spend their full action/bonus/movement budget. In exploration
+    // and social phases, "one chat action = one turn" matches player expectations.
+    if (finalStatus === 'resolved' && (gameState.phase === 'exploration' || gameState.phase === 'social')) {
+      try {
+        const advanceResult = await endTurn(client, sessionId, { actorId: userId });
+        if (wsServer && advanceResult?.newState) {
+          wsServer.emitTurnAdvanced?.(campaignId, {
+            sessionId,
+            gameState: advanceResult.newState,
+            reason: `auto-advance after ${intent.actionType}`,
+          });
+        }
+      } catch (advanceError) {
+        // Non-fatal — log and continue. The action itself succeeded; only the
+        // turn advance failed (e.g., no turn order, no active player).
+        logError('Auto-advance after chat action failed (non-fatal)', {
+          campaignId,
+          sessionId,
+          error: advanceError.message,
         });
       }
     }

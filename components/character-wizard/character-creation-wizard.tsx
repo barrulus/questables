@@ -17,6 +17,83 @@ import { StepIdentity } from './steps/step-identity';
 import { StepReview } from './steps/step-review';
 import { createCharacter, getUserDraft, saveDraft, updateCharacter } from '../../utils/api/characters';
 import { resolveEquipmentToInventory } from '../../utils/srd/resolve-equipment';
+import type { SpellcastingInfo } from '../../utils/database/data-structures';
+
+// Spellcasting ability per class (5e SRD).
+const SPELLCASTING_ABILITY: Record<string, 'intelligence' | 'wisdom' | 'charisma'> = {
+  wizard: 'intelligence',
+  cleric: 'wisdom',
+  druid: 'wisdom',
+  ranger: 'wisdom',
+  bard: 'charisma',
+  sorcerer: 'charisma',
+  warlock: 'charisma',
+  paladin: 'charisma',
+};
+
+// Level-1 spell slots per full / half caster. Warlock uses Pact Magic.
+const LEVEL_1_SPELL_SLOTS: Record<string, Record<number, number>> = {
+  wizard: { 1: 2 },
+  cleric: { 1: 2 },
+  druid: { 1: 2 },
+  bard: { 1: 2 },
+  sorcerer: { 1: 2 },
+  warlock: { 1: 1 }, // Pact Magic — 1 slot at level 1
+  paladin: {},        // Half-casters get no slots until level 2
+  ranger: {},
+};
+
+const matchClassKey = (classKey: string | null | undefined): string | null => {
+  if (!classKey) return null;
+  const key = classKey.toLowerCase();
+  for (const cls of Object.keys(SPELLCASTING_ABILITY)) {
+    if (key.includes(cls)) return cls;
+  }
+  return null;
+};
+
+/**
+ * Build a SpellcastingInfo block from the wizard's chosen cantrips/spells.
+ * Returns null for non-casters so the character.spellcasting column stays NULL
+ * (which the Spellbook UI handles fine).
+ */
+function buildSpellcastingFromWizardState({
+  classKey,
+  abilities,
+  proficiencyBonus,
+  chosenCantrips,
+  chosenSpells,
+}: {
+  classKey: string | null;
+  abilities: { strength: number; dexterity: number; constitution: number; intelligence: number; wisdom: number; charisma: number };
+  proficiencyBonus: number;
+  chosenCantrips: string[];
+  chosenSpells: string[];
+}): SpellcastingInfo | null {
+  const cls = matchClassKey(classKey);
+  if (!cls) return null;
+
+  const ability = SPELLCASTING_ABILITY[cls];
+  const score = abilities[ability] ?? 10;
+  const mod = Math.floor((score - 10) / 2);
+  const spellAttackBonus = mod + proficiencyBonus;
+  const spellSaveDC = 8 + mod + proficiencyBonus;
+
+  const slotsConfig = LEVEL_1_SPELL_SLOTS[cls] ?? {};
+  const spellSlots: Record<number, { max: number; used: number }> = {};
+  for (const [level, max] of Object.entries(slotsConfig)) {
+    spellSlots[Number(level)] = { max, used: 0 };
+  }
+
+  return {
+    spellcastingAbility: ability,
+    spellAttackBonus,
+    spellSaveDC,
+    spellSlots,
+    cantripsKnown: [...chosenCantrips],
+    spellsKnown: [...chosenSpells],
+  };
+}
 
 interface CharacterCreationWizardProps {
   user: {
@@ -111,6 +188,18 @@ function WizardContent({
         state.classKey,
       );
 
+      // Build the SpellcastingInfo block from wizard state. The wizard tracks
+      // chosen cantrips/spells but used to drop them on submit, leaving the
+      // character.spellcasting column NULL — which made the Spellbook sidebar
+      // show "no spellcasting information stored" for every caster.
+      const spellcasting = buildSpellcastingFromWizardState({
+        classKey: state.classKey,
+        abilities: stats?.abilities ?? state.baseAbilities,
+        proficiencyBonus: stats?.proficiencyBonus ?? 2,
+        chosenCantrips: state.chosenCantrips,
+        chosenSpells: state.chosenSpells,
+      });
+
       if (draftId) {
         // Finalize the existing draft row: clear creation_state and set all fields
         await updateCharacter(draftId, {
@@ -148,6 +237,7 @@ function WizardContent({
           bonds: state.bonds || null,
           flaws: state.flaws || null,
           backstory: state.backstory || null,
+          spellcasting,
           creationState: null, // Clear draft — character is finalized
         });
       } else {
@@ -188,6 +278,7 @@ function WizardContent({
           bonds: state.bonds || null,
           flaws: state.flaws || null,
           backstory: state.backstory || null,
+          spellcasting,
         });
       }
 

@@ -11,6 +11,8 @@ import {
   buildActionPrompt,
   buildWorldTurnPrompt,
   buildSocialActionPrompt,
+  DM_ACTION_SYSTEM_PROMPT,
+  DM_SOCIAL_SYSTEM_PROMPT,
 } from '../../llm/context/action-prompt-builder.js';
 import { patchLiveState } from '../live-state/service.js';
 import { handleHpZero, handleHealingAtZero } from '../combat/death-saves.js';
@@ -141,10 +143,26 @@ export const buildActionContext = async (client, {
   // Recent chat history — both player messages and DM narrations, in order.
   // This is what the players have actually seen, regardless of how it got there
   // (action interceptor, seed script, or DM broadcast).
+  //
+  // Speaker resolution: prefer the character explicitly attached to the message,
+  // but fall back to the sender's enrolled campaign character (joined via
+  // campaign_players) so that OOC/IC-toggled-off messages from a player still
+  // appear in the transcript under their character's name. Otherwise the LLM
+  // sees a username it doesn't recognise and invents a new character.
   const { rows: recentChat } = await client.query(
-    `SELECT cm.content, cm.message_type, cm.channel_type, cm.sender_name, c.name AS character_name
+    `SELECT cm.content,
+            cm.message_type,
+            cm.channel_type,
+            cm.sender_name,
+            c.name AS character_name,
+            cp_char.name AS player_character_name
        FROM public.chat_messages cm
        LEFT JOIN public.characters c ON cm.character_id = c.id
+       LEFT JOIN public.campaign_players cp
+              ON cp.campaign_id = cm.campaign_id
+             AND cp.user_id = cm.sender_id
+             AND cp.status = 'active'
+       LEFT JOIN public.characters cp_char ON cp_char.id = cp.character_id
       WHERE cm.campaign_id = $1
         AND cm.channel_type IN ('party', 'dm_broadcast')
       ORDER BY cm.created_at DESC
@@ -157,7 +175,7 @@ export const buildActionContext = async (client, {
       if (row.channel_type === 'dm_broadcast' || row.message_type === 'narration' || row.message_type === 'action_result') {
         return `[DM] ${row.content}`;
       }
-      const speaker = row.character_name || row.sender_name || 'Player';
+      const speaker = row.character_name || row.player_character_name || row.sender_name || 'Player';
       return `${speaker}: ${row.content}`;
     });
 
@@ -260,14 +278,13 @@ export const invokeDmForAction = async (contextualService, {
   });
 
   try {
-    const { result } = await contextualService.generateFromContext({
+    const { result } = await contextualService.generateDirect({
       campaignId,
       sessionId,
       type: NARRATIVE_TYPES.PLAYER_ACTION_RESPONSE,
+      systemPrompt: DM_ACTION_SYSTEM_PROMPT,
+      prompt,
       metadata: { actionType: actionContext.actionType },
-      request: {
-        extraSections: prompt,
-      },
       parameters: { schema: DM_RESPONSE_SCHEMA },
     });
 
@@ -311,14 +328,13 @@ export const invokeDmForSocialAction = async (contextualService, {
   });
 
   try {
-    const { result } = await contextualService.generateFromContext({
+    const { result } = await contextualService.generateDirect({
       campaignId,
       sessionId,
       type: NARRATIVE_TYPES.SOCIAL_DIALOGUE,
+      systemPrompt: DM_SOCIAL_SYSTEM_PROMPT,
+      prompt,
       metadata: { actionType: actionContext.actionType },
-      request: {
-        extraSections: prompt,
-      },
       parameters: { schema: DM_RESPONSE_SCHEMA },
     });
 
@@ -340,6 +356,41 @@ export const invokeDmForSocialAction = async (contextualService, {
   }
 };
 
+const UUID_REGEX = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+/**
+ * Resolve an LLM-supplied target character reference to a real UUID.
+ * The LLM sometimes returns a character name ("Asmodeus") instead of the UUID
+ * because the prompt exposes names. Accept either, fall back to the acting
+ * character if the reference can't be resolved.
+ */
+const resolveCharacterRef = async (client, { sessionId, ref, actingCharacterId }) => {
+  if (!ref) return actingCharacterId;
+  if (UUID_REGEX.test(ref)) return ref;
+
+  // Treat as a name — look up among characters with live state in this session.
+  try {
+    const { rows } = await client.query(
+      `SELECT c.id
+         FROM public.characters c
+         JOIN public.session_live_states sls ON sls.character_id = c.id
+        WHERE sls.session_id = $1 AND LOWER(c.name) = LOWER($2)
+        LIMIT 1`,
+      [sessionId, ref],
+    );
+    if (rows.length > 0) return rows[0].id;
+  } catch (lookupError) {
+    logWarn('Character ref lookup failed', { sessionId, ref, error: lookupError.message });
+  }
+
+  logWarn('Could not resolve targetCharacterId, falling back to acting character', {
+    sessionId,
+    ref,
+    actingCharacterId,
+  });
+  return actingCharacterId;
+};
+
 /**
  * Apply mechanical outcomes from a DM response to live state.
  */
@@ -350,7 +401,11 @@ export const applyMechanicalOutcome = async (client, {
 }) => {
   if (!mechanicalOutcome || !mechanicalOutcome.type) return null;
 
-  const targetId = mechanicalOutcome.targetCharacterId || actingCharacterId;
+  const targetId = await resolveCharacterRef(client, {
+    sessionId,
+    ref: mechanicalOutcome.targetCharacterId,
+    actingCharacterId,
+  });
   const amount = mechanicalOutcome.amount ?? 0;
 
   switch (mechanicalOutcome.type) {

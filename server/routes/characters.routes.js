@@ -1,7 +1,7 @@
 import { Router } from 'express';
 import { requireAuth, requireCharacterOwnership } from '../auth-middleware.js';
 import { getClient, query as dbQuery } from '../db/pool.js';
-import { validateCharacter } from '../validation/characters.js';
+import { validateCharacter, validateCharacterUpdate } from '../validation/characters.js';
 import { handleValidationErrors, validateUUID } from '../validation/common.js';
 import { logError, logInfo } from '../utils/logger.js';
 
@@ -185,7 +185,7 @@ router.put(
   '/:id',
   requireAuth,
   validateUUID('id'),
-  validateCharacter,
+  validateCharacterUpdate,
   handleValidationErrors,
   requireCharacterOwnership,
   async (req, res) => {

@@ -3,7 +3,6 @@ import { Card, CardContent, CardHeader, CardTitle } from "./ui/card";
 import { Button } from "./ui/button";
 import { Progress } from "./ui/progress";
 import { Input } from "./ui/input";
-import { Label } from "./ui/label";
 import { Separator } from "./ui/separator";
 import { toast } from "sonner";
 import {
@@ -19,7 +18,7 @@ import {
 import type { SpellcastingInfo } from "../utils/database/data-structures";
 import type { SrdSpell } from "../utils/srd/types";
 import { getCharacter, updateCharacter } from "../utils/api/characters";
-import { fetchSpellByKey } from "../utils/api/srd";
+import { fetchSpellByKey, fetchSpells } from "../utils/api/srd";
 import { SpellDetailCard } from "./compendium/spell-detail-card";
 
 interface SpellbookProps {
@@ -29,12 +28,14 @@ interface SpellbookProps {
 
 export function Spellbook({ characterId, onSpellcastingChange }: SpellbookProps) {
   const [spellcasting, setSpellcasting] = useState<SpellcastingInfo | null>(null);
+  const [characterClass, setCharacterClass] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [updating, setUpdating] = useState(false);
   const [searchTerm, setSearchTerm] = useState("");
-  const [newSpellId, setNewSpellId] = useState("");
   const [spellDetails, setSpellDetails] = useState<Record<string, SrdSpell>>({});
   const [expandedSpell, setExpandedSpell] = useState<string | null>(null);
+  const [availableSpells, setAvailableSpells] = useState<SrdSpell[]>([]);
+  const [availableLoading, setAvailableLoading] = useState(false);
 
   const loadCharacterSpellcasting = async () => {
     try {
@@ -42,6 +43,7 @@ export function Spellbook({ characterId, onSpellcastingChange }: SpellbookProps)
       const char = await getCharacter(characterId);
       if (char) {
         setSpellcasting(char.spellcasting || null);
+        setCharacterClass(char.class || null);
       }
     } catch (error) {
       console.error("Failed to load character spellcasting:", error);
@@ -56,6 +58,39 @@ export function Spellbook({ characterId, onSpellcastingChange }: SpellbookProps)
       loadCharacterSpellcasting();
     }
   }, [characterId]);
+
+  // Load the full SRD spell list filtered by the character's class once we
+  // know the class. This populates the picker so the user can browse and
+  // click to add instead of typing exact spell keys by hand.
+  useEffect(() => {
+    if (!characterClass) {
+      setAvailableSpells([]);
+      return;
+    }
+    const controller = new AbortController();
+    setAvailableLoading(true);
+    fetchSpells({ class: characterClass.toLowerCase() }, { signal: controller.signal })
+      .then((spells) => {
+        if (!controller.signal.aborted) {
+          setAvailableSpells(spells);
+          // Pre-populate spellDetails so we don't have to re-fetch each spell
+          // individually when it gets added.
+          setSpellDetails((prev) => {
+            const next = { ...prev };
+            for (const s of spells) next[s.key] = s;
+            return next;
+          });
+        }
+      })
+      .catch((err) => {
+        if (err instanceof Error && err.name === "AbortError") return;
+        console.error("Failed to load class spell list:", err);
+      })
+      .finally(() => {
+        if (!controller.signal.aborted) setAvailableLoading(false);
+      });
+    return () => controller.abort();
+  }, [characterClass]);
 
   // Resolve spell details from SRD API
   useEffect(() => {
@@ -167,17 +202,14 @@ export function Spellbook({ characterId, onSpellcastingChange }: SpellbookProps)
     toast.success("All spell slots restored after a long rest");
   };
 
-  const learnSpell = async () => {
+  const learnSpell = async (spellKey: string) => {
     if (!spellcasting) {
       toast.error("This character has no spellcasting ability configured");
       return;
     }
 
-    const normalized = newSpellId.trim();
-    if (!normalized) {
-      toast.error("Enter a spell identifier to add");
-      return;
-    }
+    const normalized = spellKey.trim();
+    if (!normalized) return;
 
     const existing = spellcasting.spellsKnown || [];
     if (existing.some((spell) => spell.toLowerCase() === normalized.toLowerCase())) {
@@ -187,7 +219,6 @@ export function Spellbook({ characterId, onSpellcastingChange }: SpellbookProps)
 
     const updatedSpellsKnown = [...existing, normalized];
     await updateCharacterSpellcasting({ spellsKnown: updatedSpellsKnown });
-    setNewSpellId("");
     toast.success("Spell added to known list");
   };
 
@@ -206,9 +237,6 @@ export function Spellbook({ characterId, onSpellcastingChange }: SpellbookProps)
   };
 
   const knownSpells = spellcasting?.spellsKnown ?? [];
-  const filteredSpells = knownSpells.filter((spellId) =>
-    spellId.toLowerCase().includes(searchTerm.toLowerCase()),
-  );
 
   if (loading) {
     return (
@@ -300,44 +328,82 @@ export function Spellbook({ characterId, onSpellcastingChange }: SpellbookProps)
           <CardTitle>Known Spells ({knownSpells.length})</CardTitle>
         </CardHeader>
         <CardContent className="space-y-4">
-          <div className="grid gap-3 md:grid-cols-[2fr_1fr]">
-            <div className="relative">
-              <Search className="absolute left-3 top-3 h-4 w-4 text-muted-foreground" />
-              <Input
-                placeholder="Filter by spell name or identifier..."
-                value={searchTerm}
-                onChange={(event) => setSearchTerm(event.target.value)}
-                className="pl-9"
-              />
-            </div>
-            <div className="flex gap-2">
-              <Label htmlFor="newSpell" className="sr-only">
-                New spell identifier
-              </Label>
-              <Input
-                id="newSpell"
-                placeholder="Spell identifier (e.g. fireball)"
-                value={newSpellId}
-                onChange={(event) => setNewSpellId(event.target.value)}
-              />
-              <Button onClick={learnSpell} disabled={updating}>
-                <Plus className="w-4 h-4 mr-2" />
-                Add
-              </Button>
-            </div>
+          <div className="relative">
+            <Search className="absolute left-3 top-3 h-4 w-4 text-muted-foreground" />
+            <Input
+              placeholder={`Search ${characterClass ?? "class"} spells to add...`}
+              value={searchTerm}
+              onChange={(event) => setSearchTerm(event.target.value)}
+              className="pl-9"
+            />
           </div>
+
+          {/* Class spell picker — fetched from SRD, click + to add */}
+          {searchTerm.trim() !== "" && (
+            <div className="rounded border bg-muted/30 max-h-72 overflow-y-auto">
+              {availableLoading ? (
+                <div className="flex items-center gap-2 p-3 text-sm text-muted-foreground">
+                  <Loader2 className="h-4 w-4 animate-spin" />
+                  Loading {characterClass ?? "class"} spell list...
+                </div>
+              ) : (
+                (() => {
+                  const known = new Set((spellcasting?.spellsKnown ?? []).map((s) => s.toLowerCase()));
+                  const term = searchTerm.toLowerCase();
+                  const matches = availableSpells.filter(
+                    (s) =>
+                      !known.has(s.key.toLowerCase()) &&
+                      (s.name.toLowerCase().includes(term) || s.key.toLowerCase().includes(term)),
+                  );
+                  if (matches.length === 0) {
+                    return (
+                      <p className="p-3 text-sm text-muted-foreground">
+                        No matching spells available to add.
+                      </p>
+                    );
+                  }
+                  return (
+                    <div className="divide-y">
+                      {matches.slice(0, 30).map((s) => (
+                        <div key={s.key} className="flex items-center justify-between gap-2 px-3 py-2">
+                          <div className="min-w-0">
+                            <div className="font-medium truncate">{s.name}</div>
+                            <div className="text-xs text-muted-foreground">
+                              {s.level === 0 ? "Cantrip" : `Level ${s.level}`} {s.school_key}
+                              {s.concentration && " · Conc."}
+                            </div>
+                          </div>
+                          <Button
+                            size="sm"
+                            variant="outline"
+                            onClick={() => void learnSpell(s.key)}
+                            disabled={updating}
+                          >
+                            <Plus className="h-4 w-4" />
+                          </Button>
+                        </div>
+                      ))}
+                      {matches.length > 30 && (
+                        <p className="px-3 py-2 text-xs text-muted-foreground">
+                          {matches.length - 30} more matches — refine your search to narrow.
+                        </p>
+                      )}
+                    </div>
+                  );
+                })()
+              )}
+            </div>
+          )}
 
           <Separator />
 
-          {filteredSpells.length === 0 ? (
+          {knownSpells.length === 0 ? (
             <p className="text-sm text-muted-foreground">
-              {knownSpells.length === 0
-                ? "No spells recorded for this character yet."
-                : "No spells match your filter."}
+              No spells recorded for this character yet. Use the search box above to find and add spells from the {characterClass ?? "class"} spell list.
             </p>
           ) : (
             <div className="grid gap-2">
-              {filteredSpells.map((spellId) => {
+              {knownSpells.map((spellId) => {
                 const detail = spellDetails[spellId];
                 const displayName = detail?.name ?? spellId;
                 const isExpanded = expandedSpell === spellId;

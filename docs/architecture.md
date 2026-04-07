@@ -28,7 +28,7 @@ Questables is a D&D 5e campaign management application with integrated world map
         │ HTTP/REST     │ HTTP (tiles)  │ WebSocket
         ▼               ▼               ▼
 ┌─────────────────────────────────────────────────┐
-│              Express.js Server (:3001)           │
+│              Express.js Server (:5101)           │
 │  ┌──────────┐  ┌───────────┐  ┌──────────────┐ │
 │  │  Routes   │  │ Services  │  │  WebSocket   │ │
 │  │  (REST)   │  │ (Logic)   │  │  Server      │ │

@@ -20,7 +20,10 @@ export const DM_RESPONSE_SCHEMA = {
             'spell_slot_use', 'concentration_start', 'concentration_break',
           ],
         },
-        targetCharacterId: { type: ['string', 'null'] },
+        targetCharacterId: {
+          type: ['string', 'null'],
+          description: 'UUID of the target character. Leave null to default to the acting character. NEVER put a character name here — only UUIDs from the provided context.',
+        },
         amount: { type: ['number', 'null'] },
         isCritical: { type: ['boolean', 'null'] },
         condition: { type: ['string', 'null'] },

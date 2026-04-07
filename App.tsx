@@ -273,7 +273,7 @@ function AppContent() {
     }
 
     return (
-      <div className="min-h-screen bg-background flex flex-col">
+      <div className="h-screen bg-background flex flex-col overflow-hidden">
         {campaignError && (
           <div className="border-b border-destructive/30 bg-destructive/10 text-destructive px-4 py-2 text-sm">
             {campaignError}

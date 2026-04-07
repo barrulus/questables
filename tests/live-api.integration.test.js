@@ -7,7 +7,7 @@ const { describe, it, expect, beforeAll } = globalThis;
 const fetch = globalThis.fetch;
 const env = globalThis.process?.env ?? {};
 
-const DEFAULT_BASE_URL = 'https://quixote.tail3f19fe.ts.net:3001';
+const DEFAULT_BASE_URL = 'https://quixote.tail3f19fe.ts.net:5101';
 
 const resolveBaseUrl = () => {
   if (env.LIVE_API_BASE_URL) {
@@ -19,7 +19,7 @@ const resolveBaseUrl = () => {
   }
 
   if (env.DATABASE_SERVER_PUBLIC_HOST) {
-    return `https://${env.DATABASE_SERVER_PUBLIC_HOST}:3001`;
+    return `https://${env.DATABASE_SERVER_PUBLIC_HOST}:5101`;
   }
 
   return DEFAULT_BASE_URL;

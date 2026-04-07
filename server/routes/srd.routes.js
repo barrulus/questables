@@ -18,9 +18,13 @@ router.get('/species', async (req, res) => {
     const params = [];
     let paramIdx = 1;
 
-    if (source) {
+    // Default to srd-2024 when no source is specified, otherwise the same
+    // entity shows up once per loaded ruleset. Pass ?source=all to opt into
+    // a cross-ruleset view.
+    const effectiveSource = source ?? 'srd-2024';
+    if (effectiveSource !== 'all') {
       conditions.push(`document_source = $${paramIdx++}`);
-      params.push(source);
+      params.push(effectiveSource);
     }
 
     let sql = 'SELECT * FROM srd_species';
@@ -79,9 +83,13 @@ router.get('/classes', async (req, res) => {
     const params = [];
     let paramIdx = 1;
 
-    if (source) {
+    // Default to srd-2024 when no source is specified, otherwise the same
+    // entity shows up once per loaded ruleset. Pass ?source=all to opt into
+    // a cross-ruleset view.
+    const effectiveSource = source ?? 'srd-2024';
+    if (effectiveSource !== 'all') {
       conditions.push(`document_source = $${paramIdx++}`);
-      params.push(source);
+      params.push(effectiveSource);
     }
 
     let sql = 'SELECT * FROM srd_classes';
@@ -143,9 +151,13 @@ router.get('/backgrounds', async (req, res) => {
     const params = [];
     let paramIdx = 1;
 
-    if (source) {
+    // Default to srd-2024 when no source is specified, otherwise the same
+    // entity shows up once per loaded ruleset. Pass ?source=all to opt into
+    // a cross-ruleset view.
+    const effectiveSource = source ?? 'srd-2024';
+    if (effectiveSource !== 'all') {
       conditions.push(`document_source = $${paramIdx++}`);
-      params.push(source);
+      params.push(effectiveSource);
     }
 
     let sql = 'SELECT * FROM srd_backgrounds';
@@ -202,9 +214,13 @@ router.get('/spells', async (req, res) => {
     const params = [];
     let paramIdx = 1;
 
-    if (source) {
+    // Default to srd-2024 when no source is specified, otherwise the same
+    // spell shows up once per loaded ruleset (srd-2014, srd-2024, a5e-ag, …).
+    // Pass ?source=all to opt into a cross-ruleset view.
+    const effectiveSource = source ?? 'srd-2024';
+    if (effectiveSource !== 'all') {
       conditions.push(`s.document_source = $${paramIdx++}`);
-      params.push(source);
+      params.push(effectiveSource);
     }
 
     if (q) {
@@ -307,9 +323,13 @@ router.get('/items', async (req, res) => {
     const params = [];
     let paramIdx = 1;
 
-    if (source) {
+    // Default to srd-2024 when no source is specified, otherwise the same
+    // entity shows up once per loaded ruleset. Pass ?source=all to opt into
+    // a cross-ruleset view.
+    const effectiveSource = source ?? 'srd-2024';
+    if (effectiveSource !== 'all') {
       conditions.push(`document_source = $${paramIdx++}`);
-      params.push(source);
+      params.push(effectiveSource);
     }
 
     if (q) {
@@ -443,9 +463,13 @@ router.get('/feats', async (req, res) => {
     const params = [];
     let paramIdx = 1;
 
-    if (source) {
+    // Default to srd-2024 when no source is specified, otherwise the same
+    // entity shows up once per loaded ruleset. Pass ?source=all to opt into
+    // a cross-ruleset view.
+    const effectiveSource = source ?? 'srd-2024';
+    if (effectiveSource !== 'all') {
       conditions.push(`document_source = $${paramIdx++}`);
-      params.push(source);
+      params.push(effectiveSource);
     }
 
     if (type) {

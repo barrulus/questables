@@ -118,8 +118,8 @@ The application now features a complete database integration with:
 
 The application will be available at:
 - Frontend: http://localhost:3000
-- Backend API: http://localhost:3001 
-- Health Check: http://localhost:3001/api/health 
+- Backend API: http://localhost:5101 
+- Health Check: http://localhost:5101/api/health 
 
 ### ⚠️ Important Notes
 
@@ -167,7 +167,7 @@ Create a `.env` file in the project root (copy from `.env.example`):
 
 ```env
 # REQUIRED: Database Server URL (frontend to backend communication)
-VITE_DATABASE_SERVER_URL=http://localhost:3001
+VITE_DATABASE_SERVER_URL=http://localhost:5101
 
 # PostgreSQL Connection (backend)
 DATABASE_HOST=localhost
@@ -178,7 +178,7 @@ DATABASE_PASSWORD=your_password
 DATABASE_SSL=false
 
 # Server Configuration  
-DATABASE_SERVER_PORT=3001
+DATABASE_SERVER_PORT=5101
 FRONTEND_URL=http://localhost:3000
 
 # Optional HTTPS configuration

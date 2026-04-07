@@ -110,7 +110,7 @@ globalThis.scrollTo = jest.fn();
 // Mock environment variables
 if (globalThis.process?.env) {
   globalThis.process.env.NODE_ENV = 'test';
-  globalThis.process.env.VITE_DATABASE_URL = 'http://localhost:3001';
+  globalThis.process.env.VITE_DATABASE_URL = 'http://localhost:5101';
 }
 
 // Cleanup after each test

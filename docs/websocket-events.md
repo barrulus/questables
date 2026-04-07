@@ -8,7 +8,7 @@ Questables uses Socket.io for real-time communication between the server and con
 // Client connects to the WebSocket server
 import { io } from 'socket.io-client';
 
-const socket = io('http://localhost:3001');
+const socket = io('http://localhost:5101');
 ```
 
 Status endpoint: `GET /api/websocket/status` — Returns connection count and server status.

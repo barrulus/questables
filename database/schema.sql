@@ -1199,6 +1199,7 @@ CREATE TABLE IF NOT EXISTS public.session_player_actions (
     session_id UUID NOT NULL REFERENCES public.sessions(id) ON DELETE CASCADE,
     campaign_id UUID NOT NULL REFERENCES public.campaigns(id) ON DELETE CASCADE,
     user_id UUID NOT NULL REFERENCES public.user_profiles(id),
+    player_id UUID NOT NULL REFERENCES public.campaign_players(id) ON DELETE CASCADE,
     character_id UUID NOT NULL REFERENCES public.characters(id),
     round_number INTEGER NOT NULL DEFAULT 1,
     action_type TEXT NOT NULL CHECK (action_type IN (
@@ -1210,7 +1211,7 @@ CREATE TABLE IF NOT EXISTS public.session_player_actions (
     dm_response JSONB,
     roll_result JSONB,
     status TEXT NOT NULL DEFAULT 'pending'
-        CHECK (status IN ('pending', 'processing', 'awaiting_roll', 'completed', 'failed')),
+        CHECK (status IN ('pending', 'processing', 'awaiting_roll', 'resolved', 'cancelled', 'failed')),
     created_at TIMESTAMPTZ DEFAULT NOW(),
     resolved_at TIMESTAMPTZ
 );
@@ -1219,7 +1220,8 @@ CREATE INDEX IF NOT EXISTS idx_spa_session_round
 CREATE INDEX IF NOT EXISTS idx_spa_user_session
     ON public.session_player_actions (user_id, session_id);
 CREATE INDEX IF NOT EXISTS idx_spa_status
-    ON public.session_player_actions (status) WHERE status IN ('pending', 'awaiting_roll');
+    ON public.session_player_actions (status)
+    WHERE status IN ('pending', 'processing', 'awaiting_roll');
 CREATE INDEX IF NOT EXISTS idx_spa_campaign_id
     ON public.session_player_actions (campaign_id);
 

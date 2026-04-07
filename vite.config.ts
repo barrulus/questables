@@ -116,11 +116,11 @@ export default defineConfig(({ mode }: ConfigEnv): UserConfig => {
       hmr: hmrConfig ?? { host: 'localhost', protocol: httpsOptions ? 'wss' : 'ws' },
       proxy: {
         '/api': {
-          target: `http://localhost:${env.DATABASE_SERVER_PORT || '3001'}`,
+          target: `http://localhost:${env.DATABASE_SERVER_PORT || '5101'}`,
           changeOrigin: true,
         },
         '/socket.io': {
-          target: `http://localhost:${env.DATABASE_SERVER_PORT || '3001'}`,
+          target: `http://localhost:${env.DATABASE_SERVER_PORT || '5101'}`,
           changeOrigin: true,
           ws: true,
         },

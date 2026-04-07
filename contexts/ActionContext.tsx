@@ -104,6 +104,14 @@ export function ActionProvider({ children }: { children: ReactNode }) {
 
   // ── WebSocket event listeners ─────────────────────────────────────────
   useEffect(() => {
+    // useWebSocket clears its `messages` array when the socket reconnects
+    // (cleanupSocket → setMessages([])). Without this guard, lastWsMsgCountRef
+    // stays at the pre-reset count and `wsMessages.length <= ref` skips every
+    // event until the buffer climbs back above the stale count — silently
+    // dropping events like roll-requested across a reconnect.
+    if (wsMessages.length < lastWsMsgCountRef.current) {
+      lastWsMsgCountRef.current = 0;
+    }
     if (wsMessages.length <= lastWsMsgCountRef.current) return;
 
     for (let i = lastWsMsgCountRef.current; i < wsMessages.length; i++) {
