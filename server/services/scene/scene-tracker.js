@@ -45,9 +45,10 @@ export async function applySceneTransition(client, { campaignId, userId, sceneTr
     let taggedCount = 0;
 
     if (npcNames.length > 0) {
-      // Load all campaign NPCs once and match by token overlap
+      // Load all campaign NPCs once (including their current scene_tag) and
+      // match by token overlap.
       const { rows: allNpcs } = await client.query(
-        `SELECT id, name FROM public.npcs WHERE campaign_id = $1`,
+        `SELECT id, name, scene_tag FROM public.npcs WHERE campaign_id = $1`,
         [campaignId],
       );
 
@@ -68,13 +69,31 @@ export async function applySceneTransition(client, { campaignId, userId, sceneTr
           }
         }
 
-        if (bestMatch && bestScore > 0) {
-          await client.query(
-            `UPDATE public.npcs SET scene_tag = $1 WHERE id = $2`,
-            [newScene, bestMatch.id],
-          );
-          taggedCount += 1;
+        if (!bestMatch || bestScore === 0) continue;
+
+        // ANTI-TELEPORT GUARD: only tag the NPC into the new scene if they are
+        // currently untagged or already in this scene. Refusing the update
+        // here is critical — the LLM frequently hallucinates side-NPCs into
+        // its npcsInScene payload (because they're in the recent transcript)
+        // and we should NOT obey those silently. NPCs only move when the
+        // player explicitly brings them along, which is rare and would need
+        // a separate code path.
+        if (bestMatch.scene_tag && bestMatch.scene_tag !== newScene) {
+          logInfo('Scene tracker: refused to teleport NPC', {
+            campaignId,
+            npcId: bestMatch.id,
+            npcName: bestMatch.name,
+            currentScene: bestMatch.scene_tag,
+            attemptedScene: newScene,
+          });
+          continue;
         }
+
+        await client.query(
+          `UPDATE public.npcs SET scene_tag = $1 WHERE id = $2`,
+          [newScene, bestMatch.id],
+        );
+        taggedCount += 1;
       }
     }
 

@@ -585,6 +585,112 @@ export const applyMechanicalOutcome = async (client, {
       return { concentration: null };
     }
 
+    case 'item_gain': {
+      // Append item(s) to the character's inventory column on the characters
+      // table. Inventory is a JSONB array of {id, name, type, quantity, weight,
+      // description}. Supports both single-item (itemName) and multi-item
+      // (items array) shapes.
+      const itemsToAdd = Array.isArray(mechanicalOutcome.items) && mechanicalOutcome.items.length > 0
+        ? mechanicalOutcome.items
+        : (mechanicalOutcome.itemName ? [{ name: mechanicalOutcome.itemName, quantity: mechanicalOutcome.amount ?? 1 }] : []);
+
+      if (itemsToAdd.length === 0) return null;
+
+      const { rows: charRows } = await client.query(
+        `SELECT inventory FROM public.characters WHERE id = $1`,
+        [targetId],
+      );
+      if (charRows.length === 0) {
+        logWarn('item_gain: character not found', { targetId });
+        return null;
+      }
+
+      const existing = Array.isArray(charRows[0].inventory) ? charRows[0].inventory : [];
+      const updated = [...existing];
+      const addedNames = [];
+
+      for (const it of itemsToAdd) {
+        if (!it?.name?.trim()) continue;
+        const name = it.name.trim();
+        const quantity = typeof it.quantity === 'number' && it.quantity > 0 ? it.quantity : 1;
+        const description = typeof it.description === 'string' ? it.description : '';
+
+        // Stack with existing identical-name item if present
+        const existingIdx = updated.findIndex(
+          (e) => typeof e?.name === 'string' && e.name.toLowerCase() === name.toLowerCase(),
+        );
+        if (existingIdx >= 0) {
+          updated[existingIdx] = {
+            ...updated[existingIdx],
+            quantity: (updated[existingIdx].quantity ?? 1) + quantity,
+          };
+        } else {
+          updated.push({
+            id: `item_${Date.now()}_${Math.random().toString(36).slice(2, 11)}`,
+            name,
+            type: 'other',
+            weight: 0,
+            quantity,
+            description,
+          });
+        }
+        addedNames.push(`${name}${quantity > 1 ? ` x${quantity}` : ''}`);
+      }
+
+      await client.query(
+        `UPDATE public.characters SET inventory = $1::jsonb, updated_at = NOW() WHERE id = $2`,
+        [JSON.stringify(updated), targetId],
+      );
+
+      logInfo('Items added to inventory', { characterId: targetId, items: addedNames });
+      return { inventoryAdded: addedNames };
+    }
+
+    case 'item_lose': {
+      const itemsToRemove = Array.isArray(mechanicalOutcome.items) && mechanicalOutcome.items.length > 0
+        ? mechanicalOutcome.items
+        : (mechanicalOutcome.itemName ? [{ name: mechanicalOutcome.itemName, quantity: mechanicalOutcome.amount ?? 1 }] : []);
+
+      if (itemsToRemove.length === 0) return null;
+
+      const { rows: charRows } = await client.query(
+        `SELECT inventory FROM public.characters WHERE id = $1`,
+        [targetId],
+      );
+      if (charRows.length === 0) return null;
+
+      const existing = Array.isArray(charRows[0].inventory) ? charRows[0].inventory : [];
+      let updated = [...existing];
+      const removedNames = [];
+
+      for (const it of itemsToRemove) {
+        if (!it?.name?.trim()) continue;
+        const name = it.name.trim();
+        const quantity = typeof it.quantity === 'number' && it.quantity > 0 ? it.quantity : 1;
+
+        const idx = updated.findIndex(
+          (e) => typeof e?.name === 'string' && e.name.toLowerCase() === name.toLowerCase(),
+        );
+        if (idx < 0) continue;
+
+        const currentQty = updated[idx].quantity ?? 1;
+        if (currentQty <= quantity) {
+          updated = updated.filter((_, i) => i !== idx);
+        } else {
+          updated[idx] = { ...updated[idx], quantity: currentQty - quantity };
+        }
+        removedNames.push(`${name}${quantity > 1 ? ` x${quantity}` : ''}`);
+      }
+
+      await client.query(
+        `UPDATE public.characters SET inventory = $1::jsonb, updated_at = NOW() WHERE id = $2`,
+        [JSON.stringify(updated), targetId],
+      );
+
+      logInfo('Items removed from inventory', { characterId: targetId, items: removedNames });
+      return { inventoryRemoved: removedNames };
+    }
+
     default:
       logWarn('Unhandled mechanical outcome type', { type: mechanicalOutcome.type });
       return null;

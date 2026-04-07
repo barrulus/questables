@@ -29,6 +29,19 @@ export const DM_RESPONSE_SCHEMA = {
         condition: { type: ['string', 'null'] },
         itemName: { type: ['string', 'null'] },
         resourceName: { type: ['string', 'null'] },
+        items: {
+          type: ['array', 'null'],
+          description: 'For item_gain or item_lose outcomes covering multiple items at once. Each entry is one item the character picks up or drops.',
+          items: {
+            type: 'object',
+            required: ['name'],
+            properties: {
+              name: { type: 'string', description: 'Display name of the item.' },
+              quantity: { type: ['number', 'null'], description: 'How many. Defaults to 1.' },
+              description: { type: ['string', 'null'], description: 'Brief flavour description.' },
+            },
+          },
+        },
       },
     },
     requiredRolls: {

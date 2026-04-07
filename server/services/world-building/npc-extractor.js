@@ -192,6 +192,20 @@ export async function extractAndPersistNpcs({
     const ageCaps = computeAgeGroupCaps(totalCap);
     const burgLabel = burg?.name ? `${burg.name} (population ~${population ?? 'unknown'})` : 'wilderness';
 
+    // 1b. Load active player character names so we never extract a PC as an NPC.
+    // The LLM will mention character names constantly in narration ("Asmodeus
+    // crouches near the well") and the extractor should NEVER persist them as
+    // NPCs — that turns the player's own character into an NPC the DM can
+    // narrate at, which is a player-agency violation and a bookkeeping mess.
+    const { rows: playerCharRows } = await query(
+      `SELECT c.name
+         FROM public.characters c
+         JOIN public.campaign_players cp ON cp.character_id = c.id
+        WHERE cp.campaign_id = $1 AND cp.status = 'active' AND c.name IS NOT NULL`,
+      [campaignId],
+    );
+    const playerCharNames = new Set(playerCharRows.map((r) => normaliseName(r.name)).filter(Boolean));
+
     // 2. Load existing NPCs scoped to this burg (or nearby if no burg)
     let existingNpcs;
     if (burg?.id) {
@@ -293,6 +307,14 @@ ${narrationContent}`;
       if (newNpcs.length >= remainingSlots) break;
       if (!n?.name?.trim() || !n?.race?.trim() || !n?.personality?.trim() || !n?.age_group) continue;
       if (!AGE_GROUPS.includes(n.age_group)) continue;
+      // Reject extracted NPCs whose name matches an active player character.
+      if (playerCharNames.has(normaliseName(n.name))) {
+        logInfo('NPC extractor: rejected — name matches a player character', {
+          campaignId,
+          name: n.name,
+        });
+        continue;
+      }
       if (isDuplicateNpc(n.name, existingNpcs)) continue;
       // Demographic cap: would adding this NPC exceed the age group quota?
       if (ageRunningCount[n.age_group] >= ageCaps[n.age_group]) {

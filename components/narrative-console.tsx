@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { Loader2, Sparkles, FileText, Users, Sword, Map, RefreshCw, AlertCircle, History } from "lucide-react";
+import { Loader2, Sparkles, FileText, Users, Sword, Map, RefreshCw, AlertCircle, History, Send } from "lucide-react";
+import { toast } from "sonner";
 
 import { useGameSession } from "../contexts/GameSessionContext";
 import { useUser } from "../contexts/UserContext";
@@ -352,6 +353,41 @@ export function NarrativeConsole() {
       }
     },
     [activeCampaignId, narrativeRoutes, selectedSessionId]
+  );
+
+  // Post a generated narrative entry to the campaign Adventure chat. The
+  // narrative routes only generate + store; they do not broadcast. The DM
+  // reviews here, then explicitly publishes by clicking "Post to chat".
+  const [postingId, setPostingId] = useState<string | null>(null);
+  const postNarrativeToChat = useCallback(
+    async (entry: NarrativeHistoryEntry) => {
+      if (!activeCampaignId) return;
+      if (!entry.content?.trim()) {
+        toast.error("Nothing to post — the entry is empty.");
+        return;
+      }
+      setPostingId(entry.id);
+      try {
+        const response = await apiFetch(`/api/campaigns/${activeCampaignId}/messages`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            content: entry.content,
+            type: "narration",
+            channel_type: "dm_broadcast",
+          }),
+        });
+        if (!response.ok) {
+          throw new Error(await readErrorMessage(response, "Failed to post to chat"));
+        }
+        toast.success("Posted to Adventure chat");
+      } catch (error) {
+        toast.error(handleAsyncError(error));
+      } finally {
+        setPostingId(null);
+      }
+    },
+    [activeCampaignId],
   );
 
   const handleGenerateDm = useCallback(() => {
@@ -823,6 +859,20 @@ export function NarrativeConsole() {
                     <span className="text-xs text-muted-foreground">
                       Generated {new Date(latestEntry.recordedAt).toLocaleString()}
                     </span>
+                    <Button
+                      size="sm"
+                      variant="default"
+                      className="ml-auto"
+                      onClick={() => void postNarrativeToChat(latestEntry)}
+                      disabled={postingId === latestEntry.id}
+                    >
+                      {postingId === latestEntry.id ? (
+                        <Loader2 className="mr-1 h-3 w-3 animate-spin" />
+                      ) : (
+                        <Send className="mr-1 h-3 w-3" />
+                      )}
+                      Post to chat
+                    </Button>
                   </div>
                   <ScrollArea className="max-h-72 rounded border p-4">
                     <pre className="whitespace-pre-wrap text-sm text-foreground">{latestEntry.content}</pre>
@@ -871,6 +921,19 @@ export function NarrativeConsole() {
                           {entry.providerName && <Badge variant="outline">{entry.providerName}</Badge>}
                           {entry.providerModel && <Badge variant="secondary">{entry.providerModel}</Badge>}
                           {entry.cacheHit && <Badge variant="outline">Cache hit</Badge>}
+                          <Button
+                            size="sm"
+                            variant="ghost"
+                            className="ml-auto h-6 px-2"
+                            onClick={() => void postNarrativeToChat(entry)}
+                            disabled={postingId === entry.id}
+                          >
+                            {postingId === entry.id ? (
+                              <Loader2 className="h-3 w-3 animate-spin" />
+                            ) : (
+                              <Send className="h-3 w-3" />
+                            )}
+                          </Button>
                         </div>
                         <pre className="whitespace-pre-wrap text-foreground/80">{entry.content}</pre>
                       </div>

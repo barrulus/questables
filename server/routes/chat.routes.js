@@ -172,6 +172,52 @@ router.post('/api/campaigns/:campaignId/messages', requireAuth, requireCampaignP
       channelType: channel_type ?? 'party',
     });
 
+    // Broadcast over WebSocket so other connected clients see it without a
+    // refresh. Previously the chat panel did this via a parallel
+    // socket.emit('chat-message') after the POST returned, which meant any
+    // other caller (the narrative console "Post to chat" button, server-side
+    // tools, integration scripts) would silently fail to deliver. Doing it
+    // here makes the REST endpoint authoritative for both persistence AND
+    // delivery.
+    const wsServerForBroadcast = req.app?.locals?.wsServer;
+    if (wsServerForBroadcast && message) {
+      const effectiveChannel = channel_type ?? 'party';
+      const messageData = {
+        id: message.id,
+        campaign_id: message.campaign_id ?? campaignId,
+        session_id: message.session_id ?? null,
+        content: message.content,
+        message_type: message.message_type,
+        sender_id: message.sender_id ?? senderId,
+        sender_name: message.sender_name ?? sanitizedSenderName,
+        username: message.username ?? sanitizedSenderName,
+        character_id: message.character_id ?? character_id ?? null,
+        character_name: message.character_name ?? null,
+        dice_roll: message.dice_roll ?? null,
+        channel_type: effectiveChannel,
+        channel_target_user_id: message.channel_target_user_id ?? channel_target_user_id ?? null,
+        created_at: message.created_at,
+      };
+      try {
+        if (effectiveChannel === 'private' || effectiveChannel === 'dm_whisper') {
+          // Private channels: only sender + target receive
+          wsServerForBroadcast.emitToUser(campaignId, senderId, 'new-message', messageData);
+          if (channel_target_user_id && channel_target_user_id !== senderId) {
+            wsServerForBroadcast.emitToUser(campaignId, channel_target_user_id, 'new-message', messageData);
+          }
+        } else {
+          // party / dm_broadcast / director_whisper → whole campaign room
+          wsServerForBroadcast.io.to(`campaign-${campaignId}`).emit('new-message', messageData);
+        }
+      } catch (broadcastErr) {
+        logError('Chat REST broadcast failed (non-fatal)', {
+          campaignId,
+          messageId: message.id,
+          error: broadcastErr.message,
+        });
+      }
+    }
+
     res.json({ message });
 
     // ── Async action interception ──────────────────────────────────────

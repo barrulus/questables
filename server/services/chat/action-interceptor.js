@@ -25,6 +25,7 @@ import { getAllLiveStates } from '../live-state/service.js';
 import { postNarrationToChat, postPrivateNarration } from './dm-narrator.js';
 import { applySceneTransition } from '../scene/scene-tracker.js';
 import { endTurn } from '../game-state/service.js';
+import { fireWorldTurnIfPending } from '../narration/proactive-narrator.js';
 
 /**
  * Determine if a chat message should be intercepted as a game action.
@@ -435,6 +436,17 @@ export async function interceptChatAction({
             reason: `auto-advance after ${intent.actionType}`,
           });
         }
+        // Fire world turn (and the encounter check inside it) if the round
+        // just wrapped. Without this, auto-advance bypasses every world-turn /
+        // encounter trigger and the game gets stuck in a reactive loop.
+        fireWorldTurnIfPending({
+          campaignId,
+          sessionId,
+          newState: advanceResult?.newState,
+          actorId: userId,
+          contextualService,
+          wsServer,
+        });
       } catch (advanceError) {
         // Non-fatal — log and continue. The action itself succeeded; only the
         // turn advance failed (e.g., no turn order, no active player).

@@ -26,6 +26,7 @@ import { consumeAction } from '../services/combat/service.js';
 import { logError, logInfo } from '../utils/logger.js';
 import { postNarrationToChat, postPrivateNarration } from '../services/chat/dm-narrator.js';
 import { endTurn, getGameState } from '../services/game-state/service.js';
+import { fireWorldTurnIfPending } from '../services/narration/proactive-narrator.js';
 
 const router = Router();
 
@@ -309,6 +310,36 @@ router.post(
             }
           }
 
+          // Auto-advance the turn after a fully-resolved action panel
+          // submission in exploration / social phases. Combat keeps manual
+          // End-Turn so players can use action + bonus action + movement.
+          // Mirrors the chat-interceptor and roll-result paths.
+          if (finalStatus === 'resolved'
+              && (gameState?.phase === 'exploration' || gameState?.phase === 'social')) {
+            try {
+              const advanceResult = await endTurn(asyncClient, session.id, { actorId: req.user.id });
+              if (wsServer && advanceResult?.newState) {
+                wsServer.emitTurnAdvanced(campaignId, {
+                  sessionId: session.id,
+                  gameState: advanceResult.newState,
+                });
+              }
+              fireWorldTurnIfPending({
+                campaignId,
+                sessionId: session.id,
+                newState: advanceResult?.newState,
+                actorId: req.user.id,
+                contextualService,
+                wsServer,
+              });
+            } catch (advanceError) {
+              logError('Auto-advance after action panel submission failed (non-fatal)', {
+                actionId: action.id,
+                error: advanceError.message,
+              });
+            }
+          }
+
           logInfo('Action resolved', {
             telemetryEvent: 'action.resolved',
             actionId: action.id,
@@ -535,6 +566,14 @@ router.post(
                   gameState: advanceResult.newState,
                 });
               }
+              fireWorldTurnIfPending({
+                campaignId,
+                sessionId: action.session_id,
+                newState: advanceResult?.newState,
+                actorId: action.user_id,
+                contextualService,
+                wsServer,
+              });
             }
           } catch (advanceError) {
             logError('Auto-advance after roll resolution failed (non-fatal)', {

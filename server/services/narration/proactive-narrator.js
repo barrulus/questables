@@ -7,12 +7,13 @@
  * - World turn narration (after all players have acted in a round)
  */
 
-import { query } from '../../db/pool.js';
+import { query, getClient } from '../../db/pool.js';
 import { logInfo, logError } from '../../utils/logger.js';
 import { NARRATIVE_TYPES } from '../../llm/narrative-types.js';
 import { postNarrationToChat } from '../chat/dm-narrator.js';
 import { evaluateEncounterChance, generateEncounter } from '../encounters/proactive-generator.js';
 import { generateNpcsForBurg } from '../npcs/auto-generator.js';
+import { executeDmWorldTurn } from '../game-state/service.js';
 
 // ── Session Opening ─────────────────────────────────────────────────────────
 
@@ -259,11 +260,81 @@ const WORLD_TURN_SYSTEM_PROMPT = `You are the Dungeon Master for a D&D 5e campai
 
 RULES:
 - Write a brief world turn narration (2-4 sentences) describing what happens in the world.
-- Consider: time passing, weather changes, NPC reactions, distant sounds, environmental shifts.
+- Consider: time passing, weather changes, environmental shifts, distant sounds.
 - Use the geographic context to ground details — reference actual nearby locations and terrain.
 - If in a dangerous area (encounter region), hint at tension or approaching threats.
 - Keep it atmospheric — this is the beat between player actions.
-- Respond with plain narrative text, not JSON.`;
+- Respond with plain narrative text, not JSON.
+
+SCENE AWARENESS (CRITICAL — do NOT teleport NPCs):
+- The "## Current Scene" section below tells you EXACTLY where the party is right now and which NPCs are physically with them.
+- If the Current Scene says "no NPCs present", then NO NPCs are present in this narration. Do NOT have anyone speak, react, watch, or wring their hands.
+- If the Current Scene lists specific NPCs, those are the ONLY NPCs who can appear in this narration.
+- NPCs mentioned earlier in the transcript who are NOT in the current scene are ELSEWHERE — they were left behind when the party moved. Do not narrate them as present, even if they were just two paragraphs ago.
+- Example: if the party climbed down a well into a tunnel, the villagers waiting at the wellhead are NOT in the tunnel with them. They are still up at the well.
+- When the current scene is an isolated location (a cave, a tunnel, a sealed chamber), focus on the environment and the party itself — not on absent NPCs.`;
+
+/**
+ * Build the "## Current Scene" override section that tells the world-turn
+ * LLM exactly where the party is and which NPCs (if any) are physically with
+ * them. Reads `current_scene` from active campaign players and `scene_tag`
+ * from NPCs — both maintained by `applySceneTransition`.
+ */
+async function buildCurrentSceneSection(campaignId) {
+  try {
+    const { rows: players } = await query(
+      `SELECT cp.user_id, cp.current_scene, c.name AS character_name
+         FROM public.campaign_players cp
+         LEFT JOIN public.characters c ON c.id = cp.character_id
+        WHERE cp.campaign_id = $1 AND cp.status = 'active'`,
+      [campaignId],
+      { label: 'world-turn.current-scene-players' },
+    );
+
+    if (players.length === 0) {
+      return '## Current Scene\nNo active players. No NPCs present.';
+    }
+
+    // Collapse to the most-recently-set scene if all players agree, otherwise
+    // list each player's scene. In practice the party stays together.
+    const scenes = [...new Set(players.map((p) => p.current_scene).filter(Boolean))];
+    const partyScene = scenes.length === 1 ? scenes[0] : null;
+
+    let npcLines = 'No NPCs present (the party is alone in this location).';
+    if (partyScene) {
+      const { rows: sceneNpcs } = await query(
+        `SELECT name, gender, age_group, occupation
+           FROM public.npcs
+          WHERE campaign_id = $1 AND scene_tag = $2`,
+        [campaignId, partyScene],
+        { label: 'world-turn.scene-npcs' },
+      );
+      if (sceneNpcs.length > 0) {
+        npcLines = sceneNpcs
+          .map((n) => {
+            const demo = [n.gender, n.age_group].filter(Boolean).join(' ');
+            const desc = [demo, n.occupation].filter(Boolean).join(', ');
+            return desc ? `- ${n.name} (${desc})` : `- ${n.name}`;
+          })
+          .join('\n');
+      }
+    }
+
+    const sceneLine = partyScene
+      ? `Sub-scene: ${partyScene}`
+      : `Players in different scenes: ${players.map((p) => `${p.character_name ?? 'someone'} → ${p.current_scene ?? 'unspecified'}`).join('; ')}`;
+
+    return `${sceneLine}
+
+NPCs in this exact scene:
+${npcLines}
+
+The "NPCs:" list earlier in the Game Context Snapshot is the FULL CAMPAIGN ROSTER, not the in-scene cast. Use ONLY the NPCs listed above. Any NPC mentioned earlier in the transcript who is NOT listed above is ELSEWHERE and must NOT appear in this narration.`;
+  } catch (err) {
+    logError('Failed to build current scene section', { campaignId, error: err.message });
+    return '';
+  }
+}
 
 /**
  * Generate and post world turn narration after all players have acted in a round.
@@ -281,12 +352,24 @@ export async function narrateWorldTurn({
   wsServer,
 }) {
   try {
+    // Build the current-scene override so the LLM doesn't pull NPCs from the
+    // generic campaign list when they aren't physically with the party.
+    // extraSections is an array of {title, content} — see prompt-builder.js.
+    const sceneContent = await buildCurrentSceneSection(campaignId);
+    const extraSections = sceneContent
+      ? [{
+          title: 'Current Scene (HARD OVERRIDE — only these NPCs are physically present right now)',
+          content: sceneContent,
+        }]
+      : [];
+
     const { result } = await contextualService.generateFromContext({
       campaignId,
       sessionId,
       type: NARRATIVE_TYPES.WORLD_TURN_NARRATION,
       request: {
         systemPromptOverride: WORLD_TURN_SYSTEM_PROMPT,
+        extraSections,
       },
     });
 
@@ -315,4 +398,54 @@ export async function narrateWorldTurn({
       error: error.message,
     });
   }
+}
+
+/**
+ * Fire the full world-turn pipeline (narration → mechanical execution → encounter
+ * check) when an auto-advanced turn rolls the round counter. Mirrors the inline
+ * logic in game-state.routes.js endTurn handler so chat-action / action-panel /
+ * roll-result auto-advance paths get the same world-turn behaviour as the
+ * manual End Turn button.
+ *
+ * Fire-and-forget — does not block the calling request. Errors are logged but
+ * never propagate.
+ */
+export function fireWorldTurnIfPending({
+  campaignId,
+  sessionId,
+  newState,
+  actorId,
+  contextualService,
+  wsServer,
+}) {
+  if (!newState?.worldTurnPending || !contextualService) return;
+
+  // Run async without blocking the caller. Each step has its own try/catch so
+  // a failure in one phase doesn't strand the others.
+  (async () => {
+    try {
+      await narrateWorldTurn({ campaignId, sessionId, contextualService, wsServer });
+    } catch (err) {
+      logError('Auto world turn narration failed', { campaignId, error: err.message });
+    }
+
+    let wtClient;
+    try {
+      wtClient = await getClient({ label: 'auto-world-turn' });
+      await wtClient.query('BEGIN');
+      const wtResult = await executeDmWorldTurn(wtClient, sessionId, { actorId });
+      await wtClient.query('COMMIT');
+      if (wsServer && wtResult?.newState) {
+        wsServer.emitWorldTurnCompleted?.(campaignId, {
+          sessionId,
+          gameState: wtResult.newState,
+        });
+      }
+    } catch (wtErr) {
+      if (wtClient) await wtClient.query('ROLLBACK').catch(() => {});
+      logError('Auto world turn execution failed', { campaignId, error: wtErr.message });
+    } finally {
+      wtClient?.release();
+    }
+  })();
 }
