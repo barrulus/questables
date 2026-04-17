@@ -88,6 +88,9 @@ CREATE TABLE IF NOT EXISTS public.maps_world (
     -- Status
     is_active BOOLEAN DEFAULT true,
 
+    -- Travel parameters
+    pixels_per_mile DOUBLE PRECISION,
+
     created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW() NOT NULL,
     updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW() NOT NULL
 );
@@ -278,6 +281,7 @@ CREATE TABLE IF NOT EXISTS public.campaigns (
     experience_type TEXT DEFAULT 'milestone' CHECK (experience_type IN ('milestone', 'experience_points')),
     resting_rules TEXT DEFAULT 'standard' CHECK (resting_rules IN ('standard', 'gritty', 'heroic')),
     death_save_rules TEXT DEFAULT 'standard' CHECK (death_save_rules IN ('standard', 'hardcore', 'forgiving')),
+    campaign_clock_days INTEGER NOT NULL DEFAULT 0 CHECK (campaign_clock_days >= 0),
     created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW() NOT NULL,
     updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW() NOT NULL,
     last_activity TIMESTAMP WITH TIME ZONE DEFAULT NOW() NOT NULL
