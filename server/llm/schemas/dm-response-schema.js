@@ -18,7 +18,9 @@ export const DM_RESPONSE_SCHEMA = {
             'damage', 'healing', 'condition_add', 'condition_remove',
             'item_gain', 'item_lose', 'resource_use',
             'spell_slot_use', 'concentration_start', 'concentration_break',
+            'move_player',
           ],
+          description: 'The mechanical effect type. Use move_player when narration moves the party to a new location (travelling to a town, entering a building, leaving a scene).',
         },
         targetCharacterId: {
           type: ['string', 'null'],
@@ -41,6 +43,21 @@ export const DM_RESPONSE_SCHEMA = {
               description: { type: ['string', 'null'], description: 'Brief flavour description.' },
             },
           },
+        },
+        destination: {
+          type: ['object', 'null'],
+          description: 'Required when type === "move_player". Where the party ends up.',
+          properties: {
+            kind: {
+              type: 'string',
+              enum: ['burg', 'poi', 'coordinate'],
+              description: 'burg = a named settlement in maps_burgs. poi = a named point-of-interest in maps_markers. coordinate = raw world pixel coords.',
+            },
+            ref: {
+              description: 'For kind=burg: the burg name (string) or id (uuid). For kind=poi: the marker note/name. For kind=coordinate: object {x,y}.',
+            },
+          },
+          required: ['kind', 'ref'],
         },
       },
     },
