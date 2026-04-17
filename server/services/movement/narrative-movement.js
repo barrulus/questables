@@ -1,3 +1,4 @@
+import { logWarn } from '../../utils/logger.js';
 import { resolveDestination } from './destination-resolver.js';
 import { performPlayerMovement } from '../campaigns/service.js';
 
@@ -30,6 +31,7 @@ export async function applyNarrativeMove(client, {
   const summary = {
     playerId: result.player.id,
     geometry: result.player.geometry,
+    visibilityState: result.player.visibility_state,
     mapLevel: resolved.mapLevel,
     insideBurgId: resolved.burgId,
     resolvedName: resolved.resolvedName,
@@ -51,7 +53,11 @@ export async function applyNarrativeMove(client, {
         source: 'llm',
       });
     } catch (err) {
-      // best-effort; don't fail the move if broadcast fails
+      logWarn('narrative-movement broadcast failed (non-fatal)', {
+        campaignId,
+        playerId: result.player.id,
+        error: err?.message ?? String(err),
+      });
     }
   }
 
