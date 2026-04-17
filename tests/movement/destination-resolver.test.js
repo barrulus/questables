@@ -66,3 +66,44 @@ describe('resolveDestination — burg by name', () => {
     ).rejects.toMatchObject({ code: 'destination_not_found' });
   });
 });
+
+describe('resolveDestination — coordinate', () => {
+  test('passes through {x,y}', async () => {
+    const client = { query: jest.fn() };
+    const result = await resolveDestination(client, {
+      campaignId: 'camp-1',
+      destination: { kind: 'coordinate', ref: { x: 500, y: 300 } },
+    });
+    expect(result).toEqual({
+      x: 500, y: 300, burgId: null, mapLevel: 'world', resolvedName: null,
+    });
+    expect(client.query).not.toHaveBeenCalled();
+  });
+
+  test('rejects non-finite coords', async () => {
+    const client = { query: jest.fn() };
+    await expect(
+      resolveDestination(client, {
+        campaignId: 'camp-1',
+        destination: { kind: 'coordinate', ref: { x: 'nope', y: 0 } },
+      }),
+    ).rejects.toMatchObject({ code: 'invalid_destination' });
+  });
+});
+
+describe('resolveDestination — poi', () => {
+  test('matches marker by note ILIKE', async () => {
+    const client = {
+      query: jest.fn(async () => ({
+        rows: [{ id: 'm1', x: 42, y: 99, note: 'Old Mill' }],
+      })),
+    };
+    const result = await resolveDestination(client, {
+      campaignId: 'camp-1',
+      destination: { kind: 'poi', ref: 'Old Mill' },
+    });
+    expect(result).toEqual({
+      x: 42, y: 99, burgId: null, mapLevel: 'world', resolvedName: 'Old Mill',
+    });
+  });
+});
