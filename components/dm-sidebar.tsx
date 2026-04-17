@@ -896,7 +896,7 @@ export function DMSidebar() {
       } else {
         toast.error("Failed to send director whisper");
       }
-    } catch (error) {
+    } catch {
       toast.error("Failed to send director whisper");
     } finally {
       setDirectorWhisperPending(false);
@@ -919,7 +919,7 @@ export function DMSidebar() {
       } else {
         toast.error("Failed to save narrative nudge");
       }
-    } catch (error) {
+    } catch {
       toast.error("Failed to save narrative nudge");
     } finally {
       setNarrativeNudgePending(false);
@@ -945,7 +945,7 @@ export function DMSidebar() {
       } else {
         toast.info("No recent narration to retcon.");
       }
-    } catch (error) {
+    } catch {
       toast.error("Failed to retcon narration");
     }
   }, [activeCampaignId]);
@@ -1052,11 +1052,23 @@ export function DMSidebar() {
             </AccordionContent>
           </AccordionItem>
 
-          {/* ── Legacy Controls (pre-LLM-as-DM) ─────────────────── */}
-          {/* These sections predate the autonomous LLM DM system.
-              Session Focus/Context are superseded by geographic context auto-loading.
-              Unplanned Encounter is superseded by proactive encounter generation.
-              Kept as CD override tools for edge cases. */}
+          {/* ── Campaign Director Overrides ───────────────────────
+              Manual override tools for the Campaign Director. The autonomous
+              LLM DM normally handles session focus, encounter generation, and
+              NPC sentiment — these controls let the human CD step in for edge
+              cases (custom focus, forced encounter, sentiment correction). */}
+          <div className="px-4 pt-4 pb-2">
+            <div className="flex items-center gap-2">
+              <div className="h-px flex-1 bg-border" />
+              <span className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
+                Campaign Director Overrides
+              </span>
+              <div className="h-px flex-1 bg-border" />
+            </div>
+            <p className="mt-1 text-[10px] text-muted-foreground/80">
+              Manual controls — the LLM DM handles these automatically.
+            </p>
+          </div>
 
           <AccordionItem value="session-focus">
             <AccordionTrigger>

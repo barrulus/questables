@@ -83,7 +83,6 @@ These events are emitted by server-side operations (not triggered by client sock
 
 | Event Key | Socket Event | Trigger | Delivery |
 |-----------|-------------|---------|----------|
-| `dmNarration` | `dm-narration` | LLM produces narration for a player action | Broadcast to campaign |
 | `rollRequested` | `roll-requested` | LLM requests a roll from a player | Private to rolling player (`emitToUser`) |
 | `actionCompleted` | `action-completed` | Player action fully resolved | Broadcast to campaign |
 | `liveStateChanged` | `live-state-changed` | HP, conditions, or other live state mutated | Broadcast to campaign |

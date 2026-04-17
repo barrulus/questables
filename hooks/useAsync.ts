@@ -9,7 +9,14 @@
  *
  * Usage:
  *   const { data, loading, error, retry } = useAsync(() => fetchJson('/api/things'), [id]);
- *   const { data, loading, error, retry } = useAsync(async () => { ... }, [dep1, dep2]);
+ *   const { data, loading, error, retry } = useAsync(async (signal) => {
+ *     const r = await fetch('/api/things', { signal });
+ *     return r.json();
+ *   }, [id]);
+ *
+ * The fetcher receives an AbortSignal that is aborted when deps change, the
+ * component unmounts, or retry() is called. Forward it to fetch/apiFetch to
+ * cancel in-flight requests instead of just discarding their results.
  */
 
 import { useCallback, useEffect, useRef, useState } from "react";
@@ -27,15 +34,21 @@ interface UseAsyncResult<T> extends AsyncState<T> {
   setData: React.Dispatch<React.SetStateAction<T | null>>;
 }
 
+/** AbortError instances raised by fetch/AbortController.abort() should not surface as errors. */
+const isAbortError = (err: unknown): boolean =>
+  err instanceof DOMException && err.name === "AbortError";
+
 /**
  * Hook for async data fetching with automatic loading/error management.
  *
- * @param fetcher - Async function that returns data. Return `undefined` to skip setting data.
+ * @param fetcher - Async function that returns data. Receives an AbortSignal
+ *                  that is aborted on dep change / unmount / retry. Return
+ *                  `undefined` to skip setting data.
  * @param deps - Dependency array. Fetcher re-runs when deps change.
  * @param options.skip - If true, don't run on mount/dep change (call retry() manually).
  */
 export function useAsync<T>(
-  fetcher: () => Promise<T | undefined>,
+  fetcher: (signal: AbortSignal) => Promise<T | undefined>,
   deps: React.DependencyList,
   options?: { skip?: boolean },
 ): UseAsyncResult<T> {
@@ -47,13 +60,19 @@ export function useAsync<T>(
 
   const mountedRef = useRef(true);
   const fetchCountRef = useRef(0);
+  const abortRef = useRef<AbortController | null>(null);
 
   const execute = useCallback(async () => {
+    // Abort any in-flight request from the previous run.
+    abortRef.current?.abort();
+    const controller = new AbortController();
+    abortRef.current = controller;
+
     const fetchId = ++fetchCountRef.current;
     setState((prev) => ({ ...prev, loading: true, error: null }));
 
     try {
-      const result = await fetcher();
+      const result = await fetcher(controller.signal);
       // Only update if still mounted and this is the latest fetch
       if (mountedRef.current && fetchId === fetchCountRef.current) {
         if (result !== undefined) {
@@ -63,6 +82,8 @@ export function useAsync<T>(
         }
       }
     } catch (err) {
+      // Swallow aborts — they're an expected consequence of dep change / unmount.
+      if (isAbortError(err) || controller.signal.aborted) return;
       if (mountedRef.current && fetchId === fetchCountRef.current) {
         const message =
           err instanceof Error ? err.message : typeof err === "string" ? err : "An error occurred";
@@ -79,8 +100,8 @@ export function useAsync<T>(
     }
     return () => {
       mountedRef.current = false;
+      abortRef.current?.abort();
     };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [execute, options?.skip]);
 
   const setData = useCallback<React.Dispatch<React.SetStateAction<T | null>>>((value) => {
@@ -103,7 +124,7 @@ export function useAsync<T>(
  * Convenience variant that fetches a list and defaults to empty array.
  */
 export function useAsyncList<T>(
-  fetcher: () => Promise<T[]>,
+  fetcher: (signal: AbortSignal) => Promise<T[]>,
   deps: React.DependencyList,
   options?: { skip?: boolean },
 ): UseAsyncResult<T[]> & { items: T[] } {

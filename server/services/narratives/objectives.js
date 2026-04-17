@@ -30,7 +30,7 @@ const parseJsonColumn = (value) => {
   if (typeof value === 'string') {
     try {
       return JSON.parse(value);
-    } catch (error) {
+    } catch {
       return null;
     }
   }

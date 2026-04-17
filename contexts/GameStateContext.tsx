@@ -6,11 +6,11 @@ import {
   useEffect,
   useMemo,
   useRef,
-  useState,
 } from "react";
 import { useGameSession } from "./GameSessionContext";
 import { useUser } from "./UserContext";
 import { useWebSocket } from "../hooks/useWebSocket";
+import { useAsync } from "../hooks/useAsync";
 import { apiFetch, readJsonBody, readErrorMessage } from "../utils/api-client";
 
 // ---------------------------------------------------------------------------
@@ -70,23 +70,16 @@ export function GameStateProvider({ children }: { children: ReactNode }) {
   const { activeCampaignId } = useGameSession();
   const { messages: wsMessages } = useWebSocket(activeCampaignId ?? "");
 
-  const [gameState, setGameState] = useState<GameState | null>(null);
-  const [sessionId, setSessionId] = useState<string | null>(null);
-  const [loading, setLoading] = useState(false);
-  const [playerNames, setPlayerNames] = useState<Record<string, string>>({});
-
   const lastWsMsgCountRef = useRef(0);
 
   // ── Fetch on mount / campaign change ────────────────────────────────
-  const fetchGameState = useCallback(async (signal?: AbortSignal) => {
-    if (!activeCampaignId) {
-      setGameState(null);
-      setSessionId(null);
-      return;
-    }
-
-    try {
-      setLoading(true);
+  const {
+    data: gameStateData,
+    loading,
+    setData: setGameStateData,
+  } = useAsync<{ gameState: GameState | null; sessionId: string | null }>(
+    async (signal) => {
+      if (!activeCampaignId) return { gameState: null, sessionId: null };
       const response = await apiFetch(
         `/api/campaigns/${activeCampaignId}/game-state`,
         { signal },
@@ -94,53 +87,53 @@ export function GameStateProvider({ children }: { children: ReactNode }) {
       if (!response.ok) {
         throw new Error(await readErrorMessage(response, "Failed to load game state"));
       }
-      const payload = await readJsonBody<{
+      return readJsonBody<{
         gameState: GameState | null;
         sessionId: string | null;
       }>(response);
-      setGameState(payload.gameState);
-      setSessionId(payload.sessionId);
-    } catch (error) {
-      if (error instanceof DOMException && error.name === "AbortError") return;
-      console.error("[GameState] fetch failed:", error);
-    } finally {
-      setLoading(false);
-    }
-  }, [activeCampaignId]);
-
-  useEffect(() => {
-    const controller = new AbortController();
-    fetchGameState(controller.signal);
-    return () => controller.abort();
-  }, [fetchGameState]);
+    },
+    [activeCampaignId],
+  );
+  const gameState = gameStateData?.gameState ?? null;
+  const sessionId = gameStateData?.sessionId ?? null;
+  const setGameState = useCallback(
+    (next: GameState | null | ((prev: GameState | null) => GameState | null)) => {
+      setGameStateData((prev) => {
+        const resolved = typeof next === "function" ? next(prev?.gameState ?? null) : next;
+        return { gameState: resolved, sessionId: prev?.sessionId ?? null };
+      });
+    },
+    [setGameStateData],
+  );
+  const setSessionId = useCallback(
+    (nextSessionId: string | null) => {
+      setGameStateData((prev) => ({
+        gameState: prev?.gameState ?? null,
+        sessionId: nextSessionId,
+      }));
+    },
+    [setGameStateData],
+  );
 
   // ── Load player names for the turn order ────────────────────────────
-  useEffect(() => {
-    if (!activeCampaignId) return;
-    const controller = new AbortController();
-
-    (async () => {
-      try {
-        const response = await apiFetch(
-          `/api/campaigns/${activeCampaignId}/characters`,
-          { signal: controller.signal },
-        );
-        if (!response.ok) return;
-        const payload = await readJsonBody<
-          { user_id: string; name: string }[]
-        >(response);
-        const names: Record<string, string> = {};
-        for (const c of payload ?? []) {
-          if (c.user_id) names[c.user_id] = c.name;
-        }
-        setPlayerNames(names);
-      } catch {
-        /* ignore */
+  const { data: playerNamesData } = useAsync<Record<string, string>>(
+    async (signal) => {
+      if (!activeCampaignId) return {};
+      const response = await apiFetch(
+        `/api/campaigns/${activeCampaignId}/characters`,
+        { signal },
+      );
+      if (!response.ok) return {};
+      const payload = await readJsonBody<{ user_id: string; name: string }[]>(response);
+      const names: Record<string, string> = {};
+      for (const c of payload ?? []) {
+        if (c.user_id) names[c.user_id] = c.name;
       }
-    })();
-
-    return () => controller.abort();
-  }, [activeCampaignId]);
+      return names;
+    },
+    [activeCampaignId],
+  );
+  const playerNames = playerNamesData ?? {};
 
   // ── Listen to WebSocket events ──────────────────────────────────────
   useEffect(() => {

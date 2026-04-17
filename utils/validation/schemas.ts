@@ -317,7 +317,7 @@ export const validateField = <T>(schema: z.ZodSchema<T>, value: unknown): {
   }
 };
 
-export const validateFormData = <T>(schema: z.ZodSchema<T>, formData: FormData | Record<string, any>): {
+export const validateFormData = <T>(schema: z.ZodSchema<T>, formData: FormData | Record<string, unknown>): {
   isValid: boolean;
   data?: T;
   fieldErrors?: Record<string, string[]>;

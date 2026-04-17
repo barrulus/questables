@@ -506,8 +506,8 @@ router.get('/conditions', async (req, res) => {
 router.post('/compute-stats', async (req, res) => {
   try {
     const {
-      speciesKey, classKey, backgroundKey,
-      level, baseAbilities, abilityScoreMethod,
+      speciesKey, classKey, backgroundKey: _backgroundKey,
+      level, baseAbilities, abilityScoreMethod: _abilityScoreMethod,
       chosenSkills, chosenLanguages, documentSource,
     } = req.body;
 

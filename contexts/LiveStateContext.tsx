@@ -5,11 +5,11 @@ import {
   useContext,
   useEffect,
   useRef,
-  useState,
 } from "react";
 import { useGameSession } from "./GameSessionContext";
 import { useUser } from "./UserContext";
 import { useWebSocket } from "../hooks/useWebSocket";
+import { useAsync } from "../hooks/useAsync";
 import { apiFetch, readJsonBody, readErrorMessage } from "../utils/api-client";
 
 // ---------------------------------------------------------------------------
@@ -73,48 +73,33 @@ export function LiveStateProvider({ children }: { children: ReactNode }) {
   const { activeCampaignId } = useGameSession();
   const { messages: wsMessages } = useWebSocket(activeCampaignId ?? "");
 
-  const [allLiveStates, setAllLiveStates] = useState<Record<string, LiveCharacterState>>({});
-  const [loading, setLoading] = useState(false);
-
   const lastWsMsgCountRef = useRef(0);
 
   // ── Fetch live states on mount ────────────────────────────────────────
-  const fetchLiveStates = useCallback(
-    async (signal?: AbortSignal) => {
-      if (!activeCampaignId) {
-        setAllLiveStates({});
-        return;
-      }
+  const {
+    data: liveStatesData,
+    loading,
+    setData: setAllLiveStatesData,
+  } = useAsync<Record<string, LiveCharacterState>>(
+    async (signal) => {
+      if (!activeCampaignId) return {};
+      const response = await apiFetch(
+        `/api/campaigns/${activeCampaignId}/live-states`,
+        { signal },
+      );
+      if (!response.ok) return undefined;
 
-      try {
-        setLoading(true);
-        const response = await apiFetch(
-          `/api/campaigns/${activeCampaignId}/live-states`,
-          { signal },
-        );
-        if (!response.ok) return;
-
-        const states = await readJsonBody<LiveCharacterState[]>(response);
-        const map: Record<string, LiveCharacterState> = {};
-        for (const s of states ?? []) {
-          map[s.character_id] = s;
-        }
-        setAllLiveStates(map);
-      } catch (error) {
-        if (error instanceof DOMException && error.name === "AbortError") return;
-        console.error("[LiveState] fetch failed:", error);
-      } finally {
-        setLoading(false);
+      const states = await readJsonBody<LiveCharacterState[]>(response);
+      const map: Record<string, LiveCharacterState> = {};
+      for (const s of states ?? []) {
+        map[s.character_id] = s;
       }
+      return map;
     },
     [activeCampaignId],
   );
-
-  useEffect(() => {
-    const controller = new AbortController();
-    fetchLiveStates(controller.signal);
-    return () => controller.abort();
-  }, [fetchLiveStates]);
+  const allLiveStates = liveStatesData ?? {};
+  const setAllLiveStates = setAllLiveStatesData;
 
   // ── WebSocket listener ────────────────────────────────────────────────
   useEffect(() => {

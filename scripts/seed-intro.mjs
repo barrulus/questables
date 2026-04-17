@@ -150,7 +150,7 @@ Write the opening narration for the first scene of this session. The party has j
       try {
         const fenced = content.match(/```(?:json)?\s*([\s\S]*?)```/);
         parsed = JSON.parse(fenced ? fenced[1] : content);
-      } catch {}
+      } catch { /* best-effort parse */ }
       return { content, parsed };
     },
   };

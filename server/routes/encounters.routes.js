@@ -1,3 +1,8 @@
+// PLANNED: Planned-encounter CRUD. Currently no frontend client functions
+// consume these routes (only `createUnplannedEncounter` is wired up). Kept
+// because planned encounters are on the roadmap. Do not delete without
+// confirming the roadmap status. See analysis_8-4-26.md (item C5).
+
 import { Router } from 'express';
 import { getClient } from '../db/pool.js';
 import { logError, logInfo } from '../utils/logger.js';

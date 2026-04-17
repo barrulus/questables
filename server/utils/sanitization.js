@@ -5,6 +5,7 @@ export const sanitizePlainText = (input) => {
   if (typeof input !== 'string') return '';
   // Strip control characters, collapse whitespace
   return input
+    // eslint-disable-next-line no-control-regex -- stripping control chars is the point
     .replace(/[\u0000-\u001F\u007F]/g, ' ')
     .replace(/\s+/g, ' ')
     .trim()

@@ -28,7 +28,7 @@ export const parseLevelRangeInput = (input, { fallbackToDefault = true } = {}) =
     ? (() => {
         try {
           return JSON.parse(input);
-        } catch (error) {
+        } catch {
           throw new Error('Level range string must be valid JSON');
         }
       })()

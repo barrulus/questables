@@ -1,5 +1,3 @@
-/* eslint-env node */
-
 import '@testing-library/jest-dom';
 import { afterEach, jest } from '@jest/globals';
 

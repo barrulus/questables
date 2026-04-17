@@ -1,4 +1,3 @@
-import { useState, useEffect, useCallback } from "react";
 import { Card, CardContent, CardHeader, CardTitle } from "./ui/card";
 import { Accordion, AccordionContent, AccordionItem, AccordionTrigger } from "./ui/accordion";
 import { Badge } from "./ui/badge";
@@ -7,6 +6,7 @@ import { Progress } from "./ui/progress";
 import { Separator } from "./ui/separator";
 import { getCharacter } from "../utils/api/characters";
 import { Character } from "../utils/database/data-structures";
+import { useAsync } from "../hooks/useAsync";
 
 type AbilityKey = keyof Character["abilities"];
 
@@ -97,40 +97,12 @@ interface CharacterSheetProps {
 }
 
 export function CharacterSheet({ characterId, refreshTrigger }: CharacterSheetProps) {
-  const [character, setCharacter] = useState<Character | null>(null);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
-
-  const loadCharacter = useCallback(async (id: string) => {
-    try {
-      setLoading(true);
-      setError(null);
-      const char = await getCharacter(id);
-      if (char) {
-        setCharacter(char);
-        return;
-      }
-
-      setCharacter(null);
-      setError("Character not found");
-    } catch (error) {
-      console.error("Failed to load character:", error);
-      setError("Failed to load character");
-      setCharacter(null);
-    } finally {
-      setLoading(false);
-    }
-  }, []);
-
-  useEffect(() => {
-    if (!characterId) {
-      setCharacter(null);
-      setLoading(false);
-      return;
-    }
-
-    void loadCharacter(characterId);
-  }, [characterId, loadCharacter, refreshTrigger]);
+  const { data: character, loading, error, retry } = useAsync<Character | null>(async () => {
+    if (!characterId) return null;
+    const char = await getCharacter(characterId);
+    if (!char) throw new Error("Character not found");
+    return char;
+  }, [characterId, refreshTrigger]);
 
   // Calculate ability modifier
   const getAbilityModifier = (score: number): number => {
@@ -160,7 +132,7 @@ export function CharacterSheet({ characterId, refreshTrigger }: CharacterSheetPr
             <div className="text-center text-muted-foreground space-y-3">
               <p>{error || 'No character selected'}</p>
               {error && characterId && (
-                <Button variant="outline" size="sm" onClick={() => loadCharacter(characterId)}>
+                <Button variant="outline" size="sm" onClick={retry}>
                   Retry
                 </Button>
               )}

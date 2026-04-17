@@ -1,7 +1,6 @@
 // Authentication and authorization middleware
 import jwt from 'jsonwebtoken';
 import bcrypt from 'bcrypt';
-import { Pool } from 'pg';
 import { logError } from './utils/logger.js';
 
 // JWT secret key - must be set via environment variable

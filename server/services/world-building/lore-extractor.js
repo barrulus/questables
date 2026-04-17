@@ -65,9 +65,9 @@ export async function extractAndPersistLore({
   campaignId,
   narrationContent,
   llmService,
-  locX = null,
-  locY = null,
-  insideBurgId = null,
+  locX: _locX = null,
+  locY: _locY = null,
+  insideBurgId: _insideBurgId = null,
 }) {
   if (!narrationContent || narrationContent.length < 50) {
     return []; // Too short to contain meaningful lore

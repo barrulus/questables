@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState } from 'react';
 import { Card, CardContent, CardHeader, CardTitle } from './ui/card';
 import { Button } from './ui/button';
 import { Badge } from './ui/badge';
@@ -7,6 +7,7 @@ import { ScrollArea } from './ui/scroll-area';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from './ui/dialog';
 import { toast } from 'sonner';
 import { fetchJson } from "../utils/api-client";
+import { useAsyncList } from "../hooks/useAsync";
 import {
   ScrollText,
   Search,
@@ -48,51 +49,35 @@ interface ApiSession {
 }
 
 export default function Journals({ campaignId }: JournalsProps) {
-  const [journalEntries, setJournalEntries] = useState<JournalEntry[]>([]);
-  const [loading, setLoading] = useState(true);
   const [searchTerm, setSearchTerm] = useState('');
   const [detailEntry, setDetailEntry] = useState<JournalEntry | null>(null);
 
-  // Load journal entries from completed sessions
-  const loadJournalEntries = async () => {
-    try {
-      if (!campaignId) {
-        setJournalEntries([]);
-        return;
-      }
-      // Load completed sessions as journal entries
-      const sessions = await fetchJson<ApiSession[]>(
-        `/api/campaigns/${campaignId}/sessions`,
-        undefined,
-        'Failed to load sessions',
-      );
+  const { items: journalEntries, loading, error } = useAsyncList<JournalEntry>(async () => {
+    if (!campaignId) return [];
+    const sessions = await fetchJson<ApiSession[]>(
+      `/api/campaigns/${campaignId}/sessions`,
+      undefined,
+      'Failed to load sessions',
+    );
+    if (!sessions) return [];
+    return sessions
+      .filter((session) => session.status === 'completed')
+      .map((session) => ({
+        id: session.id,
+        session_id: session.id,
+        session_number: session.session_number,
+        session_title: session.title,
+        summary: session.summary,
+        date: session.ended_at || session.started_at || session.created_at,
+        duration: session.duration,
+        experience_awarded: session.experience_awarded,
+        treasure_found: session.treasure_awarded || [],
+      }));
+  }, [campaignId]);
 
-      if (sessions) {
-        const completedSessions = sessions
-          .filter((session) => session.status === 'completed')
-          .map((session) => ({
-            id: session.id,
-            session_id: session.id,
-            session_number: session.session_number,
-            session_title: session.title,
-            summary: session.summary,
-            date: session.ended_at || session.started_at || session.created_at,
-            duration: session.duration,
-            experience_awarded: session.experience_awarded,
-            treasure_found: session.treasure_awarded || [],
-          }));
-
-        setJournalEntries(completedSessions);
-      } else {
-        setJournalEntries([]);
-      }
-    } catch (error) {
-      console.error('Failed to load journal entries:', error);
-      toast.error(error instanceof Error ? error.message : 'Failed to load journal entries');
-    } finally {
-      setLoading(false);
-    }
-  };
+  if (error) {
+    toast.error(error);
+  }
 
   // Filter entries based on search
   const filteredEntries = journalEntries.filter(entry => {
@@ -120,16 +105,6 @@ export default function Journals({ campaignId }: JournalsProps) {
     }
     return `${remainingMinutes}m`;
   };
-
-  useEffect(() => {
-    if (!campaignId) {
-      setLoading(false);
-      return;
-    }
-
-    setLoading(true);
-    loadJournalEntries();
-  }, [campaignId]);
 
   if (loading) {
     return (

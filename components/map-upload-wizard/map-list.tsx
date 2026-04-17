@@ -1,8 +1,8 @@
-import { useCallback, useEffect, useState } from "react";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "../ui/card";
 import { Button } from "../ui/button";
 import { Loader2, MapIcon, Plus } from "lucide-react";
 import { apiFetch, readJsonBody } from "../../utils/api-client";
+import { useAsync } from "../../hooks/useAsync";
 
 interface WorldMap {
   id: string;
@@ -20,28 +20,12 @@ interface MapListProps {
 }
 
 export function MapList({ onUploadNew }: MapListProps) {
-  const [maps, setMaps] = useState<WorldMap[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
-
-  const fetchMaps = useCallback(async () => {
-    try {
-      setLoading(true);
-      setError(null);
-      const response = await apiFetch("/api/maps/world");
-      if (!response.ok) throw new Error("Failed to load maps");
-      const data = await readJsonBody<WorldMap[]>(response);
-      setMaps(data);
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to load maps");
-    } finally {
-      setLoading(false);
-    }
+  const { data, loading, error } = useAsync<WorldMap[]>(async () => {
+    const response = await apiFetch("/api/maps/world");
+    if (!response.ok) throw new Error("Failed to load maps");
+    return readJsonBody<WorldMap[]>(response);
   }, []);
-
-  useEffect(() => {
-    fetchMaps();
-  }, [fetchMaps]);
+  const maps = data ?? [];
 
   return (
     <div className="space-y-4">

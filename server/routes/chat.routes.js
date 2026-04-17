@@ -11,7 +11,6 @@ import { sanitizeChatMessage, sanitizeUserInput } from '../utils/sanitization.js
 import {
   createChatMessage,
   listChatMessages,
-  listRecentChatMessages,
   deleteChatMessage,
   getUnreadCounts,
   markChannelRead,
@@ -273,26 +272,6 @@ router.get('/api/campaigns/:campaignId/messages', requireAuth, requireCampaignPa
   } catch (error) {
     logError('[Chat] Get messages error:', error);
     res.status(500).json({ error: 'Failed to fetch messages' });
-  }
-});
-
-// Get recent messages for a campaign (for polling)
-router.get('/api/campaigns/:campaignId/messages/recent', requireAuth, requireCampaignParticipation, async (req, res) => {
-  const { campaignId } = req.params;
-  const { since, channel_type, channel_target_user_id } = req.query; // ISO timestamp
-
-  try {
-    const rows = await listRecentChatMessages({
-      campaignId,
-      since,
-      channelType: channel_type,
-      channelTargetUserId: channel_target_user_id,
-      userId: req.user.id,
-    });
-    res.json(rows);
-  } catch (error) {
-    logError('[Chat] Get recent messages error:', error);
-    res.status(500).json({ error: 'Failed to fetch recent messages' });
   }
 });
 

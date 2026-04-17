@@ -21,7 +21,6 @@ import { resolveDeathSave } from '../services/combat/death-saves.js';
 import { checkLevelUps } from '../services/levelling/service.js';
 import { logError } from '../utils/logger.js';
 import { getActiveSession, userOwnsCharacterInCampaign } from '../services/sessions/service.js';
-import { postNarrationToChat } from '../services/chat/dm-narrator.js';
 import { narrateWorldTurn } from '../services/narration/proactive-narrator.js';
 
 const router = Router();

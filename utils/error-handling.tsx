@@ -27,7 +27,7 @@ export const handleAsyncError = (error: unknown): string => {
   return 'An unexpected error occurred';
 };
 
-export const createAsyncHandler = <T extends any[]>(
+export const createAsyncHandler = <T extends unknown[]>(
   asyncFn: (...args: T) => Promise<void>,
   setError: (error: string | null) => void,
   setLoading: (loading: boolean) => void

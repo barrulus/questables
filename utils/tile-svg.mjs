@@ -5,7 +5,6 @@ import fs from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
 import sharp from 'sharp';
-import { XMLParser, XMLBuilder } from 'fast-xml-parser';
 import yargs from 'yargs';
 import pLimit from 'p-limit';
 

@@ -11,7 +11,7 @@ const parseJson = (value, fallback) => {
   if (typeof value === 'string' && value.trim().length > 0) {
     try {
       return JSON.parse(value);
-    } catch (error) {
+    } catch {
       return fallback;
     }
   }

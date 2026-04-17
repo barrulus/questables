@@ -391,7 +391,7 @@ PLAYER AGENCY (ABSOLUTE — NEVER VIOLATE):
 export function buildSocialActionPrompt({
   character,
   liveState,
-  actionType,
+  actionType: _actionType,
   actionPayload,
   npcContext,
   recentNarrations,

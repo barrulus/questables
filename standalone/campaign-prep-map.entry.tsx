@@ -1,9 +1,10 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useMemo } from 'react';
 import ReactDOM from 'react-dom/client';
 import '../styles/globals.css';
 
 import { CampaignPrepMap } from '../components/campaign-prep-map';
 import { listWorldMaps } from '../utils/api/maps';
+import { useAsync } from '../hooks/useAsync';
 
 type Bounds = { west: number; south: number; east: number; north: number };
 
@@ -14,43 +15,20 @@ type WorldRecord = Record<string, unknown> & {
 };
 
 function useFirstWorldMap() {
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
-  const [world, setWorld] = useState<WorldRecord | null>(null);
+  const { data: world, loading, error } = useAsync<WorldRecord | null>(async () => {
+    // Optional: allow selecting a specific world via ?worldId=
+    const url = new URL(window.location.href);
+    const targetWorldId = url.searchParams.get('worldId');
 
-  useEffect(() => {
-    let cancelled = false;
-    (async () => {
-      try {
-        setLoading(true);
+    const maps = await listWorldMaps();
+    const items = Array.isArray(maps) ? maps : [];
+    const byId = (items as WorldRecord[]).find((m) => m && typeof m.id === 'string' && m.id === targetWorldId);
+    const first = byId ?? (items[0] as WorldRecord | undefined) ?? null;
 
-        // Optional: allow selecting a specific world via ?worldId=
-        const url = new URL(window.location.href);
-        const targetWorldId = url.searchParams.get('worldId');
-
-        const maps = await listWorldMaps();
-        if (cancelled) return;
-
-        const items = Array.isArray(maps) ? maps : [];
-        const byId = (items as WorldRecord[]).find((m) => m && typeof m.id === 'string' && m.id === targetWorldId);
-        const first = byId ?? (items[0] as WorldRecord | undefined) ?? null;
-
-        if (!first || typeof first.id !== 'string' || !first.bounds) {
-          setError('No world maps available or bounds missing. Ensure the backend is running and at least one world map is loaded.');
-          setWorld(null);
-        } else {
-          setWorld(first);
-        }
-      } catch (err) {
-        const message = err instanceof Error ? err.message : 'Failed to load world maps';
-        setError(message);
-      } finally {
-        if (!cancelled) setLoading(false);
-      }
-    })();
-    return () => {
-      cancelled = true;
-    };
+    if (!first || typeof first.id !== 'string' || !first.bounds) {
+      throw new Error('No world maps available or bounds missing. Ensure the backend is running and at least one world map is loaded.');
+    }
+    return first;
   }, []);
 
   return { loading, error, world };

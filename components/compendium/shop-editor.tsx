@@ -114,7 +114,7 @@ export function ShopEditor() {
       setNewName("");
       setNewLocation("");
       loadShops();
-    } catch (err) {
+    } catch {
       toast.error("Failed to create shop");
     } finally {
       setCreating(false);
@@ -131,7 +131,7 @@ export function ShopEditor() {
         "Failed to load shop",
       );
       setActiveShop(data ?? null);
-    } catch (err) {
+    } catch {
       toast.error("Failed to load shop");
     } finally {
       setLoading(false);
@@ -149,7 +149,7 @@ export function ShopEditor() {
       toast.success("Shop deleted");
       setActiveShop(null);
       loadShops();
-    } catch (err) {
+    } catch {
       toast.error("Failed to delete shop");
     }
   };
@@ -164,7 +164,7 @@ export function ShopEditor() {
       );
       loadShops();
       if (activeShop?.id === shopId) openShopDetail(shopId);
-    } catch (err) {
+    } catch {
       toast.error("Failed to update shop");
     }
   };
@@ -199,7 +199,7 @@ export function ShopEditor() {
       setItemSearch("");
       setSearchResults([]);
       openShopDetail(activeShop.id);
-    } catch (err) {
+    } catch {
       toast.error("Failed to add item");
     }
   };
@@ -214,7 +214,7 @@ export function ShopEditor() {
       );
       toast.success("Item removed");
       openShopDetail(activeShop.id);
-    } catch (err) {
+    } catch {
       toast.error("Failed to remove item");
     }
   };
@@ -232,7 +232,7 @@ export function ShopEditor() {
         toast.success(`Added ${result.addedCount} of ${result.suggestedCount} suggested items`);
         openShopDetail(activeShop.id);
       }
-    } catch (err) {
+    } catch {
       toast.error("Auto-stock failed — is the LLM service running?");
     } finally {
       setAutoStocking(false);

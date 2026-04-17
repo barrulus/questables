@@ -232,10 +232,6 @@ export const useWebSocket = (campaignId: string) => {
     });
 
     // WS3: Action processing events
-    socket.on('dm-narration', (data) => {
-      setMessages((prev) => [...prev, { type: 'dm-narration', data }]);
-    });
-
     socket.on('roll-requested', (data) => {
       setMessages((prev) => [...prev, { type: 'roll-requested', data }]);
     });

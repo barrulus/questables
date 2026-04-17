@@ -5,8 +5,7 @@
  * and can be synced back when the session ends.
  */
 
-import { query } from '../../db/pool.js';
-import { logInfo, logError } from '../../utils/logger.js';
+import { logInfo } from '../../utils/logger.js';
 
 /**
  * Get a single live state for a character in a session.

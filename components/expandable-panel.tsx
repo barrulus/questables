@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo, useCallback } from "react";
+import { useState, useMemo } from "react";
 import { Button } from "./ui/button";
 import { ScrollArea } from "./ui/scroll-area";
 
@@ -11,6 +11,7 @@ import { Spellbook } from "./spellbook";
 import { useUser } from "../contexts/UserContext";
 import { useGameSession } from "../contexts/GameSessionContext";
 import { apiFetch, readJsonBody } from "../utils/api-client";
+import { useAsync } from "../hooks/useAsync";
 import { OfflineModeWrapper } from './database-status';
 import { NarrativeConsole } from "./narrative-console";
 import { DMSidebar } from "./dm-sidebar";
@@ -45,10 +46,6 @@ export function ExpandablePanel({ activePanel, onClose }: ExpandablePanelProps) 
   const { user } = useUser();
   const { activeCampaign, activeCampaignId, viewerRole } = useGameSession();
   const [refreshTrigger, setRefreshTrigger] = useState(0);
-  const [campaignCharacterId, setCampaignCharacterId] = useState<string>('');
-  const [campaignCharacterLabel, setCampaignCharacterLabel] = useState<string>('');
-  const [loadingCharacters, setLoadingCharacters] = useState(true);
-  const [characterError, setCharacterError] = useState<string | null>(null);
 
   const canAccessDmSidebar = useMemo(() => {
     if (!user) return false;
@@ -58,45 +55,25 @@ export function ExpandablePanel({ activePanel, onClose }: ExpandablePanelProps) 
     return false;
   }, [activeCampaign?.dmUserId, user, viewerRole]);
 
-  const loadCampaignCharacter = useCallback(async (signal?: AbortSignal) => {
-    if (!user || !activeCampaignId) {
-      setCampaignCharacterId('');
-      setCampaignCharacterLabel('');
-      setLoadingCharacters(false);
-      return;
+  const {
+    data: campaignCharacter,
+    loading: loadingCharacters,
+    error: characterError,
+    retry: retryLoadCharacter,
+  } = useAsync<{ id: string; label: string }>(async (signal) => {
+    if (!user || !activeCampaignId) return { id: '', label: '' };
+    const response = await apiFetch(`/api/campaigns/${activeCampaignId}/characters`, { signal });
+    if (!response.ok) {
+      throw new Error('Failed to load campaign characters');
     }
-
-    try {
-      setLoadingCharacters(true);
-      setCharacterError(null);
-      const response = await apiFetch(`/api/campaigns/${activeCampaignId}/characters`, { signal });
-      if (!response.ok) {
-        throw new Error('Failed to load campaign characters');
-      }
-      const rows = await readJsonBody<CampaignCharacterRow[]>(response);
-      const characters = Array.isArray(rows) ? rows : [];
-      const mine = characters.find((c) => c.campaign_user_id === user.id);
-
-      if (mine) {
-        setCampaignCharacterId(mine.id);
-        setCampaignCharacterLabel(`${mine.name} (Level ${mine.level} ${mine.class})`);
-      } else {
-        setCampaignCharacterId('');
-        setCampaignCharacterLabel('');
-      }
-    } catch (err) {
-      if (err instanceof DOMException && err.name === 'AbortError') return;
-      setCharacterError(err instanceof Error ? err.message : 'Failed to load character');
-    } finally {
-      setLoadingCharacters(false);
-    }
+    const rows = await readJsonBody<CampaignCharacterRow[]>(response);
+    const characters = Array.isArray(rows) ? rows : [];
+    const mine = characters.find((c) => c.campaign_user_id === user.id);
+    if (!mine) return { id: '', label: '' };
+    return { id: mine.id, label: `${mine.name} (Level ${mine.level} ${mine.class})` };
   }, [activeCampaignId, user]);
-
-  useEffect(() => {
-    const controller = new AbortController();
-    loadCampaignCharacter(controller.signal);
-    return () => controller.abort();
-  }, [loadCampaignCharacter]);
+  const campaignCharacterId = campaignCharacter?.id ?? '';
+  const campaignCharacterLabel = campaignCharacter?.label ?? '';
 
   if (!activePanel) return null;
 
@@ -203,7 +180,7 @@ export function ExpandablePanel({ activePanel, onClose }: ExpandablePanelProps) 
                   variant="outline"
                   size="sm"
                   className="mt-2"
-                  onClick={() => loadCampaignCharacter()}
+                  onClick={retryLoadCharacter}
                 >
                   Retry
                 </Button>

@@ -260,7 +260,7 @@ export function CampaignPrepMap({
     initHook.refreshMapTileSource,
     initHook.selectedTileSetId,
     initHook.tileSets,
-  ]); // eslint-disable-line react-hooks/exhaustive-deps
+  ]);
 
   // 8. Trigger data load
   useEffect(() => {

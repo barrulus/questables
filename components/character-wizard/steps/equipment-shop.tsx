@@ -1,5 +1,6 @@
-import { useState, useEffect, useMemo } from 'react';
+import { useState, useMemo } from 'react';
 import { fetchItems } from '../../../utils/api/srd';
+import { useAsync } from '../../../hooks/useAsync';
 import type { SrdItem } from '../../../utils/srd/types';
 import { ScrollArea } from '../../ui/scroll-area';
 import { Button } from '../../ui/button';
@@ -56,23 +57,13 @@ export function EquipmentShop({
   totalSpent,
   onInfoClick,
 }: EquipmentShopProps) {
-  const [items, setItems] = useState<SrdItem[]>([]);
-  const [loading, setLoading] = useState(false);
   const [category, setCategory] = useState<string>(SHOP_CATEGORIES[0].key);
 
-  useEffect(() => {
-    const controller = new AbortController();
-    setLoading(true);
-    fetchItems({ category }, { signal: controller.signal })
-      .then((data) => {
-        if (!controller.signal.aborted) setItems(data);
-      })
-      .catch((err) => {
-        if (!(err instanceof Error && err.name === 'AbortError')) console.error(err);
-      })
-      .finally(() => { if (!controller.signal.aborted) setLoading(false); });
-    return () => controller.abort();
-  }, [category]);
+  const { data, loading } = useAsync<SrdItem[]>(
+    (signal) => fetchItems({ category }, { signal }),
+    [category],
+  );
+  const items = data ?? [];
 
   // Only show items with a real cost > 0
   const purchasableItems = useMemo(

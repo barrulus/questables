@@ -1,8 +1,8 @@
-import { useEffect, useState } from "react";
 import { Users } from "lucide-react";
 import { Button } from "../ui/button";
 import { useGameSession } from "../../contexts/GameSessionContext";
 import { apiFetch, readJsonBody } from "../../utils/api-client";
+import { useAsyncList } from "../../hooks/useAsync";
 
 interface CampaignNpc {
   id: string;
@@ -17,32 +17,16 @@ interface NpcPickerProps {
 
 export function NpcPicker({ onSelect }: NpcPickerProps) {
   const { activeCampaignId } = useGameSession();
-  const [npcs, setNpcs] = useState<CampaignNpc[]>([]);
-  const [loading, setLoading] = useState(true);
 
-  useEffect(() => {
-    if (!activeCampaignId) return;
-
-    const controller = new AbortController();
-    (async () => {
-      try {
-        const response = await apiFetch(
-          `/api/campaigns/${activeCampaignId}/npcs`,
-          { signal: controller.signal },
-        );
-        if (response.ok) {
-          const data = await readJsonBody<CampaignNpc[]>(response);
-          setNpcs(data ?? []);
-        }
-      } catch (e) {
-        if (e instanceof DOMException && e.name === "AbortError") return;
-        console.error("[NpcPicker] fetch failed:", e);
-      } finally {
-        setLoading(false);
-      }
-    })();
-
-    return () => controller.abort();
+  const { items: npcs, loading } = useAsyncList<CampaignNpc>(async (signal) => {
+    if (!activeCampaignId) return [];
+    const response = await apiFetch(
+      `/api/campaigns/${activeCampaignId}/npcs`,
+      { signal },
+    );
+    if (!response.ok) return [];
+    const data = await readJsonBody<CampaignNpc[]>(response);
+    return data ?? [];
   }, [activeCampaignId]);
 
   if (loading) {

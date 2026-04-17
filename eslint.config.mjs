@@ -4,6 +4,14 @@ import eslint from '@eslint/js';
 import tseslint from 'typescript-eslint';
 import { defineConfig } from 'eslint/config';
 import globals from 'globals';
+import reactHooks from 'eslint-plugin-react-hooks';
+
+const unusedVarsPattern = {
+  argsIgnorePattern: '^_',
+  varsIgnorePattern: '^_',
+  caughtErrorsIgnorePattern: '^_',
+  destructuredArrayIgnorePattern: '^_',
+};
 
 export default defineConfig(
   // Ignore build artifacts and non-source directories
@@ -18,6 +26,9 @@ export default defineConfig(
 
   // Repo-wide defaults
   {
+    plugins: {
+      'react-hooks': reactHooks,
+    },
     languageOptions: {
       ecmaVersion: 2022,
       sourceType: 'module',
@@ -26,14 +37,18 @@ export default defineConfig(
       },
     },
     rules: {
-      // treat intentionally unused vars/args prefixed with "_" as ok
-      'no-unused-vars': ['warn', { argsIgnorePattern: '^_', varsIgnorePattern: '^_' }],
+      // @typescript-eslint/no-unused-vars handles both JS and TS; the base rule
+      // duplicates it and produces false positives on TS type-signature params.
+      'no-unused-vars': 'off',
+      '@typescript-eslint/no-unused-vars': ['error', unusedVarsPattern],
+      'react-hooks/rules-of-hooks': 'error',
+      'react-hooks/exhaustive-deps': 'warn',
     },
   },
 
   // Node/server scripts (process, console, __dirname, etc.)
   {
-    files: ['server/**', 'scripts/**', 'bin/**', '**/setup-database.js'],
+    files: ['server/**', 'scripts/**', 'bin/**', '**/*.mjs', '**/setup-database.js'],
     languageOptions: {
       globals: {
         ...globals.node, // adds process, console, Buffer, etc.
