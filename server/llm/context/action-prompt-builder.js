@@ -137,6 +137,22 @@ LOOT & ITEM TRANSFER (CRITICAL — actually update inventory):
 - For dropping, losing, breaking, or selling items, use type "item_lose" with the same items array.
 - VIOLATION CHECK: if your narration uses verbs like "pockets", "stashes", "picks up", "takes", "claims", "secures", "tucks away", "pouches", or "adds to his pack", your "mechanicalOutcome" MUST be populated with item_gain. Do not narrate possession without recording the transfer.
 
+PLAYER MOVEMENT (CRITICAL — move_player outcome):
+- When your narration moves the party to a NEW location (travelling to a town, entering a named landmark, leaving a settlement), you MUST populate "mechanicalOutcome" with type "move_player" AND the destination object. The player token does NOT move unless you emit this outcome.
+- Shape:
+    mechanicalOutcome: {
+      type: "move_player",
+      destination: {
+        kind: "burg" | "poi" | "coordinate",
+        ref:  "<name string for burg/poi, or {x,y} for coordinate>"
+      }
+    }
+- kind="burg" — use the exact settlement name from the campaign's world (e.g. "Harrowick"). This is the normal case for town-to-town travel.
+- kind="poi"  — use for named landmarks stored as markers (e.g. "Old Mill", "Standing Stones").
+- kind="coordinate" — only when you have been given explicit pixel coordinates.
+- VIOLATION CHECK: if your narration uses verbs like "arrive at", "reach", "enter the town of", "travel to", "push on to", "make camp outside", or "the party comes to", your mechanicalOutcome MUST be { type: "move_player", destination: {...} }. Narration alone does NOT move the token, and the NEXT turn's geographic context will be wrong if you skip this.
+- If the move is also a scene change (you walk INTO the town's inn), populate BOTH move_player AND sceneTransition. move_player handles the map position; sceneTransition handles which NPCs are currently visible.
+
 WHEN TO REQUIRE A ROLL (CRITICAL — do not auto-resolve uncertain actions):
 - If the outcome of the action is uncertain AND failure is meaningful, you MUST populate "requiredRolls" instead of narrating the result. Do NOT reveal what the character finds, learns, persuades, or accomplishes until after the roll.
 
