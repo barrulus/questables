@@ -224,6 +224,7 @@ router.post(
               sessionId: session.id,
               mechanicalOutcome: dmResponse.mechanicalOutcome,
               actingCharacterId: characterId,
+              wsServer: req.app?.locals?.wsServer ?? null,
             });
           }
 
@@ -509,6 +510,7 @@ router.post(
               sessionId: action.session_id,
               mechanicalOutcome: dmResponse.mechanicalOutcome,
               actingCharacterId: action.character_id,
+              wsServer: req.app?.locals?.wsServer ?? null,
             });
           }
 

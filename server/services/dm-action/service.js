@@ -398,6 +398,7 @@ export const applyMechanicalOutcome = async (client, {
   sessionId,
   mechanicalOutcome,
   actingCharacterId,
+  wsServer = null,
 }) => {
   if (!mechanicalOutcome || !mechanicalOutcome.type) return null;
 
@@ -689,6 +690,55 @@ export const applyMechanicalOutcome = async (client, {
 
       logInfo('Items removed from inventory', { characterId: targetId, items: removedNames });
       return { inventoryRemoved: removedNames };
+    }
+
+    case 'move_player': {
+      const destination = mechanicalOutcome.destination;
+      if (!destination || !destination.kind || destination.ref == null) {
+        logWarn('move_player outcome missing destination', { sessionId });
+        return null;
+      }
+
+      const { rows: sessionRows } = await client.query(
+        `SELECT campaign_id FROM public.sessions WHERE id = $1 LIMIT 1`,
+        [sessionId],
+      );
+      if (sessionRows.length === 0) {
+        logWarn('move_player: session not found', { sessionId });
+        return null;
+      }
+      const campaignId = sessionRows[0].campaign_id;
+
+      const { rows: playerRows } = await client.query(
+        `SELECT id, user_id
+           FROM public.campaign_players
+          WHERE campaign_id = $1
+            AND character_id = $2
+            AND status = 'active'
+          LIMIT 1`,
+        [campaignId, actingCharacterId],
+      );
+      if (playerRows.length === 0) {
+        logWarn('move_player: no active campaign_player for acting character', {
+          campaignId, actingCharacterId,
+        });
+        return null;
+      }
+      const playerId = playerRows[0].id;
+
+      const { applyNarrativeMove } = await import('../movement/narrative-movement.js');
+
+      const summary = await applyNarrativeMove(client, {
+        campaignId,
+        playerId,
+        requestorUserId: playerRows[0].user_id,
+        destination,
+        reason: 'llm narrative move',
+        wsServer,
+      });
+
+      logInfo('move_player applied', summary);
+      return summary;
     }
 
     default:

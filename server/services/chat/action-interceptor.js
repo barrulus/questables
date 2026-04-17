@@ -341,6 +341,7 @@ export async function interceptChatAction({
         campaignId,
         mechanicalOutcome: dmResponse.mechanicalOutcome,
         actingCharacterId: characterId,
+        wsServer: wsServer ?? null,
       });
     }
 

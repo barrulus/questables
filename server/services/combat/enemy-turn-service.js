@@ -110,6 +110,7 @@ export const executeEnemyTurn = async (contextualService, _pool, {
         sessionId,
         mechanicalOutcome: dmResponse.mechanicalOutcome,
         actingCharacterId: enemy.participant_id,
+        wsServer: null,
       });
     }
 
