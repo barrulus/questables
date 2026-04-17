@@ -150,6 +150,7 @@ export const performPlayerMovement = async ({
   mode,
   reason,
   enforceClamp = true,
+  source = 'dm',
 }) => {
   if (!MOVE_MODE_SET.has(mode)) {
     const error = new Error(`Unsupported movement mode: ${mode}`);
@@ -158,7 +159,7 @@ export const performPlayerMovement = async ({
     throw error;
   }
 
-  if (!isRequestorAdmin && !DM_CONTROL_ROLES.has(requestorRole)) {
+  if (source !== 'llm' && !isRequestorAdmin && !DM_CONTROL_ROLES.has(requestorRole)) {
     const error = new Error('Only DMs or co-DMs may move players');
     error.status = 403;
     error.code = 'move_forbidden';
@@ -272,6 +273,8 @@ export const performPlayerMovement = async ({
 
   const distance = hasPrevious ? computeDistance(previousPoint, snappedTarget) : null;
 
+  const auditReason = source === 'llm' ? `[llm] ${reason ?? ''}`.trim() : (reason ?? null);
+
   await client.query(
     `INSERT INTO public.player_movement_audit
         (campaign_id, player_id, moved_by, mode, reason, previous_loc, new_loc)
@@ -284,7 +287,7 @@ export const performPlayerMovement = async ({
       playerId,
       requestorUserId,
       mode,
-      reason,
+      auditReason,
       previousPoint.x,
       previousPoint.y,
       snappedTarget.x,
@@ -324,7 +327,7 @@ export const performPlayerMovement = async ({
       nowTimestamp,
       mode,
       requestorUserId,
-      reason ?? null,
+      auditReason,
     ],
   );
 
