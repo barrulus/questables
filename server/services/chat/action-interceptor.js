@@ -181,8 +181,11 @@ export async function interceptChatAction({
   wsServer,
 }) {
   const client = await getClient({ label: 'action-interceptor.process' });
+  let committed = false;
 
   try {
+    await client.query('BEGIN');
+
     // Load character info for the intent parser
     const { rows: charRows } = await client.query(
       `SELECT id, name, class, level FROM public.characters WHERE id = $1`,
@@ -459,6 +462,9 @@ export async function interceptChatAction({
       }
     }
 
+    await client.query('COMMIT');
+    committed = true;
+
     logInfo('Chat action resolved', {
       campaignId,
       actionId,
@@ -466,6 +472,9 @@ export async function interceptChatAction({
       status: finalStatus,
     });
   } catch (error) {
+    if (!committed) {
+      try { await client.query('ROLLBACK'); } catch (rbErr) { /* ignore — connection likely broken */ }
+    }
     logError('Action interceptor failed', {
       campaignId,
       userId,
