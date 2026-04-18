@@ -101,6 +101,65 @@ export async function evaluateEncounterChance({
 }
 
 /**
+ * Same probability model as evaluateEncounterChance, but evaluates at an
+ * explicit (x, y) in world-pixel coordinates. Used by the travel planner to
+ * check each camp point along a multi-day journey without mutating the
+ * player's stored position.
+ *
+ * @param {object} opts
+ * @param {string} opts.campaignId
+ * @param {string} opts.sessionId
+ * @param {number} opts.x
+ * @param {number} opts.y
+ * @returns {Promise<boolean>} Whether an encounter should trigger at this point
+ */
+export async function evaluateEncounterAtPoint({ campaignId, sessionId, x, y }) {
+  try {
+    const { rows: recentCombat } = await query(
+      `SELECT COUNT(*) AS count
+         FROM public.game_state_log
+        WHERE session_id = $1 AND event_type = 'phase_changed'
+          AND (metadata->>'newPhase' = 'combat')
+          AND created_at > NOW() - INTERVAL '2 hours'`,
+      [sessionId],
+      { label: 'encounter-gen.recent-combat-at-point' },
+    );
+    const recentCombatCount = parseInt(recentCombat[0]?.count ?? '0', 10);
+
+    const { rows: regionHits } = await query(
+      `SELECT cmr.category
+         FROM public.campaign_map_regions cmr
+        WHERE cmr.campaign_id = $1
+          AND cmr.category = 'encounter'
+          AND ST_Contains(cmr.region, ST_SetSRID(ST_MakePoint($2, $3), 0))
+        LIMIT 1`,
+      [campaignId, x, y],
+      { label: 'encounter-gen.region-at-point' },
+    );
+    const inEncounterRegion = regionHits.length > 0;
+
+    let probability = 0.05;
+    if (inEncounterRegion)       probability = 0.25;
+    if (recentCombatCount === 0) probability += 0.05;
+    if (recentCombatCount >= 2)  probability *= 0.5;
+
+    const roll = Math.random();
+    const triggered = roll < probability;
+
+    logInfo('Encounter check at point', {
+      campaignId, sessionId, x, y,
+      probability: Math.round(probability * 100),
+      roll: Math.round(roll * 100),
+      triggered, inEncounterRegion, recentCombatCount,
+    });
+    return triggered;
+  } catch (error) {
+    logError('Encounter-at-point evaluation failed', { error: error.message, campaignId, x, y });
+    return false;
+  }
+}
+
+/**
  * Generate and narrate an encounter, then transition to combat phase.
  *
  * @param {object} opts
