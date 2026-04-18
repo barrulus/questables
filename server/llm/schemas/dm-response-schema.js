@@ -59,6 +59,15 @@ export const DM_RESPONSE_SCHEMA = {
           },
           required: ['kind', 'ref'],
         },
+        via: {
+          type: ['string', 'null'],
+          description: 'Optional. For type="move_player": "roads" (default, snap to routes), "direct" (cross-country straight line), or a specific route UUID.',
+        },
+        mode: {
+          type: ['string', 'null'],
+          enum: ['walk', 'ride', 'boat', 'fly', 'teleport', null],
+          description: 'Optional travel mode for type="move_player". Defaults to "walk". Use "ride" when the party is mounted, "boat" on water, "fly" when airborne, "teleport" for magical instant travel.',
+        },
       },
     },
     requiredRolls: {
