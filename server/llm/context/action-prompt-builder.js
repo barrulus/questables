@@ -152,6 +152,18 @@ PLAYER MOVEMENT (CRITICAL — move_player outcome):
 - kind="coordinate" — only when you have been given explicit pixel coordinates.
 - VIOLATION CHECK: if your narration uses verbs like "arrive at", "reach", "enter the town of", "travel to", "push on to", "make camp outside", or "the party comes to", your mechanicalOutcome MUST be { type: "move_player", destination: {...} }. Narration alone does NOT move the token, and the NEXT turn's geographic context will be wrong if you skip this.
 - If the move is also a scene change (you walk INTO the town's inn), populate BOTH move_player AND sceneTransition. move_player handles the map position; sceneTransition handles which NPCs are currently visible.
+- OPTIONAL FIELDS on move_player:
+    mechanicalOutcome: {
+      type: "move_player",
+      destination: {...},
+      via:  "roads" | "direct" | "<route_uuid>",
+      mode: "walk" | "ride" | "boat" | "fly" | "teleport"
+    }
+  - \`via="roads"\` is the default: the server snaps travel to the nearest road geometry where possible.
+  - \`via="direct"\` when the party is explicitly cutting cross-country, through wilderness, or avoiding roads.
+  - \`mode="ride"\` when the party is mounted, \`"boat"\` on a ship or river craft, \`"fly"\` when airborne, \`"teleport"\` for magical instantaneous travel.
+- SETTING-OUT RULE: when emitting a move_player outcome, narrate ONLY the SETTING OUT of the journey — the party saddling up, pushing through the town gates, the first hours on the road. Do NOT narrate arrival. The system will place the party at the destination (or at an interrupt camp if a random encounter fires along the way) and the NEXT turn will see the outcome. This is the same two-phase pattern you already use for attack wind-up vs damage resolution.
+- MULTI-DAY HINT: if your narration implies a multi-day journey ("after days on the road", "by the third morning"), trust the system's day counter — do NOT invent specific day numbers. The prompt context will show you the current day.
 
 WHEN TO REQUIRE A ROLL (CRITICAL — do not auto-resolve uncertain actions):
 - If the outcome of the action is uncertain AND failure is meaningful, you MUST populate "requiredRolls" instead of narrating the result. Do NOT reveal what the character finds, learns, persuades, or accomplishes until after the roll.
