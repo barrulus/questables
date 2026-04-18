@@ -151,6 +151,8 @@ export const performPlayerMovement = async ({
   reason,
   enforceClamp = true,
   source = 'dm',
+  pathWaypoints,      // NEW: optional array of {x,y} waypoints for polyline
+  gameDaysElapsed,    // NEW: optional integer to increment campaign_clock_days
 }) => {
   if (!MOVE_MODE_SET.has(mode)) {
     const error = new Error(`Unsupported movement mode: ${mode}`);
@@ -249,6 +251,16 @@ export const performPlayerMovement = async ({
     [snappedTarget.x, snappedTarget.y, campaignId, playerId, newBurgId],
   );
 
+  if (Number.isInteger(gameDaysElapsed) && gameDaysElapsed > 0) {
+    await client.query(
+      `UPDATE public.campaigns
+          SET campaign_clock_days = campaign_clock_days + $2,
+              updated_at = NOW()
+        WHERE id = $1`,
+      [campaignId, gameDaysElapsed],
+    );
+  }
+
   const updateResult = await client.query(
     `SELECT id,
             visibility_state,
@@ -295,6 +307,24 @@ export const performPlayerMovement = async ({
     ],
   );
 
+  // Build the polyline. If pathWaypoints was supplied (Plan 2 narrative move),
+  // use it with Z-timestamps evenly distributed across [previousTimestamp, nowTimestamp].
+  // Otherwise use the legacy 2-point line from previousPoint to snappedTarget.
+  const effectivePoints = Array.isArray(pathWaypoints) && pathWaypoints.length >= 2
+    ? pathWaypoints
+    : [previousPoint, snappedTarget];
+
+  const totalT = nowTimestamp - previousTimestamp;
+  const pointParams = [];
+  const pointSqlParts = [];
+  effectivePoints.forEach((p, i) => {
+    const frac = effectivePoints.length === 1 ? 0 : i / (effectivePoints.length - 1);
+    const base = pointParams.length;
+    pointParams.push(p.x, p.y, previousTimestamp + totalT * frac);
+    pointSqlParts.push(`ST_MakePoint($${3 + base}, $${4 + base}, $${5 + base})`);
+  });
+
+  const tailStart = 3 + pointParams.length;
   const pathInsert = await client.query(
     `INSERT INTO public.player_movement_paths (
         campaign_id,
@@ -307,28 +337,13 @@ export const performPlayerMovement = async ({
      VALUES (
         $1,
         $2,
-        ST_SetSRID(ST_MakeLine(ARRAY[
-          ST_MakePoint($3, $4, $5),
-          ST_MakePoint($6, $7, $8)
-        ]), 0),
-        $9,
-        $10,
-        $11
+        ST_SetSRID(ST_MakeLine(ARRAY[${pointSqlParts.join(', ')}]), 0),
+        $${tailStart},
+        $${tailStart + 1},
+        $${tailStart + 2}
      )
      RETURNING id, created_at`,
-    [
-      campaignId,
-      playerId,
-      previousPoint.x,
-      previousPoint.y,
-      previousTimestamp,
-      snappedTarget.x,
-      snappedTarget.y,
-      nowTimestamp,
-      mode,
-      requestorUserId,
-      auditReason,
-    ],
+    [campaignId, playerId, ...pointParams, mode, requestorUserId, auditReason],
   );
 
   const pathRecord = pathInsert.rows[0] ?? null;
