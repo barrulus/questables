@@ -1,43 +1,158 @@
-import { logWarn } from '../../utils/logger.js';
 import { resolveDestination } from './destination-resolver.js';
+import { planTravel } from './travel-planner.js';
 import { performPlayerMovement } from '../campaigns/service.js';
+import { evaluateEncounterAtPoint } from '../encounters/proactive-generator.js';
+import { logWarn } from '../../utils/logger.js';
+
+async function loadCurrentPosition(client, campaignId, playerId) {
+  const { rows } = await client.query(
+    `SELECT ST_X(loc_current) AS x, ST_Y(loc_current) AS y
+       FROM public.campaign_players
+      WHERE campaign_id = $1 AND id = $2 AND loc_current IS NOT NULL
+      LIMIT 1`,
+    [campaignId, playerId],
+  );
+  if (rows.length === 0) return { x: 0, y: 0 };
+  return { x: Number(rows[0].x), y: Number(rows[0].y) };
+}
+
+async function loadWorldId(client, campaignId) {
+  const { rows } = await client.query(
+    `SELECT world_map_id FROM public.campaigns WHERE id = $1 LIMIT 1`,
+    [campaignId],
+  );
+  return rows[0]?.world_map_id ?? null;
+}
+
+async function loadClockDay(client, campaignId) {
+  const { rows } = await client.query(
+    `SELECT campaign_clock_days FROM public.campaigns WHERE id = $1 LIMIT 1`,
+    [campaignId],
+  );
+  return rows[0]?.campaign_clock_days ?? 0;
+}
+
+function segmentLength(a, b) { return Math.hypot(b.x - a.x, b.y - a.y); }
+
+function truncateWaypointsAtCamp(waypoints, camp) {
+  const out = [{ ...waypoints[0] }];
+  for (let i = 1; i < waypoints.length; i++) {
+    const prev = waypoints[i - 1];
+    const cur  = waypoints[i];
+    if (Math.abs(cur.x - camp.x) < 1e-6 && Math.abs(cur.y - camp.y) < 1e-6) {
+      out.push({ ...cur });
+      return out;
+    }
+    const segLen = segmentLength(prev, cur);
+    const toCamp = segmentLength(prev, camp);
+    const fromCamp = segmentLength(camp, cur);
+    if (Math.abs(segLen - (toCamp + fromCamp)) < 1e-3) {
+      out.push({ x: camp.x, y: camp.y });
+      return out;
+    }
+    out.push({ ...cur });
+  }
+  out.push({ x: camp.x, y: camp.y });
+  return out;
+}
+
+async function walkCampsForEncounter({ sessionId, campaignId, campPoints }) {
+  for (const camp of campPoints) {
+    const triggered = await evaluateEncounterAtPoint({
+      campaignId, sessionId,
+      x: camp.x, y: camp.y,
+    });
+    if (triggered) {
+      return { interruptedAt: camp, dayReached: camp.day };
+    }
+  }
+  return { interruptedAt: null };
+}
 
 export async function applyNarrativeMove(client, {
   campaignId,
   playerId,
+  sessionId,
   requestorUserId,
   destination,
   reason,
   mode = 'walk',
+  via = 'roads',
   wsServer = null,
 }) {
   const resolved = await resolveDestination(client, { campaignId, destination });
+  const current  = await loadCurrentPosition(client, campaignId, playerId);
+  const worldId  = await loadWorldId(client, campaignId);
 
-  const result = await performPlayerMovement({
-    client,
-    campaignId,
-    playerId,
+  const plan = worldId
+    ? await planTravel(client, {
+        worldId, start: current,
+        end: { x: resolved.x, y: resolved.y },
+        mode, via,
+      })
+    : {
+        waypoints: [current, { x: resolved.x, y: resolved.y }],
+        distancePixels: segmentLength(current, { x: resolved.x, y: resolved.y }),
+        distanceMiles: null,
+        totalDays: 0,
+        campPoints: [],
+        effectiveVia: 'direct',
+        dailyPixels: Infinity,
+      };
+
+  const interrupt = plan.campPoints.length > 0 && sessionId
+    ? await walkCampsForEncounter({ sessionId, campaignId, campPoints: plan.campPoints })
+    : { interruptedAt: null };
+
+  const effectiveEnd = interrupt.interruptedAt ?? { x: resolved.x, y: resolved.y };
+  const effectiveWaypoints = interrupt.interruptedAt
+    ? truncateWaypointsAtCamp(plan.waypoints, interrupt.interruptedAt)
+    : plan.waypoints;
+  const daysElapsed = interrupt.interruptedAt
+    ? interrupt.interruptedAt.day
+    : plan.totalDays;
+
+  const moveResult = await performPlayerMovement({
+    client, campaignId, playerId,
     requestorUserId,
     requestorRole: 'llm',
     isRequestorAdmin: false,
-    targetX: resolved.x,
-    targetY: resolved.y,
+    targetX: effectiveEnd.x,
+    targetY: effectiveEnd.y,
     mode,
     reason: reason ?? `narrative: ${destination.kind}:${destination.ref}`,
     enforceClamp: true,
     source: 'llm',
+    pathWaypoints: effectiveWaypoints,
+    gameDaysElapsed: daysElapsed,
   });
 
+  const clockDay = await loadClockDay(client, campaignId);
+
   const summary = {
-    playerId: result.player.id,
-    geometry: result.player.geometry,
-    visibilityState: result.player.visibility_state,
+    playerId: moveResult.player.id,
+    geometry: moveResult.player.geometry,
+    visibilityState: moveResult.player.visibility_state,
     mapLevel: resolved.mapLevel,
     insideBurgId: resolved.burgId,
     resolvedName: resolved.resolvedName,
-    distance: result.requestedDistance,
-    pathId: result.pathId,
-    updatedAt: result.player.last_located_at,
+    distance: moveResult.requestedDistance,
+    pathId: moveResult.pathId,
+    updatedAt: moveResult.player.last_located_at,
+    path: {
+      waypoints: effectiveWaypoints,
+      distancePixels: plan.distancePixels,
+      distanceMiles: plan.distanceMiles,
+      mode,
+    },
+    travel: {
+      totalDaysPlanned: plan.totalDays,
+      daysElapsed,
+      interrupted: interrupt.interruptedAt !== null,
+      effectiveVia: plan.effectiveVia,
+    },
+    clockDay,
+    encounter: null,
   };
 
   if (wsServer?.broadcastToCampaign) {
@@ -47,15 +162,15 @@ export async function applyNarrativeMove(client, {
         mode,
         movedBy: requestorUserId,
         reason: reason ?? null,
-        target: result.requestedTarget,
-        snapped: result.snappedTarget,
-        grid: result.grid,
+        target: moveResult.requestedTarget,
+        snapped: moveResult.snappedTarget,
+        grid: moveResult.grid,
         source: 'llm',
       });
     } catch (err) {
       logWarn('narrative-movement broadcast failed (non-fatal)', {
         campaignId,
-        playerId: result.player.id,
+        playerId: moveResult.player.id,
         error: err?.message ?? String(err),
       });
     }
