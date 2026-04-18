@@ -56,3 +56,55 @@ skipIfNoFixtures('move_player outcome updates loc_current and current_map_level'
     client.release?.();
   }
 });
+
+skipIfNoFixtures('Plan 2: move_player inserts polyline + advances clock', async () => {
+  const { getClient } = await import('../../server/db/pool.js');
+  const { applyMechanicalOutcome } = await import('../../server/services/dm-action/service.js');
+
+  const client = await getClient();
+  const wsServer = { broadcastToCampaign: jest.fn() };
+
+  try {
+    await client.query('BEGIN');
+
+    const before = await client.query(
+      `SELECT campaign_clock_days FROM public.campaigns WHERE id = $1`,
+      [FIXTURE_CAMPAIGN_ID],
+    );
+
+    await applyMechanicalOutcome(client, {
+      sessionId: FIXTURE_SESSION_ID,
+      actingCharacterId: FIXTURE_ACTING_CHAR_ID,
+      mechanicalOutcome: {
+        type: 'move_player',
+        destination: { kind: 'burg', ref: FIXTURE_BURG_NAME },
+        via: 'roads',
+        mode: 'walk',
+      },
+      wsServer,
+    });
+
+    const after = await client.query(
+      `SELECT campaign_clock_days FROM public.campaigns WHERE id = $1`,
+      [FIXTURE_CAMPAIGN_ID],
+    );
+    expect(after.rows[0].campaign_clock_days).toBeGreaterThanOrEqual(before.rows[0].campaign_clock_days);
+
+    const path = await client.query(
+      `SELECT ST_NumPoints(path) AS pts FROM public.player_movement_paths
+         WHERE campaign_id = $1
+         ORDER BY created_at DESC LIMIT 1`,
+      [FIXTURE_CAMPAIGN_ID],
+    );
+    expect(path.rows[0].pts).toBeGreaterThanOrEqual(2);
+
+    expect(wsServer.broadcastToCampaign).toHaveBeenCalledWith(
+      FIXTURE_CAMPAIGN_ID,
+      'player-moved',
+      expect.objectContaining({ path: expect.any(Object), travel: expect.any(Object) }),
+    );
+  } finally {
+    await client.query('ROLLBACK');
+    client.release?.();
+  }
+});
