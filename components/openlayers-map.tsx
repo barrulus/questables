@@ -62,6 +62,9 @@ import { useUser } from "../contexts/UserContext";
 import { useWebSocket } from "../hooks/useWebSocket";
 import { apiFetch, fetchJson, readErrorMessage, readJsonBody } from "../utils/api-client";
 import { toast } from "sonner";
+import { TokenAnimator, type Waypoint } from './player-token-animator';
+
+const ANIMATION_DURATION_MS = 2500;
 
 // PlayerToken type imported from map-visible-players-panel
 
@@ -586,6 +589,13 @@ export function OpenLayersMap() {
   const rosterByCharacterRef = useRef<Map<string, CampaignRosterEntry>>(new Map());
   const rosterByPlayerRef = useRef<Map<string, CampaignRosterEntry>>(new Map());
   const rosterLoadedForCampaignRef = useRef<string | null>(null);
+
+  const animatorRef = useRef<TokenAnimator | null>(null);
+  if (!animatorRef.current) animatorRef.current = new TokenAnimator();
+
+  const [interruptBadge, setInterruptBadge] = useState<
+    { playerId: string; day: number; at?: { x: number; y: number } } | null
+  >(null);
 
   const getFeatureType = useCallback((feature: Feature, data?: Record<string, unknown>) => {
     const rawType = data?.type ?? feature.get('type');
@@ -1562,6 +1572,7 @@ export function OpenLayersMap() {
       map.un('pointermove', pointerMoveListener);
       view.un('change:resolution', zoomChangeListener);
       resizeObserver?.disconnect();
+      animatorRef.current?.cancelAll();
       map.dispose();
       mapInstanceRef.current = null;
     };
@@ -1845,7 +1856,6 @@ export function OpenLayersMap() {
     const spawnDeleted = getMessagesByType('spawn-deleted');
 
     if (movementEvents.length || teleportEvents.length || spawnEvents.length || spawnDeleted.length) {
-      void loadVisiblePlayers(activeCampaignId);
       const affectedPlayerIds = new Set<string>();
       [...movementEvents, ...teleportEvents].forEach((event) => {
         const playerId = extractPlayerId(event);
@@ -1853,6 +1863,78 @@ export function OpenLayersMap() {
           affectedPlayerIds.add(playerId);
         }
       });
+
+      // For player-moved events, animate if waypoints are present; otherwise jump immediately.
+      const animationPromises: Promise<void>[] = [];
+      movementEvents.forEach((event) => {
+        if (!isPlainObject(event)) return;
+        const data = isPlainObject(event.data) ? event.data : null;
+        if (!data) return;
+        const playerId = typeof data.playerId === 'string' ? data.playerId : null;
+        if (!playerId) return;
+
+        const path = isPlainObject(data.path) ? data.path : null;
+        const rawWaypoints = Array.isArray(path?.waypoints) ? (path!.waypoints as unknown[]) : null;
+        const waypoints: Waypoint[] | null =
+          rawWaypoints && rawWaypoints.length >= 2
+            ? (rawWaypoints.filter(
+                (w): w is Waypoint =>
+                  isPlainObject(w) && typeof w.x === 'number' && typeof w.y === 'number',
+              ).length === rawWaypoints.length
+                ? (rawWaypoints as Waypoint[])
+                : null)
+            : null;
+
+        const travel = isPlainObject(data.travel) ? data.travel : null;
+
+        // Handle interrupt badge
+        if (travel?.interrupted === true) {
+          const lastWp =
+            rawWaypoints && rawWaypoints.length > 0
+              ? (rawWaypoints[rawWaypoints.length - 1] as unknown)
+              : undefined;
+          const at =
+            isPlainObject(lastWp) && typeof lastWp.x === 'number' && typeof lastWp.y === 'number'
+              ? { x: lastWp.x, y: lastWp.y }
+              : undefined;
+          const daysElapsed =
+            typeof travel.daysElapsed === 'number' ? travel.daysElapsed : 0;
+          setInterruptBadge({ playerId, day: daysElapsed, at });
+        } else {
+          setInterruptBadge((prev) => (prev?.playerId === playerId ? null : prev));
+        }
+
+        if (waypoints && playerLayerRef.current) {
+          const source = playerLayerRef.current.getSource();
+          const feature = source
+            ?.getFeatures()
+            .find((f) => f.get('playerId') === playerId) ?? null;
+          if (feature) {
+            const p = animatorRef.current!.animate(
+              playerId,
+              feature,
+              waypoints,
+              ANIMATION_DURATION_MS,
+            ).then(() => void loadVisiblePlayers(activeCampaignId));
+            animationPromises.push(p);
+            return; // don't fall through to immediate loadVisiblePlayers for this player
+          }
+        }
+
+        // No waypoints or feature not found — fall through to immediate reload below
+      });
+
+      // If there were non-animated events (teleports, spawns, or moved without waypoints),
+      // load immediately. Animated moves trigger loadVisiblePlayers after their animation.
+      const hasNonAnimatedEvents =
+        teleportEvents.length > 0 ||
+        spawnEvents.length > 0 ||
+        spawnDeleted.length > 0 ||
+        animationPromises.length < movementEvents.length;
+
+      if (hasNonAnimatedEvents) {
+        void loadVisiblePlayers(activeCampaignId);
+      }
 
       affectedPlayerIds.forEach((playerId) => {
         if (trailSelections[playerId]) {
@@ -2056,6 +2138,26 @@ export function OpenLayersMap() {
               )) : null}
             </div>
           ) : null}
+
+          {interruptBadge && (
+            <div
+              style={{
+                position: 'absolute',
+                top: 16, right: 16,
+                padding: '6px 10px',
+                background: 'rgba(30,30,30,0.85)',
+                color: 'white',
+                borderRadius: 6,
+                fontSize: 13,
+                pointerEvents: 'auto',
+                cursor: 'pointer',
+                zIndex: 100,
+              }}
+              onClick={() => setInterruptBadge(null)}
+            >
+              ⛺ <strong>Day {interruptBadge.day}</strong> — journey interrupted (click to dismiss)
+            </div>
+          )}
         </div>
 
         {/* Popup */}
