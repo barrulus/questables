@@ -731,8 +731,11 @@ export const applyMechanicalOutcome = async (client, {
       const summary = await applyNarrativeMove(client, {
         campaignId,
         playerId,
+        sessionId,
         requestorUserId: playerRows[0].user_id,
         destination,
+        mode: mechanicalOutcome.mode ?? 'walk',
+        via: mechanicalOutcome.via ?? 'roads',
         reason: 'llm narrative move',
         wsServer,
       });
