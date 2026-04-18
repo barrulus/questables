@@ -94,3 +94,70 @@ describe('planTravel — direct, teleport, fly', () => {
     })).rejects.toMatchObject({ code: 'invalid_via' });
   });
 });
+
+describe('planTravel — road snap (same route)', () => {
+  test('both endpoints snap to same route, uses ST_LineSubstring path', async () => {
+    const client = {
+      query: jest.fn()
+        .mockResolvedValueOnce({ rows: [{ pixels_per_mile: 10 }] })
+        .mockResolvedValueOnce({ rows: [{
+          route_id:     'route-1',
+          snap_x:       5, snap_y: 0,
+          loc_fraction: 0.1,
+          distance:     5,
+        }]})
+        .mockResolvedValueOnce({ rows: [{
+          route_id:     'route-1',
+          snap_x:       195, snap_y: 0,
+          loc_fraction: 0.9,
+          distance:     5,
+        }]})
+        .mockResolvedValueOnce({ rows: [{
+          points: [
+            { x: 5, y: 0 }, { x: 50, y: 0 }, { x: 120, y: 0 }, { x: 195, y: 0 },
+          ],
+        }]}),
+    };
+
+    const plan = await planTravel(client, {
+      worldId: 'w1',
+      start:   { x: 0, y: 0 },
+      end:     { x: 200, y: 0 },
+      mode:    'walk',
+      via:     'roads',
+    });
+
+    expect(plan.effectiveVia).toBe('roads');
+    expect(plan.waypoints[0]).toEqual({ x: 0, y: 0 });
+    expect(plan.waypoints[plan.waypoints.length - 1]).toEqual({ x: 200, y: 0 });
+    expect(plan.waypoints.length).toBeGreaterThanOrEqual(4);
+    expect(plan.distancePixels).toBeGreaterThan(0);
+  });
+
+  test('swaps start/end fractions when start-frac > end-frac on the route', async () => {
+    const client = {
+      query: jest.fn()
+        .mockResolvedValueOnce({ rows: [{ pixels_per_mile: null }] })
+        .mockResolvedValueOnce({ rows: [{
+          route_id: 'r1', snap_x: 195, snap_y: 0, loc_fraction: 0.9, distance: 5,
+        }]})
+        .mockResolvedValueOnce({ rows: [{
+          route_id: 'r1', snap_x: 5, snap_y: 0, loc_fraction: 0.1, distance: 5,
+        }]})
+        .mockResolvedValueOnce({ rows: [{
+          points: [{ x: 195, y: 0 }, { x: 100, y: 0 }, { x: 5, y: 0 }],
+        }]}),
+    };
+
+    const plan = await planTravel(client, {
+      worldId: 'w1',
+      start:   { x: 200, y: 0 },
+      end:     { x: 0, y: 0 },
+      mode:    'walk',
+      via:     'roads',
+    });
+    expect(plan.waypoints[0]).toEqual({ x: 200, y: 0 });
+    expect(plan.waypoints[plan.waypoints.length - 1]).toEqual({ x: 0, y: 0 });
+    expect(plan.effectiveVia).toBe('roads');
+  });
+});

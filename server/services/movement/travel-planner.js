@@ -73,6 +73,48 @@ async function loadWorldCalibration(client, worldId) {
   return rows[0].pixels_per_mile;
 }
 
+async function snapPointToNearestRoute(client, worldId, point, via) {
+  const viaIsRouteId = typeof via === 'string' && /^[0-9a-f-]{36}$/i.test(via);
+  const params = [worldId, point.x, point.y];
+  let where = `mr.world_id = $1`;
+  if (viaIsRouteId) {
+    params.push(via);
+    where += ` AND mr.id = $4::uuid`;
+  }
+  const { rows } = await client.query(
+    `WITH pt AS (SELECT ST_SetSRID(ST_MakePoint($2, $3), 0) AS geom)
+     SELECT mr.id AS route_id,
+            ST_X(ST_ClosestPoint(mr.geom, pt.geom)) AS snap_x,
+            ST_Y(ST_ClosestPoint(mr.geom, pt.geom)) AS snap_y,
+            ST_LineLocatePoint(ST_GeometryN(mr.geom, 1), pt.geom) AS loc_fraction,
+            ST_Distance(mr.geom, pt.geom) AS distance
+       FROM public.maps_routes mr, pt
+      WHERE ${where}
+      ORDER BY distance ASC
+      LIMIT 1`,
+    params,
+  );
+  if (rows.length === 0) return { snap: null };
+  return { snap: rows[0] };
+}
+
+async function extractRouteSubstring(client, routeId, fracA, fracB) {
+  const { rows } = await client.query(
+    `WITH segment AS (
+       SELECT ST_LineSubstring(ST_GeometryN(mr.geom, 1), $2, $3) AS geom
+         FROM public.maps_routes mr
+        WHERE mr.id = $1::uuid
+     )
+     SELECT json_agg(
+              json_build_object('x', ST_X((dp).geom), 'y', ST_Y((dp).geom))
+              ORDER BY (dp).path
+            ) AS points
+       FROM (SELECT ST_DumpPoints(geom) AS dp FROM segment) s`,
+    [routeId, fracA, fracB],
+  );
+  return rows[0]?.points ?? [];
+}
+
 export async function planTravel(client, { worldId, start, end, mode, via }) {
   if (!SUPPORTED_MODES.includes(mode)) {
     throw invalid('invalid_mode', `Unsupported mode: ${mode}`);
@@ -104,6 +146,47 @@ export async function planTravel(client, { worldId, start, end, mode, via }) {
     };
   }
 
-  // via === 'roads' OR via === '<route_uuid>' — implemented in Task 4.
-  throw invalid('not_implemented', `road snapping not yet implemented — landed in Task 4`);
+  // via === 'roads' OR via === '<route_uuid>'
+  const { snap: startSnap } = await snapPointToNearestRoute(client, worldId, start, via);
+  const { snap: endSnap }   = await snapPointToNearestRoute(client, worldId, end,   via);
+
+  let waypoints;
+  let effectiveVia;
+
+  if (startSnap && endSnap && startSnap.route_id === endSnap.route_id) {
+    const [fracA, fracB] = startSnap.loc_fraction <= endSnap.loc_fraction
+      ? [startSnap.loc_fraction, endSnap.loc_fraction]
+      : [endSnap.loc_fraction, startSnap.loc_fraction];
+    const routeMiddle = await extractRouteSubstring(client, startSnap.route_id, fracA, fracB);
+
+    // When the snap-start fraction is larger, the substring we fetched runs
+    // from end→start direction. Reverse so the middle flows start→end.
+    const middle = startSnap.loc_fraction <= endSnap.loc_fraction
+      ? routeMiddle
+      : [...routeMiddle].reverse();
+
+    waypoints = [{ ...start }, ...middle, { ...end }];
+    effectiveVia = viaIsRouteId ? via : 'roads';
+  } else {
+    // Fallback lands in Task 5 — for now, fall back to direct.
+    waypoints = segmentLength(start, end) === 0 ? [{ ...start }] : [{ ...start }, { ...end }];
+    effectiveVia = 'direct';
+  }
+
+  const distancePixels = polylineLength(waypoints);
+  const totalDays = distancePixels === 0
+    ? 0
+    : Math.max(1, Math.ceil(distancePixels / dailyPixels));
+
+  return {
+    waypoints,
+    distancePixels,
+    distanceMiles: pixelsPerMile != null && pixelsPerMile > 0
+      ? distancePixels / pixelsPerMile
+      : null,
+    totalDays,
+    campPoints: computeCampPoints(waypoints, dailyPixels, totalDays, distancePixels),
+    effectiveVia,
+    dailyPixels,
+  };
 }
