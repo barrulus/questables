@@ -161,3 +161,109 @@ describe('planTravel — road snap (same route)', () => {
     expect(plan.effectiveVia).toBe('roads');
   });
 });
+
+describe('planTravel — fallback and forced-route', () => {
+  test('different routes → falls back to direct line with effectiveVia=direct', async () => {
+    const client = {
+      query: jest.fn()
+        .mockResolvedValueOnce({ rows: [{ pixels_per_mile: null }] })
+        .mockResolvedValueOnce({ rows: [{
+          route_id: 'r1', snap_x: 5, snap_y: 0, loc_fraction: 0.5, distance: 5,
+        }]})
+        .mockResolvedValueOnce({ rows: [{
+          route_id: 'r2', snap_x: 995, snap_y: 0, loc_fraction: 0.5, distance: 5,
+        }]}),
+    };
+    const plan = await planTravel(client, {
+      worldId: 'w1',
+      start:   { x: 0, y: 0 },
+      end:     { x: 1000, y: 0 },
+      mode:    'walk',
+      via:     'roads',
+    });
+    expect(plan.effectiveVia).toBe('direct');
+    expect(plan.waypoints).toEqual([{ x: 0, y: 0 }, { x: 1000, y: 0 }]);
+  });
+
+  test('neither endpoint snaps → falls back to direct line', async () => {
+    const client = {
+      query: jest.fn()
+        .mockResolvedValueOnce({ rows: [{ pixels_per_mile: null }] })
+        .mockResolvedValueOnce({ rows: [] })
+        .mockResolvedValueOnce({ rows: [] }),
+    };
+    const plan = await planTravel(client, {
+      worldId: 'w1',
+      start:   { x: 0, y: 0 },
+      end:     { x: 1000, y: 0 },
+      mode:    'walk',
+      via:     'roads',
+    });
+    expect(plan.effectiveVia).toBe('direct');
+  });
+
+  test('forced route uuid: uses that route even if threshold would fail', async () => {
+    const client = {
+      query: jest.fn()
+        .mockResolvedValueOnce({ rows: [{ pixels_per_mile: 10 }] })
+        .mockResolvedValueOnce({ rows: [{
+          route_id: 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa',
+          snap_x: 10, snap_y: 10, loc_fraction: 0.0, distance: 9999,
+        }]})
+        .mockResolvedValueOnce({ rows: [{
+          route_id: 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa',
+          snap_x: 500, snap_y: 10, loc_fraction: 1.0, distance: 9999,
+        }]})
+        .mockResolvedValueOnce({ rows: [{
+          points: [{ x: 10, y: 10 }, { x: 500, y: 10 }],
+        }]}),
+    };
+    const plan = await planTravel(client, {
+      worldId: 'w1',
+      start:   { x: 0, y: 0 },
+      end:     { x: 600, y: 0 },
+      mode:    'walk',
+      via:     'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa',
+    });
+    expect(plan.effectiveVia).toBe('aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa');
+    expect(plan.waypoints.length).toBeGreaterThanOrEqual(4);
+  });
+});
+
+describe('planTravel — camp points', () => {
+  test('3-day journey returns 2 camp points at correct fractions', async () => {
+    const client = {
+      query: jest.fn()
+        .mockResolvedValueOnce({ rows: [{ pixels_per_mile: null }] }),
+    };
+    const plan = await planTravel(client, {
+      worldId: 'w1',
+      start:   { x: 0, y: 0 },
+      end:     { x: 1500, y: 0 },
+      mode:    'walk',
+      via:     'direct',
+    });
+    expect(plan.totalDays).toBe(3);
+    expect(plan.campPoints).toHaveLength(2);
+    expect(plan.campPoints[0]).toMatchObject({ day: 1 });
+    expect(plan.campPoints[1]).toMatchObject({ day: 2 });
+    expect(plan.campPoints[0].x).toBeCloseTo(500, 5);
+    expect(plan.campPoints[1].x).toBeCloseTo(1000, 5);
+  });
+
+  test('1-day journey has no camp points', async () => {
+    const client = {
+      query: jest.fn()
+        .mockResolvedValueOnce({ rows: [{ pixels_per_mile: null }] }),
+    };
+    const plan = await planTravel(client, {
+      worldId: 'w1',
+      start:   { x: 0, y: 0 },
+      end:     { x: 200, y: 0 },
+      mode:    'walk',
+      via:     'direct',
+    });
+    expect(plan.totalDays).toBe(1);
+    expect(plan.campPoints).toEqual([]);
+  });
+});
