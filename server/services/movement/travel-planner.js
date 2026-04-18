@@ -87,7 +87,11 @@ async function snapPointToNearestRoute(client, worldId, point, via) {
      SELECT mr.id AS route_id,
             ST_X(ST_ClosestPoint(mr.geom, pt.geom)) AS snap_x,
             ST_Y(ST_ClosestPoint(mr.geom, pt.geom)) AS snap_y,
-            ST_LineLocatePoint(ST_LineMerge(mr.geom), pt.geom) AS loc_fraction,
+            CASE
+              WHEN ST_GeometryType(ST_LineMerge(mr.geom)) = 'ST_LineString'
+                THEN ST_LineLocatePoint(ST_LineMerge(mr.geom), pt.geom)
+              ELSE NULL
+            END AS loc_fraction,
             ST_Distance(mr.geom, pt.geom) AS distance
        FROM public.maps_routes mr, pt
       WHERE ${where}
@@ -96,13 +100,19 @@ async function snapPointToNearestRoute(client, worldId, point, via) {
     params,
   );
   if (rows.length === 0) return { snap: null };
-  return { snap: rows[0] };
+  const row = rows[0];
+  if (row.loc_fraction == null) return { snap: null }; // disconnected MultiLineString — treat as no snap
+  return { snap: row };
 }
 
 async function extractRouteSubstring(client, routeId, fracA, fracB) {
   const { rows } = await client.query(
     `WITH segment AS (
-       SELECT ST_LineSubstring(ST_LineMerge(mr.geom), $2, $3) AS geom
+       SELECT CASE
+                WHEN ST_GeometryType(ST_LineMerge(mr.geom)) = 'ST_LineString'
+                  THEN ST_LineSubstring(ST_LineMerge(mr.geom), $2, $3)
+                ELSE NULL
+              END AS geom
          FROM public.maps_routes mr
         WHERE mr.id = $1::uuid
      )
