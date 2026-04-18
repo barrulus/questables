@@ -51,6 +51,7 @@ const mapCampaignRow = (row) => {
     experienceType: row.experience_type,
     restingRules: row.resting_rules,
     deathSaveRules: row.death_save_rules,
+    clockDay: Number(row.campaign_clock_days ?? 0),
     createdAt: row.created_at?.toISOString?.() ?? null,
     updatedAt: row.updated_at?.toISOString?.() ?? null,
     lastActivityAt: row.last_activity?.toISOString?.() ?? null,
@@ -294,6 +295,7 @@ export class LLMContextManager {
       }
 
       const worldLore = await this.#loadWorldLore(client, campaignId, geographic);
+      const recentTravel = await this.#loadRecentTravel(client, campaignId);
 
       return {
         campaign,
@@ -308,6 +310,7 @@ export class LLMContextManager {
         },
         directorWhispers,
         worldLore,
+        recentTravel,
         generatedAt: new Date().toISOString(),
       };
     } finally {
@@ -681,6 +684,30 @@ export class LLMContextManager {
     return result.rows
       .map((r) => r.content)
       .reverse(); // chronological order
+  }
+
+  async #loadRecentTravel(client, campaignId) {
+    const { rows } = await client.query(
+      `SELECT pmp.mode,
+              pmp.reason,
+              pmp.created_at,
+              ST_Length(pmp.path) AS distance_pixels
+         FROM public.player_movement_paths pmp
+         JOIN public.campaign_players cp ON cp.id = pmp.player_id
+        WHERE cp.campaign_id = $1
+          AND pmp.reason LIKE '[llm]%'
+        ORDER BY pmp.created_at DESC
+        LIMIT 1`,
+      [campaignId],
+    );
+    if (rows.length === 0) return null;
+    const r = rows[0];
+    return {
+      mode: r.mode,
+      reason: r.reason,
+      distancePixels: Number(r.distance_pixels),
+      at: r.created_at,
+    };
   }
 }
 
