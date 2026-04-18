@@ -4,6 +4,7 @@ import {
   SUPPORTED_MODES,
   SUPPORTED_VIA,
 } from './travel-config.js';
+import { logWarn } from '../../utils/logger.js';
 
 function invalid(code, message) {
   const err = new Error(message);
@@ -86,7 +87,7 @@ async function snapPointToNearestRoute(client, worldId, point, via) {
      SELECT mr.id AS route_id,
             ST_X(ST_ClosestPoint(mr.geom, pt.geom)) AS snap_x,
             ST_Y(ST_ClosestPoint(mr.geom, pt.geom)) AS snap_y,
-            ST_LineLocatePoint(ST_GeometryN(mr.geom, 1), pt.geom) AS loc_fraction,
+            ST_LineLocatePoint(ST_LineMerge(mr.geom), pt.geom) AS loc_fraction,
             ST_Distance(mr.geom, pt.geom) AS distance
        FROM public.maps_routes mr, pt
       WHERE ${where}
@@ -101,7 +102,7 @@ async function snapPointToNearestRoute(client, worldId, point, via) {
 async function extractRouteSubstring(client, routeId, fracA, fracB) {
   const { rows } = await client.query(
     `WITH segment AS (
-       SELECT ST_LineSubstring(ST_GeometryN(mr.geom, 1), $2, $3) AS geom
+       SELECT ST_LineSubstring(ST_LineMerge(mr.geom), $2, $3) AS geom
          FROM public.maps_routes mr
         WHERE mr.id = $1::uuid
      )
@@ -168,7 +169,11 @@ export async function planTravel(client, { worldId, start, end, mode, via }) {
     waypoints = [{ ...start }, ...middle, { ...end }];
     effectiveVia = viaIsRouteId ? via : 'roads';
   } else {
-    // Fallback lands in Task 5 — for now, fall back to direct.
+    logWarn('travel-planner: road snap failed, falling back to direct line', {
+      worldId,
+      startSnap: startSnap ? { routeId: startSnap.route_id, distance: startSnap.distance } : null,
+      endSnap: endSnap ? { routeId: endSnap.route_id, distance: endSnap.distance } : null,
+    });
     waypoints = segmentLength(start, end) === 0 ? [{ ...start }] : [{ ...start }, { ...end }];
     effectiveVia = 'direct';
   }
