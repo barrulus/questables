@@ -8,11 +8,6 @@
 
 BEGIN;
 
--- Drop the prototype table (different schema: composite PK, integer burg_id,
--- local_x/local_y columns).  No production data lives here yet.
--- CASCADE drops any dependent indexes/constraints automatically.
-DROP TABLE IF EXISTS public.maps_burg_entrances CASCADE;
-
 CREATE TABLE IF NOT EXISTS public.maps_burg_entrances (
     id UUID DEFAULT uuid_generate_v4() PRIMARY KEY,
     burg_id UUID NOT NULL REFERENCES public.maps_burgs(id) ON DELETE CASCADE,
