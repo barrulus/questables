@@ -166,6 +166,36 @@ CREATE TABLE IF NOT EXISTS public.maps_routes (
 CREATE INDEX IF NOT EXISTS maps_routes_geom_gix ON public.maps_routes USING GIST (geom);
 CREATE INDEX IF NOT EXISTS maps_routes_world_id_idx ON public.maps_routes(world_id);
 
+-- Burg entrances / gates (one row per gate per burg, SRID 0)
+CREATE TABLE IF NOT EXISTS public.maps_burg_entrances (
+    id UUID DEFAULT uuid_generate_v4() PRIMARY KEY,
+    burg_id UUID NOT NULL REFERENCES public.maps_burgs(id) ON DELETE CASCADE,
+    gate_id TEXT NOT NULL,
+    route_id UUID REFERENCES public.maps_routes(id) ON DELETE SET NULL,
+    x_px DOUBLE PRECISION NOT NULL,
+    y_px DOUBLE PRECISION NOT NULL,
+    geom geometry(Point, 0) GENERATED ALWAYS AS (ST_SetSRID(ST_MakePoint(x_px, y_px), 0)) STORED,
+    bearing_deg DOUBLE PRECISION NOT NULL,
+    bearing_match_delta_deg DOUBLE PRECISION,
+    kind TEXT NOT NULL CHECK (kind IN ('land', 'harbour')),
+    sub_kind TEXT NOT NULL CHECK (sub_kind IN ('road', 'foot', 'harbour')),
+    wall_vertex_index INTEGER NOT NULL,
+    prev_gate_id TEXT,
+    next_gate_id TEXT,
+    name TEXT,
+    settlement_generation_version TEXT NOT NULL,
+    settlemaker_version TEXT NOT NULL,
+    ingested_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    UNIQUE (burg_id, gate_id)
+);
+CREATE INDEX IF NOT EXISTS maps_burg_entrances_geom_gix
+  ON public.maps_burg_entrances USING GIST (geom);
+CREATE INDEX IF NOT EXISTS maps_burg_entrances_burg_id_idx
+  ON public.maps_burg_entrances (burg_id);
+CREATE INDEX IF NOT EXISTS maps_burg_entrances_route_id_idx
+  ON public.maps_burg_entrances (route_id)
+  WHERE route_id IS NOT NULL;
+
 -- Rivers (MultiLineString, SRID 0)
 CREATE TABLE IF NOT EXISTS public.maps_rivers (
     id UUID DEFAULT uuid_generate_v4() PRIMARY KEY,
@@ -570,7 +600,8 @@ CREATE TABLE IF NOT EXISTS public.player_movement_audit (
     previous_loc geometry(Point, 0),
     new_loc geometry(Point, 0) NOT NULL,
     created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW() NOT NULL,
-    source TEXT DEFAULT 'api'
+    source TEXT DEFAULT 'api',
+    arrival_gate_entrance_id UUID REFERENCES public.maps_burg_entrances(id) ON DELETE SET NULL
 );
 CREATE INDEX IF NOT EXISTS idx_player_movement_audit_campaign_id_created_at
     ON public.player_movement_audit (campaign_id, created_at DESC);
