@@ -12,12 +12,7 @@ public/tiles-states/5/
 public/tiles-states/6/
 public/tiles-states/7/
 public/tiles-states/8/
-public/tiles-hm/5/
-public/tiles-hm/6/
-public/tiles-hm/7/
-public/tiles-hm/8/
-public/tiles-hm/9/
-public/tiles-hm/10/
+public/tiles-hm/
 public/
 server/tegola/tegola.toml
 server/tegola/cache/
