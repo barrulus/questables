@@ -97,3 +97,36 @@ describe('pickArrivalGate — route identity', () => {
     expect(gate.matchedBy).toBe('route_id');
   });
 });
+
+describe('pickArrivalGate — approach vector', () => {
+  const north = { ...gateA, id: 'ent-n', route_id: null, bearing_deg: 0,   bearing_match_delta_deg: null };
+  const south = { ...gateB, id: 'ent-s', route_id: null, bearing_deg: 180, bearing_match_delta_deg: null, name: null };
+
+  test('picks the entrance whose outward bearing opposes the approach direction', async () => {
+    const client = makeClient([north, south]);
+    const gate = await pickArrivalGate(client, {
+      plan: {
+        mode: 'walk',
+        effectiveVia: 'direct',
+        waypoints: [{ x: 100, y: 0 }, { x: 100, y: 50 }],
+      },
+      destination: { kind: 'burg', burgId: 'burg-1' },
+    });
+    expect(gate.entranceId).toBe('ent-n');
+    expect(gate.matchedBy).toBe('approach_vector');
+  });
+
+  test('falls back to approach_vector when route_id does not match any entrance', async () => {
+    const client = makeClient([north, south]);
+    const gate = await pickArrivalGate(client, {
+      plan: {
+        mode: 'walk',
+        effectiveVia: 'route-unknown',
+        waypoints: [{ x: 100, y: 300 }, { x: 100, y: 250 }],
+      },
+      destination: { kind: 'burg', burgId: 'burg-1' },
+    });
+    expect(gate.entranceId).toBe('ent-s');
+    expect(gate.matchedBy).toBe('approach_vector');
+  });
+});

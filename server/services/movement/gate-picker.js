@@ -55,7 +55,35 @@ export async function pickArrivalGate(client, { plan, destination }) {
     }
   }
 
-  // Approach-vector fallback arrives in Task 7; for now, return null so the
-  // caller falls back to Plan 2 centroid behavior.
-  return null;
+  // Approach-vector fallback: match the gate whose outward bearing opposes
+  // the final travel segment. Used when route-identity matching fails or is
+  // inapplicable (e.g. mode 'direct').
+  const wp = plan?.waypoints ?? [];
+  if (wp.length < 2) return null;
+  const a = wp[wp.length - 2];
+  const b = wp[wp.length - 1];
+  const dx = b.x - a.x;
+  const dy = b.y - a.y;
+  if (dx === 0 && dy === 0) return null;
+
+  // Compass bearing: 0 = north (toward -y, because Y is down), clockwise.
+  const approachBearing = (Math.atan2(dx, -dy) * 180 / Math.PI + 360) % 360;
+  const expectedOutward = (approachBearing + 180) % 360;
+
+  const delta = (bearing) => {
+    const diff = Math.abs(bearing - expectedOutward);
+    return Math.min(diff, 360 - diff);
+  };
+
+  const best = [...entrances].sort((x, y) => {
+    const dx_ = delta(Number(x.bearing_deg));
+    const dy_ = delta(Number(y.bearing_deg));
+    if (dx_ !== dy_) return dx_ - dy_;
+    const mx = x.bearing_match_delta_deg ?? Number.POSITIVE_INFINITY;
+    const my = y.bearing_match_delta_deg ?? Number.POSITIVE_INFINITY;
+    if (mx !== my) return mx - my;
+    return x.gate_id.localeCompare(y.gate_id);
+  })[0];
+
+  return rowToGate(best, 'approach_vector');
 }
