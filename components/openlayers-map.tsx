@@ -39,7 +39,7 @@ import LineString from 'ol/geom/LineString';
 import type Geometry from 'ol/geom/Geometry';
 import GeoJSON from 'ol/format/GeoJSON';
 import type { GeoJSONFeature } from 'ol/format/GeoJSON';
-import { Style, Fill, Stroke, Circle as CircleStyle, Text } from 'ol/style';
+import { Style, Fill, Icon, Stroke, Circle as CircleStyle, Text } from 'ol/style';
 import 'ol/ol.css';
 import { defaults as defaultControls } from 'ol/control';
 import { Overlay } from 'ol';
@@ -137,6 +137,14 @@ const INTERACTIVE_FEATURE_TYPES = new Set(['burg', 'marker', 'player']);
 const MOVE_PROMPT_TOAST_ID = 'player-move-selection';
 const MOVE_MODES = ['walk', 'ride', 'boat', 'fly', 'teleport', 'gm'] as const;
 const TRAIL_CACHE_TTL_MS = 60_000;
+const GATE_PULSE_DURATION_MS = 1000;
+const GATE_PULSE_ICON_DATA_URI =
+  `data:image/svg+xml;utf8,` +
+  encodeURIComponent(
+    `<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="-8 -8 16 16">` +
+    `<polygon points="0,-6 5,5 -5,5" fill="#ffdc73" stroke="#000" stroke-width="1"/>` +
+    `</svg>`,
+  );
 
 const isPlainObject = (value: unknown): value is Record<string, unknown> =>
   typeof value === 'object' && value !== null;
@@ -1941,6 +1949,28 @@ export function OpenLayersMap() {
           setInterruptBadge((prev) => (prev?.playerId === playerId ? null : prev));
         }
 
+        const arrival = isPlainObject(data.arrival) ? data.arrival : null;
+        const arrivalGate = arrival && isPlainObject(arrival.gate) ? arrival.gate : null;
+        const arrivalGateId = typeof arrivalGate?.id === 'string' ? arrivalGate.id : null;
+
+        const pulseArrivalGate = () => {
+          if (!arrivalGateId) return;
+          if (typeof window !== 'undefined'
+              && window.matchMedia?.('(prefers-reduced-motion: reduce)').matches) return;
+          const feature = burgEntrancesLayerRef.current?.getSource()?.getFeatureById(arrivalGateId);
+          if (!feature) return;
+          const originalStyle = feature.getStyle();
+          feature.setStyle(new Style({
+            image: new Icon({
+              src: GATE_PULSE_ICON_DATA_URI,
+              scale: 1.4,
+              rotation: (Number(feature.get('bearingDeg') ?? 0) * Math.PI) / 180,
+              rotateWithView: false,
+            }),
+          }));
+          window.setTimeout(() => feature.setStyle(originalStyle ?? undefined), GATE_PULSE_DURATION_MS);
+        };
+
         if (waypoints && playerLayerRef.current) {
           const source = playerLayerRef.current.getSource();
           const feature = source
@@ -1952,11 +1982,16 @@ export function OpenLayersMap() {
               feature,
               waypoints,
               ANIMATION_DURATION_MS,
-            ).then(() => void loadVisiblePlayers(activeCampaignId));
+            ).then(() => {
+              pulseArrivalGate();
+              void loadVisiblePlayers(activeCampaignId);
+            });
             animationPromises.push(p);
             return; // don't fall through to immediate loadVisiblePlayers for this player
           }
         }
+
+        pulseArrivalGate();
 
         // No waypoints or feature not found — fall through to immediate reload below
       });
