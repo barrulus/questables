@@ -87,3 +87,31 @@ export async function pickArrivalGate(client, { plan, destination }) {
 
   return rowToGate(best, 'approach_vector');
 }
+
+function polylineLength(points) {
+  let total = 0;
+  for (let i = 1; i < points.length; i++) {
+    total += Math.hypot(points[i].x - points[i - 1].x, points[i].y - points[i - 1].y);
+  }
+  return total;
+}
+
+/**
+ * Return a new plan whose final waypoint is the gate's position.
+ * - Multi-point plan: replace last waypoint.
+ * - Single-point plan (teleport-ish): append gate as second waypoint.
+ * Other plan fields are preserved. distancePixels is recomputed.
+ * Camp points are intentionally NOT recomputed — the shift is small and
+ * recomputing would drift them visibly for cosmetic gain only.
+ */
+export function retargetPlanToGate(plan, gate) {
+  if (!gate) return plan;
+  const newWaypoints = plan.waypoints.length <= 1
+    ? [...plan.waypoints, { x: gate.x, y: gate.y }]
+    : [...plan.waypoints.slice(0, -1), { x: gate.x, y: gate.y }];
+  return {
+    ...plan,
+    waypoints: newWaypoints,
+    distancePixels: polylineLength(newWaypoints),
+  };
+}

@@ -1,5 +1,5 @@
 import { jest } from '@jest/globals';
-import { pickArrivalGate } from '../../server/services/movement/gate-picker.js';
+import { pickArrivalGate, retargetPlanToGate } from '../../server/services/movement/gate-picker.js';
 
 function makeClient(entranceRows) {
   return {
@@ -128,5 +128,45 @@ describe('pickArrivalGate — approach vector', () => {
     });
     expect(gate.entranceId).toBe('ent-s');
     expect(gate.matchedBy).toBe('approach_vector');
+  });
+});
+
+describe('retargetPlanToGate', () => {
+  test('replaces final waypoint with the gate position', () => {
+    const plan = {
+      waypoints: [{ x: 0, y: 0 }, { x: 50, y: 0 }, { x: 100, y: 0 }],
+      distancePixels: 100,
+      effectiveVia: 'roads',
+      totalDays: 1,
+      campPoints: [],
+      distanceMiles: null,
+      dailyPixels: 500,
+    };
+    const gate = { x: 110, y: 5 };
+    const out = retargetPlanToGate(plan, gate);
+    expect(out.waypoints[out.waypoints.length - 1]).toEqual({ x: 110, y: 5 });
+    expect(out.waypoints.length).toBe(3);
+    expect(out.distancePixels).toBeCloseTo(50 + Math.hypot(60, 5), 6);
+    expect(out.effectiveVia).toBe('roads');
+  });
+
+  test('returns the original plan when gate is null', () => {
+    const plan = { waypoints: [{x:0,y:0},{x:10,y:0}], distancePixels: 10 };
+    expect(retargetPlanToGate(plan, null)).toBe(plan);
+  });
+
+  test('handles a single-point plan by appending the gate', () => {
+    const plan = {
+      waypoints: [{ x: 20, y: 20 }],
+      distancePixels: 0,
+      effectiveVia: 'direct',
+      totalDays: 0,
+      campPoints: [],
+      distanceMiles: null,
+      dailyPixels: Infinity,
+    };
+    const out = retargetPlanToGate(plan, { x: 25, y: 25 });
+    expect(out.waypoints).toEqual([{ x: 20, y: 20 }, { x: 25, y: 25 }]);
+    expect(out.distancePixels).toBeCloseTo(Math.hypot(5, 5), 6);
   });
 });
