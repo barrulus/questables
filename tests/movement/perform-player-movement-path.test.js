@@ -97,3 +97,20 @@ test('gameDaysElapsed = 0 does NOT issue clock update', async () => {
   );
   expect(clockUpdate).toBeUndefined();
 });
+
+test('arrivalGateEntranceId: recorded on the audit INSERT', async () => {
+  const client = makeClientWithCapture();
+  await performPlayerMovement({
+    client, campaignId: 'c1', playerId: 'p1',
+    requestorUserId: 'llm-system', requestorRole: 'llm', isRequestorAdmin: false,
+    targetX: 500, targetY: 0, mode: 'walk', reason: 'narrative',
+    source: 'llm',
+    arrivalGateEntranceId: 'ent-abc',
+  });
+  const auditInsert = client.queries.find((q) =>
+    /INSERT INTO public\.player_movement_audit/.test(q.sql),
+  );
+  expect(auditInsert).toBeTruthy();
+  expect(/arrival_gate_entrance_id/.test(auditInsert.sql)).toBe(true);
+  expect(auditInsert.params).toEqual(expect.arrayContaining(['ent-abc']));
+});

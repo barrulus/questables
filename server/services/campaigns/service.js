@@ -153,6 +153,7 @@ export const performPlayerMovement = async ({
   source = 'dm',
   pathWaypoints,      // NEW: optional array of {x,y} waypoints for polyline
   gameDaysElapsed,    // NEW: optional integer to increment campaign_clock_days
+  arrivalGateEntranceId = null,
 }) => {
   if (!MOVE_MODE_SET.has(mode)) {
     const error = new Error(`Unsupported movement mode: ${mode}`);
@@ -289,11 +290,13 @@ export const performPlayerMovement = async ({
 
   await client.query(
     `INSERT INTO public.player_movement_audit
-        (campaign_id, player_id, moved_by, mode, reason, previous_loc, new_loc)
+        (campaign_id, player_id, moved_by, mode, reason, previous_loc, new_loc,
+         arrival_gate_entrance_id)
      VALUES
         ($1, $2, $3, $4, $5,
          ST_SetSRID(ST_MakePoint($6, $7), 0),
-         ST_SetSRID(ST_MakePoint($8, $9), 0))`,
+         ST_SetSRID(ST_MakePoint($8, $9), 0),
+         $10)`,
     [
       campaignId,
       playerId,
@@ -304,6 +307,7 @@ export const performPlayerMovement = async ({
       previousPoint.y,
       snappedTarget.x,
       snappedTarget.y,
+      arrivalGateEntranceId,
     ],
   );
 
