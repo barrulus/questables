@@ -13,9 +13,12 @@ import {
 import { logInfo, logWarn } from '../../utils/logger.js';
 
 async function loadBurgRow(client, burgId) {
+  // maps_burgs carries legacy `xpixel`/`ypixel` column names in production
+  // DBs; alias to x_px/y_px so downstream code stays uniform across tables.
   const { rows } = await client.query(
     `SELECT id, world_id, name, population, port, citadel, walls, plaza,
-            temple, shanty, capital, x_px, y_px
+            temple, shanty, capital,
+            xpixel AS x_px, ypixel AS y_px
        FROM public.maps_burgs
       WHERE id = $1
       LIMIT 1`,
