@@ -21,6 +21,7 @@ import {
   deleteCampaignRegion,
 } from '../services/maps/service.js';
 import { getSettlementInfo, getSettlementTile } from '../services/maps/settlement-service.js';
+import { listByWorld as listBurgEntrancesByWorld } from '../services/maps/burg-entrances-service.js';
 import { getWorldIngestionStatus } from '../services/maps/ingestion-service.js';
 import { getViewerContextOrThrow, ensureDmControl } from '../services/campaigns/service.js';
 
@@ -127,6 +128,30 @@ router.get('/:worldId/burgs', async (req, res) => {
     logError('World map burg listing failed', error, { worldId });
     const status = error.status || 500;
     return res.status(status).json({ error: error.code || 'maps_burgs_failed', message: error.message });
+  }
+});
+
+router.get('/:worldId/burg-entrances', async (req, res) => {
+  const { worldId } = req.params;
+  try {
+    const rows = await listBurgEntrancesByWorld(worldId);
+    const features = rows.map((r) => ({
+      type: 'Feature',
+      geometry: { type: 'Point', coordinates: [Number(r.x_px), Number(r.y_px)] },
+      properties: {
+        id: r.id, burgId: r.burg_id, gateId: r.gate_id, routeId: r.route_id,
+        bearingDeg: Number(r.bearing_deg), kind: r.kind, subKind: r.sub_kind,
+        name: r.name, prevGateId: r.prev_gate_id, nextGateId: r.next_gate_id,
+      },
+    }));
+    return res.json({ type: 'FeatureCollection', features });
+  } catch (error) {
+    logError('World burg-entrances fetch failed', error, { worldId });
+    const status = error.status || 500;
+    return res.status(status).json({
+      error: error.code || 'maps_burg_entrances_failed',
+      message: error.message,
+    });
   }
 });
 
