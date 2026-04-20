@@ -1,6 +1,7 @@
 import { randomUUID } from 'crypto';
 import { query, withTransaction } from '../../db/pool.js';
-import { logInfo } from '../../utils/logger.js';
+import { logInfo, logWarn } from '../../utils/logger.js';
+import { ingestBurg } from '../settlemaker/ingestor.js';
 
 // --- Helpers (ported from afmg_geojson_importer.mjs) ---
 
@@ -370,8 +371,46 @@ export const ingestLayer = async (worldId, layerType, geojsonObj) => {
   );
 
   logInfo(`Ingested ${layerType}`, { worldId, rowCount });
+
+  // After burgs or routes land, try to refresh burg entrances. Both layers are
+  // required — the settlemaker ingestor pulls approaching routes per burg.
+  if (layerType === 'burgs' || layerType === 'routes') {
+    await ingestBurgEntrancesForWorldIfReady(worldId);
+  }
+
   return { layerType, rowCount };
 };
+
+async function ingestBurgEntrancesForWorldIfReady(worldId) {
+  const status = await getWorldIngestionStatus(worldId);
+  if (!(status.burgs > 0 && status.routes > 0)) return;
+  let ingestedCount = 0;
+  let failedCount = 0;
+  await withTransaction(
+    async (client) => {
+      const { rows: allBurgs } = await client.query(
+        `SELECT id FROM public.maps_burgs WHERE world_id = $1`,
+        [worldId],
+      );
+      for (const b of allBurgs) {
+        try {
+          const result = await ingestBurg(client, { burgId: b.id });
+          if (result.updated) ingestedCount += 1;
+        } catch (err) {
+          failedCount += 1;
+          logWarn('settlemaker ingest failed for burg (continuing)', {
+            worldId, burgId: b.id, error: err?.message,
+          });
+        }
+      }
+    },
+    { label: 'ingestion.burg_entrances' },
+  );
+  logInfo('Burg entrances ingestion summary', {
+    telemetryEvent: 'settlemaker.ingested.world',
+    worldId, ingestedCount, failedCount,
+  });
+}
 
 // --- Status ---
 
