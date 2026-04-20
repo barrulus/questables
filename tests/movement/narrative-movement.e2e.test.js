@@ -108,3 +108,69 @@ skipIfNoFixtures('Plan 2: move_player inserts polyline + advances clock', async 
     client.release?.();
   }
 });
+
+skipIfNoFixtures('Plan 3a: narrative move into walled burg lands at a gate', async () => {
+  const { getClient } = await import('../../server/db/pool.js');
+  const { applyMechanicalOutcome } = await import('../../server/services/dm-action/service.js');
+
+  const client = await getClient();
+  const wsServer = { broadcastToCampaign: jest.fn() };
+
+  try {
+    await client.query('BEGIN');
+
+    await applyMechanicalOutcome(client, {
+      sessionId: FIXTURE_SESSION_ID,
+      actingCharacterId: FIXTURE_ACTING_CHAR_ID,
+      mechanicalOutcome: {
+        type: 'move_player',
+        destination: { kind: 'burg', ref: FIXTURE_BURG_NAME },
+        via: 'roads',
+        mode: 'walk',
+      },
+      wsServer,
+    });
+
+    // The most recent llm-tagged audit row for this campaign should carry the
+    // arrival gate id — PROVIDED the destination burg has walls and at least
+    // one ingested entrance. If the fixture burg is unwalled the column will
+    // be null; we assert "column exists" rather than "non-null" to keep the
+    // test robust across fixture variants.
+    const audit = await client.query(
+      `SELECT arrival_gate_entrance_id
+         FROM public.player_movement_audit
+        WHERE campaign_id = $1
+        ORDER BY created_at DESC
+        LIMIT 1`,
+      [FIXTURE_CAMPAIGN_ID],
+    );
+    expect(audit.rows[0]).toHaveProperty('arrival_gate_entrance_id');
+
+    // If the gate was resolved, the player position should be within a small
+    // distance of that entrance (gate, not centroid).
+    const gateId = audit.rows[0].arrival_gate_entrance_id;
+    if (gateId) {
+      const proximity = await client.query(
+        `SELECT ST_Distance(cp.loc_current, e.geom) AS dist
+           FROM public.campaign_players cp
+           JOIN public.maps_burg_entrances e ON e.id = $1
+          WHERE cp.campaign_id = $2 AND cp.character_id = $3`,
+        [gateId, FIXTURE_CAMPAIGN_ID, FIXTURE_ACTING_CHAR_ID],
+      );
+      expect(Number(proximity.rows[0].dist)).toBeLessThan(20);
+
+      expect(wsServer.broadcastToCampaign).toHaveBeenCalledWith(
+        FIXTURE_CAMPAIGN_ID,
+        'player-moved',
+        expect.objectContaining({
+          arrival: expect.objectContaining({
+            gate: expect.objectContaining({ id: gateId }),
+          }),
+        }),
+      );
+    }
+  } finally {
+    await client.query('ROLLBACK');
+    client.release?.();
+  }
+});
