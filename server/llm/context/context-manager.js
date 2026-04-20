@@ -1,5 +1,6 @@
 import { LLMServiceError } from '../errors.js';
 import { buildGeographicContext } from './geographic-context-builder.js';
+import { cardinalGateName } from '../../services/movement/cardinal-names.js';
 
 const parseJson = (value, fallback) => {
   if (value === null || value === undefined) {
@@ -691,9 +692,24 @@ export class LLMContextManager {
       `SELECT pmp.mode,
               pmp.reason,
               pmp.created_at,
-              ST_Length(pmp.path) AS distance_pixels
+              ST_Length(pmp.path) AS distance_pixels,
+              e.gate_id     AS arrival_gate_id,
+              e.name        AS arrival_gate_name,
+              e.kind        AS arrival_gate_kind,
+              e.sub_kind    AS arrival_gate_sub_kind,
+              e.bearing_deg AS arrival_gate_bearing_deg
          FROM public.player_movement_paths pmp
          JOIN public.campaign_players cp ON cp.id = pmp.player_id
+         LEFT JOIN LATERAL (
+           SELECT arrival_gate_entrance_id
+             FROM public.player_movement_audit pma
+            WHERE pma.campaign_id = pmp.campaign_id
+              AND pma.player_id   = pmp.player_id
+            ORDER BY ABS(EXTRACT(EPOCH FROM (pma.created_at - pmp.created_at)))
+            LIMIT 1
+         ) pma ON TRUE
+         LEFT JOIN public.maps_burg_entrances e
+                ON e.id = pma.arrival_gate_entrance_id
         WHERE cp.campaign_id = $1
           AND pmp.reason LIKE '[llm]%'
         ORDER BY pmp.created_at DESC
@@ -702,11 +718,17 @@ export class LLMContextManager {
     );
     if (rows.length === 0) return null;
     const r = rows[0];
+    const arrivalGate = r.arrival_gate_id ? {
+      name: r.arrival_gate_name ?? cardinalGateName(Number(r.arrival_gate_bearing_deg)),
+      kind: r.arrival_gate_kind,
+      subKind: r.arrival_gate_sub_kind,
+    } : null;
     return {
       mode: r.mode,
       reason: r.reason,
       distancePixels: Number(r.distance_pixels),
       at: r.created_at,
+      arrival: { gate: arrivalGate },
     };
   }
 }
