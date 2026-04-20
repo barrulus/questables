@@ -1,5 +1,6 @@
 import { resolveDestination } from './destination-resolver.js';
 import { planTravel } from './travel-planner.js';
+import { pickArrivalGate, retargetPlanToGate } from './gate-picker.js';
 import { performPlayerMovement } from '../campaigns/service.js';
 import { evaluateEncounterAtPoint } from '../encounters/proactive-generator.js';
 import { logWarn } from '../../utils/logger.js';
@@ -100,17 +101,25 @@ export async function applyNarrativeMove(client, {
         dailyPixels: Infinity,
       };
 
-  const interrupt = plan.campPoints.length > 0 && sessionId
-    ? await walkCampsForEncounter({ sessionId, campaignId, campPoints: plan.campPoints })
+  const arrivalGate = await pickArrivalGate(client, {
+    plan: { ...plan, mode },
+    destination: { kind: destination.kind, burgId: resolved.burgId },
+  });
+  const gatedPlan = arrivalGate ? retargetPlanToGate(plan, arrivalGate) : plan;
+
+  const interrupt = gatedPlan.campPoints.length > 0 && sessionId
+    ? await walkCampsForEncounter({ sessionId, campaignId, campPoints: gatedPlan.campPoints })
     : { interruptedAt: null };
 
-  const effectiveEnd = interrupt.interruptedAt ?? { x: resolved.x, y: resolved.y };
+  const centroidEnd = { x: resolved.x, y: resolved.y };
+  const gateEnd = arrivalGate ? { x: arrivalGate.x, y: arrivalGate.y } : centroidEnd;
+  const effectiveEnd = interrupt.interruptedAt ?? gateEnd;
   const effectiveWaypoints = interrupt.interruptedAt
-    ? truncateWaypointsAtCamp(plan.waypoints, interrupt.interruptedAt)
-    : plan.waypoints;
+    ? truncateWaypointsAtCamp(gatedPlan.waypoints, interrupt.interruptedAt)
+    : gatedPlan.waypoints;
   const daysElapsed = interrupt.interruptedAt
     ? interrupt.interruptedAt.day
-    : plan.totalDays;
+    : gatedPlan.totalDays;
 
   const moveResult = await performPlayerMovement({
     client, campaignId, playerId,
@@ -123,6 +132,7 @@ export async function applyNarrativeMove(client, {
     reason: reason ?? `narrative: ${destination.kind}:${destination.ref}`,
     enforceClamp: true,
     source: 'llm',
+    arrivalGateEntranceId: arrivalGate?.entranceId ?? null,
     pathWaypoints: effectiveWaypoints,
     gameDaysElapsed: daysElapsed,
   });
@@ -141,15 +151,25 @@ export async function applyNarrativeMove(client, {
     updatedAt: moveResult.player.last_located_at,
     path: {
       waypoints: effectiveWaypoints,
-      distancePixels: plan.distancePixels,
-      distanceMiles: plan.distanceMiles,
+      distancePixels: gatedPlan.distancePixels,
+      distanceMiles: gatedPlan.distanceMiles,
       mode,
     },
     travel: {
-      totalDaysPlanned: plan.totalDays,
+      totalDaysPlanned: gatedPlan.totalDays,
       daysElapsed,
       interrupted: interrupt.interruptedAt !== null,
-      effectiveVia: plan.effectiveVia,
+      effectiveVia: gatedPlan.effectiveVia,
+    },
+    arrival: {
+      gate: arrivalGate ? {
+        id:        arrivalGate.entranceId,
+        gateId:    arrivalGate.gateId,
+        name:      arrivalGate.name,
+        kind:      arrivalGate.kind,
+        subKind:   arrivalGate.subKind,
+        matchedBy: arrivalGate.matchedBy,
+      } : null,
     },
     clockDay,
     encounter: null,
