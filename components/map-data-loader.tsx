@@ -4,6 +4,7 @@
 import {
   listWorldMaps,
   listWorldBurgs,
+  listWorldBurgEntrances,
   listWorldRoutes,
   listWorldRivers,
   listWorldMarkers,
@@ -129,6 +130,23 @@ export class MapDataLoader {
           name,
           data: record,
         });
+      })
+      .filter(MapDataLoader.notNull);
+  }
+
+  async loadBurgEntrances(worldMapId: string): Promise<Feature[]> {
+    const fc = await listWorldBurgEntrances(worldMapId);
+    return (fc.features ?? [])
+      .map((f) => {
+        const geometry = this.readGeometry(f);
+        if (!geometry) return null;
+        const feat = new Feature({ geometry });
+        for (const [k, v] of Object.entries(f.properties ?? {})) {
+          feat.set(k, v);
+        }
+        const id = f.properties?.id;
+        if (typeof id === 'string') feat.setId(id);
+        return feat;
       })
       .filter(MapDataLoader.notNull);
   }
@@ -286,6 +304,9 @@ export class MapDataLoader {
   getDataTypesForZoom(zoom: number): string[] {
     // Load key layers at every zoom so we can validate alignment visually.
     const dataTypes: string[] = ['burgs', 'routes', 'rivers', 'markers'];
+
+    // Burg gate markers render only at zoom ≥ 7 (see burg-entrance style factory).
+    if (zoom >= 7) dataTypes.push('burgEntrances');
 
     // Cells remain opt-in at high zoom to avoid overwhelming the client.
     if (zoom >= 10) dataTypes.push('cells');     // Terrain cells visible from zoom 10+ (high detail)

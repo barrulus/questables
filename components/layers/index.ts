@@ -1,4 +1,5 @@
 export * from "./base-tile";
+export * from "./burg-entrances";
 export * from "./burgs";
 export * from "./cells";
 export * from "./draw";

@@ -81,6 +81,28 @@ export async function listWorldRivers(
   return data ?? [];
 }
 
+export interface BurgEntranceFeatureCollection {
+  type: 'FeatureCollection';
+  features: Array<{
+    type: 'Feature';
+    geometry: { type: 'Point'; coordinates: [number, number] };
+    properties: Record<string, unknown>;
+  }>;
+}
+
+export async function listWorldBurgEntrances(
+  worldMapId: string,
+  options: ApiRequestOptions = {},
+): Promise<BurgEntranceFeatureCollection> {
+  const data = await fetchJson<BurgEntranceFeatureCollection>(
+    `/api/maps/${worldMapId}/burg-entrances`,
+    { method: 'GET', signal: options.signal },
+    'Failed to load burg entrances',
+  );
+
+  return data ?? { type: 'FeatureCollection', features: [] };
+}
+
 export async function listWorldMarkers(
   worldMapId: string,
   bounds?: MapBounds,

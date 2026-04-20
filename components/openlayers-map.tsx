@@ -49,6 +49,7 @@ import { DEFAULT_PIXEL_EXTENT, questablesProjection, updateProjectionExtent, PIX
 import {
   LABEL_VISIBILITY,
   createBurgStyleFactory,
+  createBurgEntranceStyleFactory,
   createMarkerStyleFactory,
   createRouteStyleFactory,
   getRiverStyle,
@@ -122,6 +123,7 @@ interface PopupDetails {
 
 interface LayerVisibility {
   burgs: boolean;
+  burgEntrances: boolean;
   routes: boolean;
   rivers: boolean;
   cells: boolean;
@@ -273,6 +275,7 @@ export function OpenLayersMap() {
   const [currentZoom, setCurrentZoom] = useState(0);
   const [layerVisibility, setLayerVisibility] = useState<LayerVisibility>({
     burgs: false,
+    burgEntrances: true,
     routes: false,
     rivers: false,
     cells: false,
@@ -576,6 +579,7 @@ export function OpenLayersMap() {
   // Layer references
   const baseLayerRef = useRef<TileLayer | null>(null);
   const burgsLayerRef = useRef<GeometryLayer | null>(null);
+  const burgEntrancesLayerRef = useRef<GeometryLayer | null>(null);
   const routesLayerRef = useRef<GeometryLayer | null>(null);
   const riversLayerRef = useRef<GeometryLayer | null>(null);
   const cellsLayerRef = useRef<GeometryLayer | null>(null);
@@ -685,6 +689,11 @@ export function OpenLayersMap() {
     [getZoomForResolution]
   );
 
+  const getBurgEntranceStyle = useMemo(
+    () => createBurgEntranceStyleFactory(getZoomForResolution),
+    [getZoomForResolution]
+  );
+
   const getRouteStyle = useMemo(
     () => createRouteStyleFactory(getZoomForResolution),
     [getZoomForResolution]
@@ -780,6 +789,7 @@ export function OpenLayersMap() {
 
   const layerRefMap = useMemo(() => ({
     burgs: burgsLayerRef,
+    burgEntrances: burgEntrancesLayerRef,
     routes: routesLayerRef,
     rivers: riversLayerRef,
     cells: cellsLayerRef,
@@ -888,6 +898,14 @@ export function OpenLayersMap() {
       burgsLayerRef.current.changed();
     }
   }, [getBurgStyle]);
+
+  const getBurgEntranceStyleRef = useRef(getBurgEntranceStyle);
+  useEffect(() => {
+    getBurgEntranceStyleRef.current = getBurgEntranceStyle;
+    if (burgEntrancesLayerRef.current) {
+      burgEntrancesLayerRef.current.changed();
+    }
+  }, [getBurgEntranceStyle]);
 
   const getRouteStyleRef = useRef(getRouteStyle);
   useEffect(() => {
@@ -1264,6 +1282,7 @@ export function OpenLayersMap() {
       }
 
       burgsLayerRef.current?.changed();
+      burgEntrancesLayerRef.current?.changed();
       routesLayerRef.current?.changed();
       markersLayerRef.current?.changed();
     }
@@ -1342,6 +1361,9 @@ export function OpenLayersMap() {
       if (dataTypes.includes('burgs') && vis.burgs) {
         promises.push(mapDataLoader.loadBurgs(selectedWorldMap, bounds));
       }
+      if (dataTypes.includes('burgEntrances') && vis.burgEntrances) {
+        promises.push(mapDataLoader.loadBurgEntrances(selectedWorldMap));
+      }
       if (dataTypes.includes('routes') && vis.routes) {
         promises.push(mapDataLoader.loadRoutes(selectedWorldMap, bounds));
       }
@@ -1362,6 +1384,10 @@ export function OpenLayersMap() {
       if (dataTypes.includes('burgs') && vis.burgs) {
         burgsLayerRef.current?.getSource()?.clear();
         burgsLayerRef.current?.getSource()?.addFeatures(results[index++] || []);
+      }
+      if (dataTypes.includes('burgEntrances') && vis.burgEntrances) {
+        burgEntrancesLayerRef.current?.getSource()?.clear();
+        burgEntrancesLayerRef.current?.getSource()?.addFeatures(results[index++] || []);
       }
       if (dataTypes.includes('routes') && vis.routes) {
         routesLayerRef.current?.getSource()?.clear();
@@ -1422,6 +1448,13 @@ export function OpenLayersMap() {
       visible: initialVisibility.burgs
     });
     burgsLayerRef.current = burgsLayer;
+
+    const burgEntrancesLayer = new VectorLayer<GeometrySource>({
+      source: new VectorSource<GeometryFeature>({ wrapX: false }),
+      style: (feature, resolution) => getBurgEntranceStyleRef.current(asGeometryFeature(feature), resolution),
+      visible: initialVisibility.burgEntrances
+    });
+    burgEntrancesLayerRef.current = burgEntrancesLayer;
 
     const routesLayer = new VectorLayer<GeometrySource>({
       source: new VectorSource<GeometryFeature>({ wrapX: false }),
@@ -1492,6 +1525,7 @@ export function OpenLayersMap() {
         riversLayer,
         routesLayer,
         burgsLayer,
+        burgEntrancesLayer,
         markersLayer,
         campaignLayer,
         playerTrailLayer,
@@ -1611,6 +1645,7 @@ export function OpenLayersMap() {
 
     const worldLayers = [
       burgsLayerRef.current,
+      burgEntrancesLayerRef.current,
       routesLayerRef.current,
       riversLayerRef.current,
       cellsLayerRef.current,
@@ -1687,6 +1722,7 @@ export function OpenLayersMap() {
       if (baseLayer) baseLayer.setVisible(true);
       const vis = layerVisibilityRef.current;
       burgsLayerRef.current?.setVisible(vis.burgs);
+      burgEntrancesLayerRef.current?.setVisible(vis.burgEntrances);
       routesLayerRef.current?.setVisible(vis.routes);
       riversLayerRef.current?.setVisible(vis.rivers);
       cellsLayerRef.current?.setVisible(vis.cells);
@@ -1717,6 +1753,7 @@ export function OpenLayersMap() {
   // Handle layer visibility changes
   useEffect(() => {
     burgsLayerRef.current?.setVisible(layerVisibility.burgs && mapMode === 'world');
+    burgEntrancesLayerRef.current?.setVisible(layerVisibility.burgEntrances && mapMode === 'world');
     routesLayerRef.current?.setVisible(layerVisibility.routes && mapMode === 'world');
     riversLayerRef.current?.setVisible(layerVisibility.rivers && mapMode === 'world');
     cellsLayerRef.current?.setVisible(layerVisibility.cells && mapMode === 'world');

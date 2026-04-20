@@ -1,7 +1,7 @@
 import type FeatureLike from 'ol/Feature';
 import type Geometry from 'ol/geom/Geometry';
 import Feature from 'ol/Feature';
-import { Circle as CircleStyle, Fill, Stroke, Style, Text } from 'ol/style';
+import { Circle as CircleStyle, Fill, Icon, Stroke, Style, Text } from 'ol/style';
 
 const ROUTE_BASE_COLOR = '#8B5CF6';
 
@@ -342,6 +342,31 @@ const getBiomeColor = (biome: number): string => {
     case 4: return 'rgba(128,128,128,0.3)';
     default: return 'rgba(144,238,144,0.3)';
   }
+};
+
+export const createBurgEntranceStyleFactory = (getZoomForResolution: ZoomResolver) => {
+  return (featureLike: FeatureLike, resolution: number): Style | undefined => {
+    const feature = asGeometryFeature(featureLike);
+    const zoom = getZoomForResolution(resolution);
+    if (!Number.isFinite(zoom) || (zoom as number) < 7) return undefined;
+    const kind = feature.get('kind') as 'land' | 'harbour' | undefined;
+    const bearing = Number(feature.get('bearingDeg') ?? 0);
+    const color = kind === 'harbour' ? '#4bb3c7' : '#b8925a';
+    const src =
+      `data:image/svg+xml;utf8,` +
+      encodeURIComponent(
+        `<svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="-6 -6 12 12">` +
+        `<polygon points="0,-5 4,4 -4,4" fill="${color}" stroke="#222" stroke-width="0.8"/>` +
+        `</svg>`,
+      );
+    return new Style({
+      image: new Icon({
+        src,
+        rotation: (bearing * Math.PI) / 180,
+        rotateWithView: false,
+      }),
+    });
+  };
 };
 
 export const getCellStyle = (featureLike: FeatureLike): Style => {
