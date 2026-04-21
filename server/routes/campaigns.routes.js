@@ -63,6 +63,7 @@ import {
 import { objectiveAssistValidators } from '../validation/narratives.js';
 import { logInfo, logError, logWarn } from '../utils/logger.js';
 import { incrementCounter, recordEvent } from '../utils/telemetry.js';
+import { translateWorldPixelToSettlementLocal } from '../services/settlemaker/coordinate-translator.js';
 
 
 const createObjectiveAssistHandler = (fieldKey) => async (req, res) => {
@@ -929,6 +930,13 @@ router.post(
       await client.query('COMMIT');
 
       if (player?.id && wsServer) {
+        // Fetch inside_burg_id after commit so broadcast reflects the updated value
+        const { rows: burgRows } = await client.query(
+          `SELECT inside_burg_id FROM public.campaign_players WHERE id = $1`,
+          [player.id],
+        );
+        const insideBurgId = burgRows[0]?.inside_burg_id ?? null;
+
         wsServer.broadcastToCampaign(campaignId, 'player-moved', {
           playerId: player.id,
           geometry: player.geometry,
@@ -942,6 +950,8 @@ router.post(
           snapped: snappedTarget,
           grid,
           pathId: pathId ?? null,
+          insideBurgId,
+          mapLevel: insideBurgId ? 'settlement' : 'world',
         });
 
         // Check region triggers after movement (non-blocking)
@@ -2179,25 +2189,76 @@ router.get(
       const viewer = await getViewerContextOrThrow(client, campaignId, req.user);
 
       const { rows } = await client.query(
-        `SELECT player_id, user_id, character_id, role, visibility_state,
-                ST_AsGeoJSON(loc)::json AS geometry,
-                can_view_history
-           FROM visible_player_positions($1, $2, $3)` ,
+        `SELECT vp.player_id, vp.user_id, vp.character_id, vp.role,
+                vp.visibility_state,
+                ST_AsGeoJSON(vp.loc)::json AS geometry,
+                vp.can_view_history,
+                cp.inside_burg_id,
+                CASE WHEN cp.inside_burg_id IS NULL THEN 'world' ELSE 'settlement' END AS map_level_raw,
+                b.xpixel AS burg_x_px, b.ypixel AS burg_y_px,
+                mbs.meters_per_unit, mbs.local_bounds,
+                w.pixels_per_mile,
+                (SELECT mbe.arrival_local
+                   FROM public.player_movement_audit pma
+                   JOIN public.maps_burg_entrances mbe ON mbe.id = pma.arrival_gate_entrance_id
+                  WHERE pma.campaign_id = $1
+                    AND pma.player_id = vp.player_id
+                    AND pma.arrival_gate_entrance_id IS NOT NULL
+                  ORDER BY pma.created_at DESC
+                  LIMIT 1) AS arrival_local
+           FROM visible_player_positions($1, $2, $3) vp
+           JOIN public.campaign_players cp ON cp.id = vp.player_id
+           LEFT JOIN public.maps_burgs b ON b.id = cp.inside_burg_id
+           LEFT JOIN public.maps_burg_settlements mbs ON mbs.burg_id = cp.inside_burg_id
+           LEFT JOIN public.maps_world w ON w.id = b.world_id`,
         [campaignId, req.user.id, radius]
       );
 
-      const features = rows.map((row) => ({
-        type: 'Feature',
-        geometry: row.geometry,
-        properties: {
-          playerId: row.player_id,
-          userId: row.user_id,
-          characterId: row.character_id,
-          role: row.role,
-          visibilityState: row.visibility_state,
-          canViewHistory: row.can_view_history,
-        },
-      }));
+      const METERS_PER_MILE = 1609.344;
+
+      const features = rows.map((row) => {
+        let insideBurgId = row.inside_burg_id ?? null;
+        let mapLevel = row.map_level_raw ?? 'world';
+        let settlementLocal = null;
+
+        if (insideBurgId && row.meters_per_unit != null && row.local_bounds && row.pixels_per_mile) {
+          if (row.arrival_local && Array.isArray(row.arrival_local)) {
+            settlementLocal = { x: Number(row.arrival_local[0]), y: Number(row.arrival_local[1]) };
+          } else if (row.geometry?.coordinates) {
+            const [wx, wy] = row.geometry.coordinates;
+            settlementLocal = translateWorldPixelToSettlementLocal({
+              playerWorldPx: { x: Number(wx), y: Number(wy) },
+              burgWorldCenterPx: { x: Number(row.burg_x_px), y: Number(row.burg_y_px) },
+              worldMetersPerPixel: METERS_PER_MILE / Number(row.pixels_per_mile),
+              sidecar: {
+                metersPerUnit: Number(row.meters_per_unit),
+                localBounds: row.local_bounds,
+              },
+              burgId: insideBurgId,
+            });
+          }
+        } else if (insideBurgId) {
+          // sidecar missing — only possible during backfill window; stay on world view
+          mapLevel = 'world';
+          settlementLocal = null;
+        }
+
+        return {
+          type: 'Feature',
+          geometry: row.geometry,
+          properties: {
+            playerId: row.player_id,
+            userId: row.user_id,
+            characterId: row.character_id,
+            role: row.role,
+            visibilityState: row.visibility_state,
+            canViewHistory: row.can_view_history,
+            insideBurgId,
+            mapLevel,
+            settlementLocal,
+          },
+        };
+      });
 
       res.json({
         type: 'FeatureCollection',
