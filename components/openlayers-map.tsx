@@ -61,6 +61,7 @@ import { buildHoverTooltipInfo, getFeatureTypeFromProperties } from './maps/feat
 import { useGameSession } from "../contexts/GameSessionContext";
 import { useUser } from "../contexts/UserContext";
 import { useWebSocket } from "../hooks/useWebSocket";
+import { useVisiblePlayers } from "../hooks/useVisiblePlayers";
 import { apiFetch, fetchJson, readErrorMessage, readJsonBody } from "../utils/api-client";
 import { toast } from "sonner";
 import { TokenAnimator, type Waypoint } from './player-token-animator';
@@ -321,6 +322,19 @@ export function OpenLayersMap() {
     clearMessages: clearSocketMessages,
     getMessagesByType
   } = useWebSocket(activeCampaignId ?? '');
+
+  // Hook coexists with the inline loadVisiblePlayers below.
+  // The hook owns a parallel fetch and exposes raw VisiblePlayer[] for downstream
+  // consumers (SettlementMap / MapRoot in Tasks 11-12) that need insideBurgId.
+  // The component's existing PlayerToken[] state (enriched with roster data) is
+  // still populated by loadVisiblePlayers — no callsites are changed here.
+  const { players: visiblePlayersFromHook, refresh: refreshVisiblePlayersHook } = useVisiblePlayers(
+    activeCampaignId ?? null,
+    typeof playerVisibilityRadius === 'number' ? playerVisibilityRadius : null,
+  );
+  // Suppress unused-var until Tasks 11-12 consume visiblePlayersFromHook / refreshVisiblePlayersHook.
+  void visiblePlayersFromHook;
+  void refreshVisiblePlayersHook;
 
   const viewerIsCoDm = useMemo(
     () => normalizedViewerRole === 'co-dm'
