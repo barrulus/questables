@@ -90,6 +90,14 @@ export function translateWorldPixelToSettlementLocal({
   burgId,
 }) {
   const pixelsPerSettlementUnit = sidecar.metersPerUnit / worldMetersPerPixel;
+  if (!Number.isFinite(pixelsPerSettlementUnit) || pixelsPerSettlementUnit <= 0) {
+    logWarn('non-positive pixels_per_settlement_unit; returning origin', {
+      burgId: burgId ?? null,
+      metersPerUnit: sidecar.metersPerUnit,
+      worldMetersPerPixel,
+    });
+    return { x: 0, y: 0 };
+  }
   const x = (playerWorldPx.x - burgWorldCenterPx.x) / pixelsPerSettlementUnit;
   const y = (playerWorldPx.y - burgWorldCenterPx.y) / pixelsPerSettlementUnit;
 

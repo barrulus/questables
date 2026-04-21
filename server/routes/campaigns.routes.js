@@ -2221,7 +2221,12 @@ router.get(
         let mapLevel = row.map_level_raw ?? 'world';
         let settlementLocal = null;
 
-        if (insideBurgId && row.meters_per_unit != null && row.local_bounds && row.pixels_per_mile) {
+        if (
+          insideBurgId &&
+          Number(row.meters_per_unit) > 0 &&
+          row.local_bounds &&
+          Number(row.pixels_per_mile) > 0
+        ) {
           if (row.arrival_local && Array.isArray(row.arrival_local)) {
             settlementLocal = { x: Number(row.arrival_local[0]), y: Number(row.arrival_local[1]) };
           } else if (row.geometry?.coordinates) {

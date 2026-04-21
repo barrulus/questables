@@ -94,6 +94,19 @@ describe('translateWorldPixelToSettlementLocal', () => {
     expect(local.y).toBeCloseTo(0, 6);
   });
 
+  test('returns origin and warns when metersPerUnit is zero', () => {
+    const warn = jest.spyOn(console, 'warn').mockImplementation(() => {});
+    const local = translateWorldPixelToSettlementLocal({
+      ...BASE,
+      sidecar: { metersPerUnit: 0, localBounds: BASE.sidecar.localBounds },
+      playerWorldPx: { x: 1050, y: 2000 },
+      burgId: 'bad-burg',
+    });
+    expect(local).toEqual({ x: 0, y: 0 });
+    expect(warn).toHaveBeenCalled();
+    warn.mockRestore();
+  });
+
   test('out-of-bounds logs a warn but still returns coords', () => {
     // logWarn (house-style logger) delegates to console.warn; spy at that layer
     // since native ESM live bindings prevent jest.spyOn on the named export directly.
