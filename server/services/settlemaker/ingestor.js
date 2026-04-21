@@ -186,7 +186,6 @@ export async function ingestBurg(client, { burgId, force = false }) {
     const existing = await getSettlement(client, burgId);
     if (
       existing &&
-      (existing.schema_version == null || existing.schema_version === EXPECTED_SCHEMA_VERSION) &&
       existing.settlement_generation_version === newVersion &&
       existing.settlemaker_version === settlemakerVersion
     ) {
@@ -219,7 +218,14 @@ export async function ingestBurg(client, { burgId, force = false }) {
     if (rows.length > 0) await insertEntrances(client, rows);
     await client.query('COMMIT');
   } catch (err) {
-    await client.query('ROLLBACK');
+    try {
+      await client.query('ROLLBACK');
+    } catch (rbErr) {
+      logWarn('settlemaker ingestor rollback itself failed', {
+        burgId,
+        rollbackError: rbErr?.message,
+      });
+    }
     logWarn('settlemaker ingestor rollback', { burgId, error: err?.message });
     throw err;
   }

@@ -24,7 +24,9 @@ const settlementsService = await import('../../server/services/maps/burg-settlem
 const { ingestBurg } = await import('../../server/services/settlemaker/ingestor.js');
 
 function makeClient(burgRow, routeRows) {
+  const calls = [];
   const query = jest.fn(async (sql) => {
+    calls.push(String(sql).trim().split(/\s+/)[0].toUpperCase());
     if (/FROM public\.maps_burgs/.test(sql) && !/ST_ClosestPoint/.test(sql)) {
       return { rows: [burgRow] };
     }
@@ -39,7 +41,7 @@ function makeClient(burgRow, routeRows) {
     }
     return { rows: [] };
   });
-  return { query };
+  return { query, calls };
 }
 
 const FAKE_FC = {
@@ -137,6 +139,14 @@ describe('ingestBurg', () => {
     expect(rows[0].arrival_local).toEqual([180, 0]);
     expect(rows[0].x_px).toBeGreaterThan(1000);
     expect(rows[0].y_px).toBeCloseTo(2000, 3);
+
+    // Transaction-order invariant: all writes between BEGIN and COMMIT, no ROLLBACK.
+    const tokens = client.calls;
+    const beginIdx = tokens.indexOf('BEGIN');
+    const commitIdx = tokens.indexOf('COMMIT');
+    expect(beginIdx).toBeGreaterThanOrEqual(0);
+    expect(commitIdx).toBeGreaterThan(beginIdx);
+    expect(tokens.includes('ROLLBACK')).toBe(false);
   });
 
   test('unwalled burg with zero gates still clears prior rows', async () => {
