@@ -1,4 +1,4 @@
-import { generateFromBurg, SETTLEMAKER_VERSION, computeSettlementScale, computeTileInfo } from 'settlemaker';
+import { generateFromBurg, SETTLEMAKER_VERSION, computeTileInfo } from 'settlemaker';
 import { classifyRouteKind } from './route-classifier.js';
 import {
   computeLocalToWorldScale,

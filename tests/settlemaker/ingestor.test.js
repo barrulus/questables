@@ -3,10 +3,6 @@ import { jest } from '@jest/globals';
 jest.unstable_mockModule('settlemaker', () => ({
   generateFromBurg: jest.fn(),
   SETTLEMAKER_VERSION: '0.3.0-rc.1',
-  computeSettlementScale: jest.fn((pop) => ({
-    diameterMeters: 200 * Math.pow(pop / 100, 0.4),
-    maxZoom: 3,
-  })),
   computeTileInfo: jest.fn(() => ({ maxZoom: 3, tileExtentPx: 2048 })),
 }));
 jest.unstable_mockModule('../../server/services/maps/burg-entrances-service.js', () => ({
