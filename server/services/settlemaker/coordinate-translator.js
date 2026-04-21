@@ -66,3 +66,37 @@ export function translateLocalToWorldPx({ localPoint, burgCentroidPx, scale }) {
     y: burgCentroidPx.y + localPoint.y * scale,
   };
 }
+
+/**
+ * Reverse of translateLocalToWorldPx: convert a world-pixel point to
+ * settlement-local coordinates. Both spaces are Y-down so no flip.
+ *
+ * The caller supplies `worldMetersPerPixel` (= 1609.344 / pixels_per_mile)
+ * from the `maps_world` row, `burgWorldCenterPx` from `maps_burgs`, and the
+ * sidecar row (for `metersPerUnit` and `localBounds`).
+ *
+ * If the translated point falls outside `localBounds`, a warning is logged
+ * once via console.warn. The coordinates are returned unconditionally —
+ * out-of-bounds is a data-drift signal, not an error this function should
+ * paper over.
+ */
+export function translateWorldPixelToSettlementLocal({
+  playerWorldPx,
+  burgWorldCenterPx,
+  worldMetersPerPixel,
+  sidecar,
+  burgId,
+}) {
+  const pixelsPerSettlementUnit = sidecar.metersPerUnit / worldMetersPerPixel;
+  const x = (playerWorldPx.x - burgWorldCenterPx.x) / pixelsPerSettlementUnit;
+  const y = (playerWorldPx.y - burgWorldCenterPx.y) / pixelsPerSettlementUnit;
+
+  const b = sidecar.localBounds;
+  if (x < b.min_x || x > b.max_x || y < b.min_y || y > b.max_y) {
+    // eslint-disable-next-line no-console
+    console.warn(
+      `out-of-bounds settlement-local translation for burg ${burgId ?? '(unknown)'}: (${x.toFixed(2)}, ${y.toFixed(2)}) outside bounds`,
+    );
+  }
+  return { x, y };
+}
