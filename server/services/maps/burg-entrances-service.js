@@ -4,6 +4,7 @@ const SELECT_COLUMNS = [
   'id', 'burg_id', 'gate_id', 'route_id', 'x_px', 'y_px', 'bearing_deg',
   'bearing_match_delta_deg', 'kind', 'sub_kind', 'wall_vertex_index',
   'prev_gate_id', 'next_gate_id', 'name',
+  'arrival_local',
   'settlement_generation_version', 'settlemaker_version',
 ];
 
@@ -55,13 +56,14 @@ export async function insertMany(client, rows) {
       `INSERT INTO public.maps_burg_entrances
          (burg_id, gate_id, route_id, x_px, y_px, bearing_deg,
           bearing_match_delta_deg, kind, sub_kind, wall_vertex_index,
-          prev_gate_id, next_gate_id, name,
+          prev_gate_id, next_gate_id, name, arrival_local,
           settlement_generation_version, settlemaker_version)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15)`,
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16)`,
       [
         r.burg_id, r.gate_id, r.route_id, r.x_px, r.y_px, r.bearing_deg,
         r.bearing_match_delta_deg, r.kind, r.sub_kind, r.wall_vertex_index,
         r.prev_gate_id, r.next_gate_id, r.name,
+        r.arrival_local != null ? JSON.stringify(r.arrival_local) : null,
         r.settlement_generation_version, r.settlemaker_version,
       ],
     );
