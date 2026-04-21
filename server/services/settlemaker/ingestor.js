@@ -135,7 +135,15 @@ function extractSidecarPayload(fc, input) {
   const hasHarbour = fc.features.some(
     (f) => f?.properties?.layer === 'entrance' && f.properties.sub_kind === 'harbour',
   );
-  const tileInfo = computeTileInfo(input.population);
+  const viewBox = {
+    x: m.local_bounds.min_x,
+    y: m.local_bounds.min_y,
+    width: m.local_bounds.max_x - m.local_bounds.min_x,
+    height: m.local_bounds.max_y - m.local_bounds.min_y,
+  };
+  const tileInfo = computeTileInfo(viewBox, input.population);
+  const TILE_SIZE = 256;
+  const tileExtentPx = TILE_SIZE * Math.pow(2, tileInfo.maxZoom);
   return {
     meters_per_unit: m.scale.meters_per_unit,
     diameter_meters: m.scale.diameter_meters,
@@ -143,13 +151,8 @@ function extractSidecarPayload(fc, input) {
     scale_source: m.scale.source,
     local_bounds: m.local_bounds,
     max_zoom: tileInfo.maxZoom,
-    tile_extent_px: tileInfo.tileExtentPx ?? (256 * Math.pow(2, tileInfo.maxZoom)),
-    svg_viewbox: {
-      x: m.local_bounds.min_x,
-      y: m.local_bounds.min_y,
-      width: m.local_bounds.max_x - m.local_bounds.min_x,
-      height: m.local_bounds.max_y - m.local_bounds.min_y,
-    },
+    tile_extent_px: tileExtentPx,
+    svg_viewbox: viewBox,
     has_harbour: hasHarbour,
     ocean_bearing_deg: input.oceanBearing != null ? Math.round(input.oceanBearing) : null,
     settlement_generation_version: m.settlement_generation_version,

@@ -3,7 +3,13 @@ import { jest } from '@jest/globals';
 jest.unstable_mockModule('settlemaker', () => ({
   generateFromBurg: jest.fn(),
   SETTLEMAKER_VERSION: '0.3.0-rc.1',
-  computeTileInfo: jest.fn(() => ({ maxZoom: 3, tileExtentPx: 2048 })),
+  computeTileInfo: jest.fn((viewBox, population) => ({
+    maxZoom: 3,
+    squareExtent: Math.max(viewBox.width, viewBox.height),
+    metersPerUnit: 8,
+    squareViewBox: viewBox,
+    originalViewBox: viewBox,
+  })),
 }));
 jest.unstable_mockModule('../../server/services/maps/burg-entrances-service.js', () => ({
   distinctVersionForBurg: jest.fn(),
@@ -193,6 +199,16 @@ describe('ingestBurg', () => {
     expect(Number(payload.meters_per_unit)).toBe(8);
     expect(payload.local_bounds).toEqual({ min_x: -220, min_y: -220, max_x: 220, max_y: 220 });
     expect(payload.settlement_generation_version).toBe('v2hash');
+
+    // Regression guard: computeTileInfo must be called with (viewBox, population)
+    expect(settlemaker.computeTileInfo).toHaveBeenCalledWith(
+      expect.objectContaining({
+        x: -220, y: -220, width: 440, height: 440,
+      }),
+      10000,
+    );
+    expect(payload.max_zoom).toBe(3);
+    expect(payload.tile_extent_px).toBe(256 * Math.pow(2, 3)); // 2048
   });
 
   test('force: true bypasses the triplet check', async () => {
