@@ -3,7 +3,7 @@ import { jest } from '@jest/globals';
 jest.unstable_mockModule('settlemaker', () => ({
   generateFromBurg: jest.fn(),
   SETTLEMAKER_VERSION: '0.3.0-rc.1',
-  computeTileInfo: jest.fn((viewBox, population) => ({
+  computeTileInfo: jest.fn((viewBox, _population) => ({
     maxZoom: 3,
     squareExtent: Math.max(viewBox.width, viewBox.height),
     metersPerUnit: 8,
