@@ -142,6 +142,7 @@ router.get('/:worldId/burg-entrances', async (req, res) => {
         id: r.id, burgId: r.burg_id, gateId: r.gate_id, routeId: r.route_id,
         bearingDeg: Number(r.bearing_deg), kind: r.kind, subKind: r.sub_kind,
         name: r.name, prevGateId: r.prev_gate_id, nextGateId: r.next_gate_id,
+        arrival_local: r.arrival_local ?? null,
       },
     }));
     return res.json({ type: 'FeatureCollection', features });
