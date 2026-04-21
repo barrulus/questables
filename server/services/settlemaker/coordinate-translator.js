@@ -1,3 +1,5 @@
+import { logWarn } from '../../utils/logger.js';
+
 const METERS_PER_MILE = 1609.344;
 
 /**
@@ -93,10 +95,12 @@ export function translateWorldPixelToSettlementLocal({
 
   const b = sidecar.localBounds;
   if (x < b.min_x || x > b.max_x || y < b.min_y || y > b.max_y) {
-    // eslint-disable-next-line no-console
-    console.warn(
-      `out-of-bounds settlement-local translation for burg ${burgId ?? '(unknown)'}: (${x.toFixed(2)}, ${y.toFixed(2)}) outside bounds`,
-    );
+    logWarn('out-of-bounds settlement-local translation', {
+      burgId: burgId ?? null,
+      x,
+      y,
+      bounds: b,
+    });
   }
   return { x, y };
 }

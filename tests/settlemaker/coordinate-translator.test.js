@@ -70,7 +70,7 @@ describe('translateWorldPixelToSettlementLocal', () => {
     worldMetersPerPixel: 1609.344 / 50, // pixels_per_mile = 50
     sidecar: {
       metersPerUnit: 8,
-      localBounds: { min_x: -200, min_y: -200, max_x: 200, max_y: 200 },
+      localBounds: { min_x: -250, min_y: -250, max_x: 250, max_y: 250 },
     },
   };
 
@@ -95,6 +95,8 @@ describe('translateWorldPixelToSettlementLocal', () => {
   });
 
   test('out-of-bounds logs a warn but still returns coords', () => {
+    // logWarn (house-style logger) delegates to console.warn; spy at that layer
+    // since native ESM live bindings prevent jest.spyOn on the named export directly.
     const warn = jest.spyOn(console, 'warn').mockImplementation(() => {});
     const local = translateWorldPixelToSettlementLocal({
       ...BASE,
