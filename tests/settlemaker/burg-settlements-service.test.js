@@ -50,6 +50,8 @@ describe('burg-settlements-service', () => {
     expect(sql).toMatch(/ON CONFLICT \(burg_id\) DO UPDATE/);
     expect(params[0]).toBe('b-1');
     expect(params).toHaveLength(13); // burg_id + 12 payload columns
+    expect(params[5]).toBe(JSON.stringify({ min_x: 0, min_y: 0, max_x: 1, max_y: 1 }));
+    expect(params[8]).toBe(JSON.stringify({ x: 0, y: 0, width: 1, height: 1 }));
   });
 
   test('deleteForBurg issues DELETE', async () => {
