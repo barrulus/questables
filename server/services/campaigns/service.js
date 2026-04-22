@@ -226,17 +226,31 @@ export const performPlayerMovement = async ({
     ? new Date(existing.last_located_at).getTime() / 1000
     : Date.now() / 1000;
 
-  // Detect if the player is now inside a burg (within 5px = very close)
-  const BURG_ENTRY_RADIUS = 5;
+  // Detect if the player is now inside a burg. `maps_burgs.geom` is stored in
+  // the same meter-scaled coord space as `loc_current`. We use each burg's own
+  // radius rather than a fixed constant: prefer the settlemaker sidecar's
+  // `diameter_meters / 2`, fall back to ~50 world-pixels of slop
+  // (`meters_per_pixel * 50`) for worlds with no sidecar yet. Final fallback
+  // of 50 keeps the query from ever passing zero.
   const { rows: burgProximity } = await client.query(
     `SELECT b.id AS burg_id
        FROM public.maps_burgs b
        JOIN public.campaigns c ON c.world_map_id = b.world_id
+       JOIN public.maps_world w ON w.id = b.world_id
+       LEFT JOIN public.maps_burg_settlements mbs ON mbs.burg_id = b.id
       WHERE c.id = $1
-        AND ST_DWithin(b.geom, ST_SetSRID(ST_MakePoint($2, $3), 0), $4)
+        AND ST_DWithin(
+              b.geom,
+              ST_SetSRID(ST_MakePoint($2, $3), 0),
+              COALESCE(
+                mbs.diameter_meters / 2.0,
+                w.meters_per_pixel * 50,
+                50
+              )
+            )
       ORDER BY ST_Distance(b.geom, ST_SetSRID(ST_MakePoint($2, $3), 0))
       LIMIT 1`,
-    [campaignId, snappedTarget.x, snappedTarget.y, BURG_ENTRY_RADIUS],
+    [campaignId, snappedTarget.x, snappedTarget.y],
   );
 
   const newBurgId = burgProximity[0]?.burg_id ?? null;

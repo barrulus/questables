@@ -60,9 +60,20 @@ export const logSecurityEvent = (event, severity = "low", details) => {
 };
 
 const SILENT_PATHS = new Set(['/api/health', '/api/websocket/status']);
+const SILENT_PATH_PATTERNS = [
+  /\/tiles\/\d+\/\d+\/\d+\.png(\?|$)/,
+];
+
+const isSilentPath = (url) => {
+  if (SILENT_PATHS.has(url)) return true;
+  for (const pattern of SILENT_PATH_PATTERNS) {
+    if (pattern.test(url)) return true;
+  }
+  return false;
+};
 
 export const createRequestLogger = () => (req, res, next) => {
-  if (SILENT_PATHS.has(req.originalUrl)) return next();
+  if (isSilentPath(req.originalUrl)) return next();
   const start = Date.now();
   logHttp(`${req.method} ${req.originalUrl}`, {
     method: req.method,
