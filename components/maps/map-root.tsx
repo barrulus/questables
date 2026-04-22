@@ -2,14 +2,14 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { SettlementMap, type SettlementSidecar } from './settlement-map';
 import { OpenLayersMap } from '../openlayers-map';
 import { useVisiblePlayers } from '../../hooks/useVisiblePlayers';
+import { useGameSession } from '../../contexts/GameSessionContext';
+import { useMyCharacter } from '../../hooks/useMyCharacter';
 import { getApiBaseUrl } from '../../utils/api-client';
 
-interface Props {
-  activeCampaignId: string | null;
-  activeCharacterId: string | null;
-}
-
-export function MapRoot({ activeCampaignId, activeCharacterId }: Props) {
+export function MapRoot() {
+  const { activeCampaignId } = useGameSession();
+  const myCharacter = useMyCharacter();
+  const activeCharacterId = myCharacter?.id ?? null;
   const { players } = useVisiblePlayers(activeCampaignId);
   const [manualWorldOverride, setManualWorldOverride] = useState(false);
   const [sidecar, setSidecar] = useState<SettlementSidecar | null>(null);

@@ -5,7 +5,7 @@ import { DMDashboard } from "./components/dm-dashboard";
 import { AdminDashboard } from "./components/admin-dashboard";
 import { IconSidebar } from "./components/icon-sidebar";
 import { ExpandablePanel } from "./components/expandable-panel";
-import { OpenLayersMap } from "./components/openlayers-map";
+import { MapRoot } from "./components/maps/map-root";
 import { ChatPanel } from "./components/chat-panel";
 import { ResizableHandle, ResizablePanel, ResizablePanelGroup } from "./components/ui/resizable";
 import { Badge } from "./components/ui/badge";
@@ -396,7 +396,7 @@ function AppContent() {
                   {/* Map */}
                   <div className="flex-1 flex flex-col">
                     <div className="flex-1">
-                      <OpenLayersMap />
+                      <MapRoot />
                     </div>
                     {/* Action Panel */}
                     <ActionPanel />
