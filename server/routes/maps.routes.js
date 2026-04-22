@@ -156,6 +156,48 @@ router.get('/:worldId/burg-entrances', async (req, res) => {
   }
 });
 
+router.get('/burgs/:burgId/settlement', async (req, res) => {
+  const { burgId } = req.params;
+  const client = await getClient();
+  try {
+    const { rows } = await client.query(
+      `SELECT b.world_id,
+              mbs.meters_per_unit, mbs.diameter_meters, mbs.diameter_local,
+              mbs.scale_source, mbs.local_bounds, mbs.max_zoom, mbs.tile_extent_px,
+              mbs.svg_viewbox, mbs.has_harbour, mbs.ocean_bearing_deg,
+              mbs.settlement_generation_version, mbs.settlemaker_version
+         FROM public.maps_burg_settlements mbs
+         JOIN public.maps_burgs b ON b.id = mbs.burg_id
+        WHERE mbs.burg_id = $1`,
+      [burgId],
+    );
+    if (rows.length === 0) {
+      return res.status(404).json({ error: 'maps_burg_settlement_not_found' });
+    }
+    const r = rows[0];
+    return res.json({
+      world_id: r.world_id,
+      meters_per_unit: Number(r.meters_per_unit),
+      diameter_meters: Number(r.diameter_meters),
+      diameter_local: Number(r.diameter_local),
+      scale_source: r.scale_source,
+      local_bounds: r.local_bounds,
+      max_zoom: Number(r.max_zoom),
+      tile_extent_px: Number(r.tile_extent_px),
+      svg_viewbox: r.svg_viewbox,
+      has_harbour: r.has_harbour,
+      ocean_bearing_deg: r.ocean_bearing_deg != null ? Number(r.ocean_bearing_deg) : null,
+      settlement_generation_version: r.settlement_generation_version,
+      settlemaker_version: r.settlemaker_version,
+    });
+  } catch (error) {
+    logError('Burg settlement sidecar fetch failed', error, { burgId });
+    return res.status(500).json({ error: 'maps_burg_settlement_failed', message: error.message });
+  } finally {
+    client.release();
+  }
+});
+
 router.get('/:worldId/markers', async (req, res) => {
   const { worldId } = req.params;
   const { bounds } = req.query;

@@ -13,6 +13,7 @@ import { getApiBaseUrl } from '../../utils/api-client';
 import type { VisiblePlayer } from '../../hooks/useVisiblePlayers';
 
 export interface SettlementSidecar {
+  world_id: string;
   meters_per_unit: number;
   max_zoom: number;
   local_bounds: { min_x: number; min_y: number; max_x: number; max_y: number };
