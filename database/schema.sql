@@ -88,9 +88,6 @@ CREATE TABLE IF NOT EXISTS public.maps_world (
     -- Status
     is_active BOOLEAN DEFAULT true,
 
-    -- Travel parameters
-    pixels_per_mile DOUBLE PRECISION,
-
     created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW() NOT NULL,
     updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW() NOT NULL
 );

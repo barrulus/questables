@@ -1,13 +1,10 @@
 import { logWarn } from '../../utils/logger.js';
 
-const METERS_PER_MILE = 1609.344;
-
 /**
  * Fallback scale factor (world-pixels per settlement-unit) for worlds that
- * lack a pixels_per_mile calibration. Chosen so a ~300-unit wall radius for a
- * pop-5000 town maps to ~30 pixels — roughly the size of a burg icon on the
- * world map at default zoom. Tuned by inspection; adjust in the constant, not
- * per-call.
+ * have no `meters_per_pixel` calibration. Chosen so a ~300-unit wall radius
+ * for a pop-5000 town maps to ~30 pixels — roughly the size of a burg icon
+ * on the world map at default zoom. Tuned by inspection.
  */
 const FALLBACK_PIXELS_PER_SETTLEMENT_UNIT = 0.1;
 
@@ -41,21 +38,21 @@ export function maxRadiusFromOrigin(polygon) {
 /**
  * Pixels-per-settlement-unit scale factor.
  *
- * Derivation: diameterMeters from population → radius in miles via
- * METERS_PER_MILE → radius in world pixels via pixels_per_mile. Divide by
- * the wall polygon's local-coord radius to get pixels-per-unit.
+ * Derivation: diameterMeters from population → radius in world pixels via
+ * metersPerPixel. Divide by the wall polygon's local-coord radius to get
+ * pixels-per-unit.
  *
- * When pixelsPerMile is null, falls back to a deterministic constant so
- * uncalibrated worlds still produce plausible gate placements.
+ * When metersPerPixel is null/zero, falls back to a deterministic constant
+ * so uncalibrated worlds still produce plausible gate placements.
  */
-export function computeLocalToWorldScale({ population, wallRadiusLocal, pixelsPerMile }) {
+export function computeLocalToWorldScale({ population, wallRadiusLocal, metersPerPixel }) {
   if (!(wallRadiusLocal > 0)) return 0;
-  if (pixelsPerMile == null || !(pixelsPerMile > 0)) {
+  if (metersPerPixel == null || !(metersPerPixel > 0)) {
     return FALLBACK_PIXELS_PER_SETTLEMENT_UNIT;
   }
   const diameterMeters = diameterMetersForPopulation(population);
-  const radiusMiles = (diameterMeters / 2) / METERS_PER_MILE;
-  return (radiusMiles * pixelsPerMile) / wallRadiusLocal;
+  const radiusPixels = (diameterMeters / 2) / metersPerPixel;
+  return radiusPixels / wallRadiusLocal;
 }
 
 /**
@@ -73,12 +70,12 @@ export function translateLocalToWorldPx({ localPoint, burgCentroidPx, scale }) {
  * Reverse of translateLocalToWorldPx: convert a world-pixel point to
  * settlement-local coordinates. Both spaces are Y-down so no flip.
  *
- * The caller supplies `worldMetersPerPixel` (= 1609.344 / pixels_per_mile)
- * from the `maps_world` row, `burgWorldCenterPx` from `maps_burgs`, and the
- * sidecar row (for `metersPerUnit` and `localBounds`).
+ * `worldMetersPerPixel` comes straight from `maps_world.meters_per_pixel`.
+ * `burgWorldCenterPx` comes from `maps_burgs`, and the sidecar row supplies
+ * `metersPerUnit` and `localBounds`.
  *
  * If the translated point falls outside `localBounds`, a warning is logged
- * once via console.warn. The coordinates are returned unconditionally —
+ * once via logWarn. The coordinates are returned unconditionally —
  * out-of-bounds is a data-drift signal, not an error this function should
  * paper over.
  */

@@ -3,6 +3,8 @@ import { query, withTransaction } from '../../db/pool.js';
 import { logInfo, logWarn } from '../../utils/logger.js';
 import { ingestBurg } from '../settlemaker/ingestor.js';
 
+export { extractMetersPerPixel } from './fmg-scale.js';
+
 // --- Helpers (ported from afmg_geojson_importer.mjs) ---
 
 const parseNumeric = (value) => {
@@ -82,18 +84,9 @@ export const parseSvgDimensions = (svgString) => {
 };
 
 // --- Metadata Extraction ---
-
-export const extractMetersPerPixel = (geojsonObj) => {
-  const metadata = geojsonObj?.metadata;
-  const scale = metadata && typeof metadata === 'object' ? metadata.scale : null;
-  const mpp = scale && typeof scale === 'object'
-    ? scale.meters_per_pixel ?? scale.metersPerPixel
-    : null;
-
-  if (mpp === undefined || mpp === null) return null;
-  const numeric = Number.parseFloat(mpp);
-  return Number.isNaN(numeric) ? null : numeric;
-};
+// `extractMetersPerPixel` lives in ./fmg-scale.js so it can be unit-tested
+// without pulling in the settlemaker import chain. This module re-exports it
+// for callers that already import from ingestion-service.
 
 // --- World Creation/Update ---
 

@@ -2,9 +2,10 @@
  * Travel configuration constants and env-var overrides.
  *
  * DAILY_MILES_PER_MODE — D&D-realistic miles per day per mode. Used when the
- * world has a pixels_per_mile calibration. `teleport` is Infinity (never a limit).
+ * world has `meters_per_pixel` set (derived from FMG's distanceScale +
+ * distanceUnit at ingest time). `teleport` is Infinity (never a limit).
  *
- * FALLBACK_PIXELS_PER_DAY — used when the world has no pixels_per_mile set.
+ * FALLBACK_PIXELS_PER_DAY — used when the world has no meters_per_pixel set.
  * Pick values that make a typical cross-map journey feel about right for the
  * pixel-native map scale.
  */

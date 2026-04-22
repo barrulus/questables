@@ -7,7 +7,7 @@ function makeClient(rows = []) {
 
 describe('planTravel — direct, teleport, fly', () => {
   test('direct via returns 2-point polyline and computes days', async () => {
-    const client = makeClient([{ pixels_per_mile: null }]);
+    const client = makeClient([{ meters_per_pixel: null }]);
     const plan = await planTravel(client, {
       worldId: 'w1',
       start:   { x: 0, y: 0 },
@@ -24,7 +24,7 @@ describe('planTravel — direct, teleport, fly', () => {
   });
 
   test('teleport returns single-point polyline with 0 days', async () => {
-    const client = makeClient([{ pixels_per_mile: null }]);
+    const client = makeClient([{ meters_per_pixel: null }]);
     const plan = await planTravel(client, {
       worldId: 'w1',
       start:   { x: 10, y: 10 },
@@ -38,7 +38,7 @@ describe('planTravel — direct, teleport, fly', () => {
   });
 
   test('fly always uses direct line regardless of via', async () => {
-    const client = makeClient([{ pixels_per_mile: null }]);
+    const client = makeClient([{ meters_per_pixel: null }]);
     const plan = await planTravel(client, {
       worldId: 'w1',
       start:   { x: 0, y: 0 },
@@ -51,8 +51,9 @@ describe('planTravel — direct, teleport, fly', () => {
     expect(plan.effectiveVia).toBe('direct');
   });
 
-  test('uses miles/day × pixels_per_mile when world has calibration', async () => {
-    const client = makeClient([{ pixels_per_mile: 10 }]);
+  test('uses miles/day × calibration when world has meters_per_pixel set', async () => {
+    // metersPerPixel = 160.9344 ⇒ 1 mile = 10 px ⇒ walk (24 mi/day) = 240 px/day.
+    const client = makeClient([{ meters_per_pixel: 160.9344 }]);
     const plan = await planTravel(client, {
       worldId: 'w1',
       start:   { x: 0, y: 0 },
@@ -60,12 +61,12 @@ describe('planTravel — direct, teleport, fly', () => {
       mode:    'walk',
       via:     'direct',
     });
-    expect(plan.distanceMiles).toBe(24);
+    expect(plan.distanceMiles).toBeCloseTo(24, 6);
     expect(plan.totalDays).toBe(1);
   });
 
   test('zero-distance returns 0 days, single-point polyline', async () => {
-    const client = makeClient([{ pixels_per_mile: null }]);
+    const client = makeClient([{ meters_per_pixel: null }]);
     const plan = await planTravel(client, {
       worldId: 'w1',
       start:   { x: 100, y: 100 },
@@ -79,7 +80,7 @@ describe('planTravel — direct, teleport, fly', () => {
   });
 
   test('unsupported mode throws invalid_mode', async () => {
-    const client = makeClient([{ pixels_per_mile: null }]);
+    const client = makeClient([{ meters_per_pixel: null }]);
     await expect(planTravel(client, {
       worldId: 'w1', start: { x: 0, y: 0 }, end: { x: 1, y: 0 },
       mode: 'swim', via: 'direct',
@@ -87,7 +88,7 @@ describe('planTravel — direct, teleport, fly', () => {
   });
 
   test('unsupported via throws invalid_via', async () => {
-    const client = makeClient([{ pixels_per_mile: null }]);
+    const client = makeClient([{ meters_per_pixel: null }]);
     await expect(planTravel(client, {
       worldId: 'w1', start: { x: 0, y: 0 }, end: { x: 1, y: 0 },
       mode: 'walk', via: 'skyway',
@@ -99,7 +100,7 @@ describe('planTravel — road snap (same route)', () => {
   test('both endpoints snap to same route, uses ST_LineSubstring path', async () => {
     const client = {
       query: jest.fn()
-        .mockResolvedValueOnce({ rows: [{ pixels_per_mile: 10 }] })
+        .mockResolvedValueOnce({ rows: [{ meters_per_pixel: 160.9344 }] })
         .mockResolvedValueOnce({ rows: [{
           route_id:     'route-1',
           snap_x:       5, snap_y: 0,
@@ -137,7 +138,7 @@ describe('planTravel — road snap (same route)', () => {
   test('swaps start/end fractions when start-frac > end-frac on the route', async () => {
     const client = {
       query: jest.fn()
-        .mockResolvedValueOnce({ rows: [{ pixels_per_mile: null }] })
+        .mockResolvedValueOnce({ rows: [{ meters_per_pixel: null }] })
         .mockResolvedValueOnce({ rows: [{
           route_id: 'r1', snap_x: 195, snap_y: 0, loc_fraction: 0.9, distance: 5,
         }]})
@@ -166,7 +167,7 @@ describe('planTravel — fallback and forced-route', () => {
   test('different routes → falls back to direct line with effectiveVia=direct', async () => {
     const client = {
       query: jest.fn()
-        .mockResolvedValueOnce({ rows: [{ pixels_per_mile: null }] })
+        .mockResolvedValueOnce({ rows: [{ meters_per_pixel: null }] })
         .mockResolvedValueOnce({ rows: [{
           route_id: 'r1', snap_x: 5, snap_y: 0, loc_fraction: 0.5, distance: 5,
         }]})
@@ -188,7 +189,7 @@ describe('planTravel — fallback and forced-route', () => {
   test('neither endpoint snaps → falls back to direct line', async () => {
     const client = {
       query: jest.fn()
-        .mockResolvedValueOnce({ rows: [{ pixels_per_mile: null }] })
+        .mockResolvedValueOnce({ rows: [{ meters_per_pixel: null }] })
         .mockResolvedValueOnce({ rows: [] })
         .mockResolvedValueOnce({ rows: [] }),
     };
@@ -205,7 +206,7 @@ describe('planTravel — fallback and forced-route', () => {
   test('forced route uuid: uses that route even if threshold would fail', async () => {
     const client = {
       query: jest.fn()
-        .mockResolvedValueOnce({ rows: [{ pixels_per_mile: 10 }] })
+        .mockResolvedValueOnce({ rows: [{ meters_per_pixel: 160.9344 }] })
         .mockResolvedValueOnce({ rows: [{
           route_id: 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa',
           snap_x: 10, snap_y: 10, loc_fraction: 0.0, distance: 9999,
@@ -234,7 +235,7 @@ describe('planTravel — camp points', () => {
   test('3-day journey returns 2 camp points at correct fractions', async () => {
     const client = {
       query: jest.fn()
-        .mockResolvedValueOnce({ rows: [{ pixels_per_mile: null }] }),
+        .mockResolvedValueOnce({ rows: [{ meters_per_pixel: null }] }),
     };
     const plan = await planTravel(client, {
       worldId: 'w1',
@@ -254,7 +255,7 @@ describe('planTravel — camp points', () => {
   test('1-day journey has no camp points', async () => {
     const client = {
       query: jest.fn()
-        .mockResolvedValueOnce({ rows: [{ pixels_per_mile: null }] }),
+        .mockResolvedValueOnce({ rows: [{ meters_per_pixel: null }] }),
     };
     const plan = await planTravel(client, {
       worldId: 'w1',

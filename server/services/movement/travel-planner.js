@@ -5,6 +5,7 @@ import {
   SUPPORTED_VIA,
 } from './travel-config.js';
 import { logWarn } from '../../utils/logger.js';
+import { METERS_PER_MILE } from '../maps/fmg-scale.js';
 
 function invalid(code, message) {
   const err = new Error(message);
@@ -44,13 +45,24 @@ function pointAtDistanceAlong(points, distance) {
   return { ...points[points.length - 1] };
 }
 
-function resolveDailyPixels(mode, pixelsPerMile) {
+/**
+ * `metersPerPixel` is the canonical world-scale from `maps_world`. When
+ * present, daily-pixels = miles/day × METERS_PER_MILE / metersPerPixel.
+ * When null, we fall back to per-mode pixel constants so uncalibrated
+ * worlds still produce plausible travel.
+ */
+function resolveDailyPixels(mode, metersPerPixel) {
   if (mode === 'teleport') return Number.POSITIVE_INFINITY;
   if (mode === 'fly')      return FALLBACK_PIXELS_PER_DAY.fly;
-  if (pixelsPerMile != null && pixelsPerMile > 0) {
-    return DAILY_MILES_PER_MODE[mode] * pixelsPerMile;
+  if (metersPerPixel != null && metersPerPixel > 0) {
+    return (DAILY_MILES_PER_MODE[mode] * METERS_PER_MILE) / metersPerPixel;
   }
   return FALLBACK_PIXELS_PER_DAY[mode];
+}
+
+function pixelsToMiles(distancePixels, metersPerPixel) {
+  if (metersPerPixel == null || !(metersPerPixel > 0)) return null;
+  return (distancePixels * metersPerPixel) / METERS_PER_MILE;
 }
 
 function computeCampPoints(waypoints, dailyPixels, totalDays, distancePixels) {
@@ -67,11 +79,11 @@ function computeCampPoints(waypoints, dailyPixels, totalDays, distancePixels) {
 
 async function loadWorldCalibration(client, worldId) {
   const { rows } = await client.query(
-    `SELECT pixels_per_mile FROM public.maps_world WHERE id = $1 LIMIT 1`,
+    `SELECT meters_per_pixel FROM public.maps_world WHERE id = $1 LIMIT 1`,
     [worldId],
   );
   if (rows.length === 0) throw invalid('invalid_world', `World ${worldId} not found`);
-  return rows[0].pixels_per_mile;
+  return rows[0].meters_per_pixel;
 }
 
 async function snapPointToNearestRoute(client, worldId, point, via) {
@@ -135,8 +147,8 @@ export async function planTravel(client, { worldId, start, end, mode, via }) {
     throw invalid('invalid_via', `Unsupported via: ${via}`);
   }
 
-  const pixelsPerMile = await loadWorldCalibration(client, worldId);
-  const dailyPixels = resolveDailyPixels(mode, pixelsPerMile);
+  const metersPerPixel = await loadWorldCalibration(client, worldId);
+  const dailyPixels = resolveDailyPixels(mode, metersPerPixel);
 
   if (mode === 'teleport' || mode === 'fly' || via === 'direct') {
     const distancePixels = segmentLength(start, end);
@@ -147,9 +159,7 @@ export async function planTravel(client, { worldId, start, end, mode, via }) {
     return {
       waypoints,
       distancePixels,
-      distanceMiles: pixelsPerMile != null && pixelsPerMile > 0
-        ? distancePixels / pixelsPerMile
-        : null,
+      distanceMiles: pixelsToMiles(distancePixels, metersPerPixel),
       totalDays,
       campPoints: computeCampPoints(waypoints, dailyPixels, totalDays, distancePixels),
       effectiveVia: 'direct',
@@ -196,9 +206,7 @@ export async function planTravel(client, { worldId, start, end, mode, via }) {
   return {
     waypoints,
     distancePixels,
-    distanceMiles: pixelsPerMile != null && pixelsPerMile > 0
-      ? distancePixels / pixelsPerMile
-      : null,
+    distanceMiles: pixelsToMiles(distancePixels, metersPerPixel),
     totalDays,
     campPoints: computeCampPoints(waypoints, dailyPixels, totalDays, distancePixels),
     effectiveVia,

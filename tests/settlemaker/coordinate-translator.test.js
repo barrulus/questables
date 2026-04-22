@@ -21,23 +21,23 @@ describe('maxRadiusFromOrigin', () => {
 });
 
 describe('computeLocalToWorldScale', () => {
-  const METERS_PER_MILE = 1609.344;
-
-  test('uses pixels_per_mile when world is calibrated', () => {
+  test('uses meters_per_pixel when world is calibrated', () => {
+    // metersPerPixel = 32.18688 corresponds to pixels_per_mile = 50
     const scale = computeLocalToWorldScale({
       population: 10000,
       wallRadiusLocal: 200,
-      pixelsPerMile: 50,
+      metersPerPixel: 1609.344 / 50,
     });
-    const expected = (200 * Math.pow(10000 / 100, 0.4) / 2 / METERS_PER_MILE) * 50 / 200;
+    const diameterMeters = 200 * Math.pow(10000 / 100, 0.4);
+    const expected = (diameterMeters / 2 / (1609.344 / 50)) / 200;
     expect(scale).toBeCloseTo(expected, 6);
   });
 
-  test('falls back to FALLBACK when pixels_per_mile is null', () => {
+  test('falls back to FALLBACK when meters_per_pixel is null', () => {
     const scale = computeLocalToWorldScale({
       population: 10000,
       wallRadiusLocal: 200,
-      pixelsPerMile: null,
+      metersPerPixel: null,
     });
     expect(scale).toBeGreaterThan(0);
     expect(Number.isFinite(scale)).toBe(true);
@@ -47,7 +47,7 @@ describe('computeLocalToWorldScale', () => {
     expect(computeLocalToWorldScale({
       population: 10000,
       wallRadiusLocal: 0,
-      pixelsPerMile: 50,
+      metersPerPixel: 1609.344 / 50,
     })).toBe(0);
   });
 });

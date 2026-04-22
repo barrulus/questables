@@ -43,7 +43,8 @@ function makeClient(burgRow, routeRows) {
       return { rows: [] };
     }
     if (/FROM public\.maps_world/.test(sql)) {
-      return { rows: [{ pixels_per_mile: 50 }] };
+      // metersPerPixel equivalent of pixels_per_mile = 50
+      return { rows: [{ meters_per_pixel: 1609.344 / 50 }] };
     }
     return { rows: [] };
   });

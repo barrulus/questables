@@ -32,12 +32,12 @@ async function loadBurgRow(client, burgId) {
   return rows[0] ?? null;
 }
 
-async function loadPixelsPerMile(client, worldId) {
+async function loadMetersPerPixel(client, worldId) {
   const { rows } = await client.query(
-    `SELECT pixels_per_mile FROM public.maps_world WHERE id = $1 LIMIT 1`,
+    `SELECT meters_per_pixel FROM public.maps_world WHERE id = $1 LIMIT 1`,
     [worldId],
   );
-  return rows[0]?.pixels_per_mile ?? null;
+  return rows[0]?.meters_per_pixel ?? null;
 }
 
 async function loadApproachingRoutes(client, burg, thresholdPx = 50) {
@@ -196,12 +196,12 @@ export async function ingestBurg(client, { burgId, force = false }) {
     }
   }
 
-  const pixelsPerMile = await loadPixelsPerMile(client, burg.world_id);
+  const metersPerPixel = await loadMetersPerPixel(client, burg.world_id);
   const wallRadiusLocal = wallRadiusFromFc(geojson);
   const scale = computeLocalToWorldScale({
     population: Number(burg.population) || 100,
     wallRadiusLocal,
-    pixelsPerMile,
+    metersPerPixel,
   });
 
   const centroidPx = { x: Number(burg.x_px), y: Number(burg.y_px) };

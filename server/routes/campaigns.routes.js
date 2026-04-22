@@ -2197,7 +2197,7 @@ router.get(
                 CASE WHEN cp.inside_burg_id IS NULL THEN 'world' ELSE 'settlement' END AS map_level_raw,
                 b.xpixel AS burg_x_px, b.ypixel AS burg_y_px,
                 mbs.meters_per_unit, mbs.local_bounds,
-                w.pixels_per_mile,
+                w.meters_per_pixel,
                 (SELECT mbe.arrival_local
                    FROM public.player_movement_audit pma
                    JOIN public.maps_burg_entrances mbe ON mbe.id = pma.arrival_gate_entrance_id
@@ -2214,8 +2214,6 @@ router.get(
         [campaignId, req.user.id, radius]
       );
 
-      const METERS_PER_MILE = 1609.344;
-
       const features = rows.map((row) => {
         let insideBurgId = row.inside_burg_id ?? null;
         let mapLevel = row.map_level_raw ?? 'world';
@@ -2225,7 +2223,7 @@ router.get(
           insideBurgId &&
           Number(row.meters_per_unit) > 0 &&
           row.local_bounds &&
-          Number(row.pixels_per_mile) > 0
+          Number(row.meters_per_pixel) > 0
         ) {
           if (row.arrival_local && Array.isArray(row.arrival_local)) {
             settlementLocal = { x: Number(row.arrival_local[0]), y: Number(row.arrival_local[1]) };
@@ -2234,7 +2232,7 @@ router.get(
             settlementLocal = translateWorldPixelToSettlementLocal({
               playerWorldPx: { x: Number(wx), y: Number(wy) },
               burgWorldCenterPx: { x: Number(row.burg_x_px), y: Number(row.burg_y_px) },
-              worldMetersPerPixel: METERS_PER_MILE / Number(row.pixels_per_mile),
+              worldMetersPerPixel: Number(row.meters_per_pixel),
               sidecar: {
                 metersPerUnit: Number(row.meters_per_unit),
                 localBounds: row.local_bounds,
