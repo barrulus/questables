@@ -232,7 +232,7 @@ async function querySettlementShops(campaignId, burgId) {
     `SELECT s.name, s.shop_type, s.description
        FROM public.npc_shops s
        LEFT JOIN public.npcs n ON s.npc_id = n.id
-      WHERE s.campaign_id = $1 AND n.linked_burg_id = $2 AND s.is_active = true
+      WHERE s.campaign_id = $1 AND n.linked_burg_id = $2
       LIMIT 5`,
     [campaignId, burgId],
     { label: 'geo-ctx.settlement-shops' },

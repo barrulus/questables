@@ -2228,11 +2228,16 @@ router.get(
           if (row.arrival_local && Array.isArray(row.arrival_local)) {
             settlementLocal = { x: Number(row.arrival_local[0]), y: Number(row.arrival_local[1]) };
           } else if (row.geometry?.coordinates) {
-            const [wx, wy] = row.geometry.coordinates;
+            // vp.loc is world METERS in a Y-UP frame (geom stores southerly
+            // positions as negative y), but burg.xpixel/ypixel and the
+            // translator's contract are Y-DOWN world PIXELS. Convert meters
+            // → pixels AND flip y so both inputs share the Y-down frame.
+            const [wxMeters, wyMeters] = row.geometry.coordinates;
+            const mpp = Number(row.meters_per_pixel);
             settlementLocal = translateWorldPixelToSettlementLocal({
-              playerWorldPx: { x: Number(wx), y: Number(wy) },
+              playerWorldPx: { x: Number(wxMeters) / mpp, y: -Number(wyMeters) / mpp },
               burgWorldCenterPx: { x: Number(row.burg_x_px), y: Number(row.burg_y_px) },
-              worldMetersPerPixel: Number(row.meters_per_pixel),
+              worldMetersPerPixel: mpp,
               sidecar: {
                 metersPerUnit: Number(row.meters_per_unit),
                 localBounds: row.local_bounds,

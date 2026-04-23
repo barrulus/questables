@@ -62,7 +62,7 @@ import { useGameSession } from "../contexts/GameSessionContext";
 import { useUser } from "../contexts/UserContext";
 import { useWebSocket } from "../hooks/useWebSocket";
 import { useVisiblePlayers } from "../hooks/useVisiblePlayers";
-import { apiFetch, fetchJson, readErrorMessage, readJsonBody } from "../utils/api-client";
+import { apiFetch, fetchJson, getApiBaseUrl, readErrorMessage, readJsonBody } from "../utils/api-client";
 import { toast } from "sonner";
 import { TokenAnimator, type Waypoint } from './player-token-animator';
 
@@ -261,6 +261,8 @@ export function OpenLayersMap() {
     name: string;
     population: number;
     maxZoom: number;
+    localBounds: { min_x: number; min_y: number; max_x: number; max_y: number } | null;
+    svgViewBox: { x: number; y: number; width: number; height: number } | null;
   } | null>(null);
   const [selectedTool, setSelectedTool] = useState<'move' | 'measure' | 'info'>('info');
   const [selectedWorldMap, setSelectedWorldMap] = useState<string>('');
@@ -610,6 +612,7 @@ export function OpenLayersMap() {
   const playerLayerRef = useRef<GeometryLayer | null>(null);
   const playerTrailLayerRef = useRef<TrailLayer | null>(null);
   const settlementLayerRef = useRef<TileLayer | null>(null);
+  const settlementEntrancesLayerRef = useRef<VectorLayer<VectorSource> | null>(null);
   const savedWorldViewRef = useRef<View | null>(null);
   const playerTrailCacheRef = useRef<Map<string, PlayerTrailMeta>>(new Map());
   const rosterByCharacterRef = useRef<Map<string, CampaignRosterEntry>>(new Map());
@@ -1211,30 +1214,44 @@ export function OpenLayersMap() {
     const features = map.getFeaturesAtPixel(event.pixel) as Feature[];
 
     if (selectedTool === 'move') {
-      const playerFeature = features.find((feature) => {
-        return getFeatureTypeFromProperties(feature) === 'player';
-      });
-
-      if (playerFeature) {
+      // Identify feature types once — used for both selection and snap-to-target.
+      const pendingPlayerId = pendingMoveRef.current?.playerId ?? null;
+      const burgFeature = features.find((f) => getFeatureTypeFromProperties(f) === 'burg');
+      const playerFeature = features.find((f) => getFeatureTypeFromProperties(f) === 'player');
+      const playerFeatureId = (() => {
+        if (!playerFeature) return null;
         const data = playerFeature.get('data') ?? playerFeature.getProperties();
-        const playerId = data?.playerId ?? playerFeature.get('playerId');
-        if (typeof playerId === 'string') {
-          const token = playerTokens.find((p) => p.playerId === playerId);
-          if (token) {
-            selectPlayerForMovement(token);
-          }
-        }
+        const pid = data?.playerId ?? playerFeature.get('playerId');
+        return typeof pid === 'string' ? pid : null;
+      })();
+
+      // No pending move: clicking a player selects them.
+      if (!pendingPlayerId && playerFeatureId) {
+        const token = playerTokens.find((p) => p.playerId === playerFeatureId);
+        if (token) selectPlayerForMovement(token);
         return;
       }
 
-      if (pendingMoveRef.current?.playerId) {
-        const pending = pendingMoveRef.current;
+      if (pendingPlayerId) {
+        const pending = pendingMoveRef.current!;
         const token = playerTokens.find((p) => p.playerId === pending.playerId);
         if (token) {
+          // Snap priority: burg under cursor > another player under cursor >
+          // raw click location. "Clicking a town" or "another player" should
+          // move onto that target, not to the pixel beside it.
+          const snapTarget = burgFeature
+            ?? (playerFeatureId && playerFeatureId !== pending.playerId ? playerFeature : null);
+          let coordinate = event.coordinate as [number, number];
+          if (snapTarget) {
+            const geom = snapTarget.getGeometry();
+            if (geom instanceof Point) {
+              coordinate = geom.getCoordinates() as [number, number];
+            }
+          }
           setMovementDialog({
             playerId: pending.playerId,
             playerName: pending.playerName,
-            coordinate: event.coordinate as [number, number],
+            coordinate,
             currentPosition: token.coordinates,
           });
         }
@@ -1693,24 +1710,85 @@ export function OpenLayersMap() {
         settlementLayerRef.current = null;
       }
 
-      // Create settlement tile layer
+      // Create settlement tile layer. Pass the real SVG viewBox so the tile
+      // grid is in the same settlement-local (Y-up negated) coord frame as
+      // the view — without it, the source falls back to a positive-Y grid
+      // that is disjoint from the view's extent and tiles silently refuse
+      // to line up.
       const tileSource = createSettlementTileSource(
         settlementInfo.burgId,
         settlementInfo.maxZoom,
+        settlementInfo.svgViewBox ?? undefined,
       );
       const tileLayer = new TileLayer({ source: tileSource, preload: 2 });
       settlementLayerRef.current = tileLayer;
       map.addLayer(tileLayer);
 
-      // Create a new View scoped to the settlement extent.
-      // The resolutions must match the tile grid so zoom levels align with tiles.
+      // Entrance overlay — orange dots at arrival_local. Whole-world fetch
+      // filtered by burgId client-side (matches SettlementMap's approach).
+      // Unwalled burgs have no visible gate-notches in the SVG, so this
+      // overlay is the only way to see their entrances.
+      if (settlementEntrancesLayerRef.current) {
+        map.removeLayer(settlementEntrancesLayerRef.current);
+        settlementEntrancesLayerRef.current = null;
+      }
+      const entranceSource = new VectorSource();
+      const entranceLayer = new VectorLayer({
+        source: entranceSource,
+        style: new Style({
+          image: new CircleStyle({
+            radius: 6,
+            fill: new Fill({ color: '#f59e0b' }),
+            stroke: new Stroke({ color: '#78350f', width: 1.5 }),
+          }),
+        }),
+      });
+      settlementEntrancesLayerRef.current = entranceLayer;
+      map.addLayer(entranceLayer);
+
+      const burgId = settlementInfo.burgId;
+      void (async () => {
+        try {
+          const res = await fetch(
+            `${getApiBaseUrl()}/api/maps/${selectedWorldMap}/burg-entrances?burgId=${burgId}`,
+            { credentials: 'include' },
+          );
+          if (!res.ok) return;
+          const fc = (await res.json()) as {
+            features: Array<{ properties: { burgId: string; arrival_local?: [number, number] | null } }>;
+          };
+          // Stale-response guard: if the user navigated away already, drop it.
+          if (settlementEntrancesLayerRef.current !== entranceLayer) return;
+          for (const f of fc.features) {
+            if (f.properties.burgId !== burgId) continue;
+            if (!Array.isArray(f.properties.arrival_local)) continue;
+            entranceSource.addFeature(
+              new Feature(new Point([f.properties.arrival_local[0], -f.properties.arrival_local[1]])),
+            );
+          }
+        } catch {
+          /* nice-to-have; silent */
+        }
+      })();
+
+      // View extent + resolutions mirror the tile grid exactly. This is the
+      // same math squareViewBox() does inside the tile source — we just
+      // need it here too so the view can resolve zoom levels.
       const tileSize = 256;
-      const totalPixels = tileSize * Math.pow(2, settlementInfo.maxZoom);
-      const settlementExtent: [number, number, number, number] = [0, -totalPixels, totalPixels, 0];
-      const extentWidth = settlementExtent[2] - settlementExtent[0];
+      const vb = settlementInfo.svgViewBox;
+      const squareExtent = vb ? Math.max(vb.width, vb.height) : 256 * Math.pow(2, settlementInfo.maxZoom);
+      const squareX = vb ? vb.x - (squareExtent - vb.width) / 2 : 0;
+      const squareY = vb ? vb.y - (squareExtent - vb.height) / 2 : -squareExtent;
+      // Tile-grid extent in OL (Y-up flipped from SVG Y-down).
+      const settlementExtent: [number, number, number, number] = [
+        squareX,
+        -(squareY + squareExtent),
+        squareX + squareExtent,
+        -squareY,
+      ];
       const settlementResolutions = Array.from(
         { length: settlementInfo.maxZoom + 1 },
-        (_, z) => extentWidth / tileSize / Math.pow(2, z),
+        (_, z) => squareExtent / tileSize / Math.pow(2, z),
       );
       const settlementView = new View({
         projection: questablesProjection,
@@ -1720,18 +1798,38 @@ export function OpenLayersMap() {
         enableRotation: false,
       });
       map.setView(settlementView);
-      // Re-register zoom listener on the new view
       const zoomHandler = () => { handleZoomChangeRef.current?.(); };
       settlementView.on('change:resolution', zoomHandler);
-      settlementView.fit(settlementExtent, {
-        size: map.getSize(),
-        padding: [20, 20, 20, 20],
+
+      // Fit to the town's actual footprint (localBounds) — mapped into the
+      // same flipped-Y frame. This avoids fitting the square-padded extent,
+      // which puts small settlements in a corner with empty strips.
+      const lb = settlementInfo.localBounds;
+      let fitExtent: [number, number, number, number] = settlementExtent;
+      if (lb) {
+        fitExtent = [
+          lb.min_x,
+          -lb.max_y,
+          lb.max_x,
+          -lb.min_y,
+        ];
+      }
+      requestAnimationFrame(() => {
+        map.updateSize();
+        settlementView.fit(fitExtent, {
+          size: map.getSize(),
+          padding: [20, 20, 20, 20],
+        });
       });
     } else {
       // Switching back to world
       if (settlementLayerRef.current) {
         map.removeLayer(settlementLayerRef.current);
         settlementLayerRef.current = null;
+      }
+      if (settlementEntrancesLayerRef.current) {
+        map.removeLayer(settlementEntrancesLayerRef.current);
+        settlementEntrancesLayerRef.current = null;
       }
 
       // Restore the saved world view
@@ -1827,6 +1925,8 @@ export function OpenLayersMap() {
         population: number;
         maxZoom: number;
         tileSize: number;
+        localBounds: { min_x: number; min_y: number; max_x: number; max_y: number } | null;
+        svgViewBox: { x: number; y: number; width: number; height: number } | null;
       }>(`/api/maps/settlements/${burgId}/info`);
       if (!info) return;
       setSettlementInfo({
@@ -1834,6 +1934,8 @@ export function OpenLayersMap() {
         name: info.name,
         population: info.population,
         maxZoom: info.maxZoom,
+        localBounds: info.localBounds ?? null,
+        svgViewBox: info.svgViewBox ?? null,
       });
       setMapMode('settlement');
     } catch (err) {

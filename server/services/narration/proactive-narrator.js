@@ -186,6 +186,10 @@ RULES:
 - Mention any points of interest (markers) or campaign regions they've entered.
 - If entering a settlement, describe the approach — gates, walls, sounds, smells.
 - Keep it atmospheric and evocative but concise.
+- If a "CURRENT LOCATION" line is provided, you MUST use THAT name for the
+  settlement the party is in. Do NOT reuse names of prior locations from
+  the chat history or lore — the party has moved on. If prior lore refers
+  to another town (e.g. "Toprak"), ignore it; narrate the current location.
 - Respond with plain narrative text, not JSON.`;
 
 /**
@@ -207,6 +211,27 @@ export async function narrateAreaEntry({
 }) {
   try {
     const sections = [];
+
+    // Anchor the LLM to the actual current burg so it can't re-use names
+    // of prior locations from chat history / lore. If the party isn't inside
+    // a burg, we still pin their terrain cell so narration doesn't drift.
+    const { rows: currentBurg } = await query(
+      `SELECT b.name AS burg_name, b.statefull, b.provincefull, b.culture
+         FROM public.campaign_players cp
+         JOIN public.maps_burgs b ON b.id = cp.inside_burg_id
+        WHERE cp.campaign_id = $1 AND cp.status = 'active' AND cp.inside_burg_id IS NOT NULL
+        LIMIT 1`,
+      [campaignId],
+      { label: 'area-narrate.current-burg' },
+    );
+    if (currentBurg.length > 0) {
+      const b = currentBurg[0];
+      const parts = [b.burg_name];
+      if (b.provincefull) parts.push(b.provincefull);
+      if (b.statefull) parts.push(b.statefull);
+      sections.push(`## CURRENT LOCATION\n${parts.join(', ')}${b.culture ? ` (${b.culture} culture)` : ''}`);
+    }
+
     if (movementContext) sections.push(`## Movement Context\n${movementContext}`);
 
     const { result } = await contextualService.generateFromContext({

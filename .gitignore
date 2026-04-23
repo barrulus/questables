@@ -18,3 +18,4 @@ server/tegola/tegola.toml
 server/tegola/cache/
 :TEMP/chrome-mcp/
 .worktrees/
+.superpowers/

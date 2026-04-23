@@ -161,7 +161,7 @@ router.get('/burgs/:burgId/settlement', async (req, res) => {
   const client = await getClient();
   try {
     const { rows } = await client.query(
-      `SELECT b.world_id,
+      `SELECT b.world_id, b.name AS burg_name, b.population,
               mbs.meters_per_unit, mbs.diameter_meters, mbs.diameter_local,
               mbs.scale_source, mbs.local_bounds, mbs.max_zoom, mbs.tile_extent_px,
               mbs.svg_viewbox, mbs.has_harbour, mbs.ocean_bearing_deg,
@@ -177,6 +177,8 @@ router.get('/burgs/:burgId/settlement', async (req, res) => {
     const r = rows[0];
     return res.json({
       world_id: r.world_id,
+      burg_name: r.burg_name,
+      population: r.population != null ? Number(r.population) : null,
       meters_per_unit: Number(r.meters_per_unit),
       diameter_meters: Number(r.diameter_meters),
       diameter_local: Number(r.diameter_local),

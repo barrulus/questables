@@ -1,4 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
+import { useWebSocket } from './useWebSocket';
+import { apiFetch } from '../utils/api-client';
 
 export interface VisiblePlayer {
   playerId: string;
@@ -36,9 +38,9 @@ export function useVisiblePlayers(campaignId: string | null, radiusOverride?: nu
     setLoading(true);
     try {
       const radiusQuery = radiusOverride != null ? `?radius=${radiusOverride}` : '';
-      const res = await fetch(
+      const res = await apiFetch(
         `/api/campaigns/${campaignId}/players/visible${radiusQuery}`,
-        { signal: ctrl.signal, credentials: 'include' },
+        { signal: ctrl.signal },
       );
       if (!res.ok) throw new Error(`visible-players ${res.status}`);
       const body = (await res.json()) as Response;
@@ -58,6 +60,20 @@ export function useVisiblePlayers(campaignId: string | null, radiusOverride?: nu
   }, [campaignId, radiusOverride]);
 
   useEffect(() => { void refresh(); }, [refresh]);
+
+  // Re-fetch when any player in this campaign moves/teleports so MapRoot's
+  // decision to swap to SettlementMap picks up the new inside_burg_id.
+  const { messages } = useWebSocket(campaignId ?? '');
+  const lastMoveCountRef = useRef(0);
+  useEffect(() => {
+    const count = messages.filter(
+      (m) => m.type === 'player-moved' || m.type === 'player-teleported',
+    ).length;
+    if (count > lastMoveCountRef.current) {
+      lastMoveCountRef.current = count;
+      void refresh();
+    }
+  }, [messages, refresh]);
 
   return { players, loading, refresh };
 }

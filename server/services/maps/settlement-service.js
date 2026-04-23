@@ -7,7 +7,12 @@ import {
   computeTileInfo,
   cropSvgToTile,
 } from 'settlemaker';
-import { getBurgById } from './service.js';
+import { pool } from '../../db/pool.js';
+import {
+  buildSettlemakerInput,
+  loadApproachingRoutes,
+  loadBurgForSettlemaker,
+} from '../settlemaker/burg-input-builder.js';
 import { logError, logInfo } from '../../utils/logger.js';
 
 const TILE_SIZE = 256;
@@ -25,28 +30,19 @@ async function ensureSettlement(burgId) {
   const cached = settlementCache.get(burgId);
   if (cached) return cached;
 
-  const burg = await getBurgById(burgId);
+  // Must match the ingestor's input exactly (`roadBearings`, `oceanBearing`,
+  // `harbourSize`) — settlemaker's gate placement depends on these, so
+  // generating without them produces a different settlement than the one the
+  // DB entrances were written from.
+  const burg = await loadBurgForSettlemaker(pool, burgId);
   if (!burg) {
     const err = new Error('Burg not found');
     err.status = 404;
     err.code = 'burg_not_found';
     throw err;
   }
-
-  const burgInput = {
-    name: burg.name,
-    population: Number(burg.population) || 100,
-    port: Boolean(burg.port),
-    citadel: Boolean(burg.citadel),
-    walls: Boolean(burg.walls),
-    plaza: Boolean(burg.plaza),
-    temple: Boolean(burg.temple),
-    shanty: Boolean(burg.shanty),
-    capital: Boolean(burg.capital),
-    culture: burg.culture ?? undefined,
-    elevation: burg.elevation != null ? Number(burg.elevation) : undefined,
-    temperature: burg.temperature != null ? Number(burg.temperature) : undefined,
-  };
+  const routes = await loadApproachingRoutes(pool, burg);
+  const burgInput = buildSettlemakerInput(burg, routes);
 
   const result = generateFromBurg(burgInput);
   const viewBox = parseSvgViewBox(result.svg);
@@ -70,16 +66,29 @@ async function ensureSettlement(burgId) {
 }
 
 /**
- * Get settlement info (metadata) for a burg.
+ * Get settlement info (metadata) for a burg. Includes `localBounds` / `svgViewBox`
+ * so callers can fit the view to the town's actual footprint instead of the
+ * full square tile pyramid — critical for small settlements where the content
+ * fills only a fraction of the padded viewBox.
  */
 export async function getSettlementInfo(burgId) {
   const entry = await ensureSettlement(burgId);
+  const { rows } = await pool.query(
+    `SELECT local_bounds, svg_viewbox
+       FROM public.maps_burg_settlements
+      WHERE burg_id = $1
+      LIMIT 1`,
+    [burgId],
+  );
+  const sidecar = rows[0] ?? null;
   return {
     burgId,
     name: entry.name,
     population: entry.population,
     maxZoom: entry.tileInfo.maxZoom + EXTRA_ZOOM,
     tileSize: TILE_SIZE,
+    localBounds: sidecar?.local_bounds ?? null,
+    svgViewBox: sidecar?.svg_viewbox ?? null,
   };
 }
 

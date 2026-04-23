@@ -14,10 +14,21 @@ export function MapRoot() {
   const [manualWorldOverride, setManualWorldOverride] = useState(false);
   const [sidecar, setSidecar] = useState<SettlementSidecar | null>(null);
 
-  const followed = useMemo(
-    () => players.find((p) => p.characterId === activeCharacterId) ?? null,
-    [players, activeCharacterId],
-  );
+  // Follow priority:
+  //   1. The acting user's own character (player seat).
+  //   2. Any visible player currently inside a burg (DM/CD seat — the DM has
+  //      no character of their own but still wants the settlement swap when
+  //      the party enters a town).
+  //   3. First visible player (fallback, stays on world view).
+  const followed = useMemo(() => {
+    const mine = activeCharacterId
+      ? players.find((p) => p.characterId === activeCharacterId)
+      : null;
+    if (mine) return mine;
+    const insideAny = players.find((p) => p.insideBurgId != null);
+    if (insideAny) return insideAny;
+    return players[0] ?? null;
+  }, [players, activeCharacterId]);
   const currentBurgId = followed?.insideBurgId ?? null;
 
   const prevBurgRef = useRef<string | null>(null);
