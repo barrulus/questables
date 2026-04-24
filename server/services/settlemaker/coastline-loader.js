@@ -14,14 +14,32 @@
 const GEOM_TO_PIXEL = 1 / 10000;
 
 // Pixel-space radius around the burg from which we collect water cells.
-// 60 px works for both continental-scale worlds (Snoopia: ~600 km) and
-// normal-scale worlds (~6 km on a 100 m/px world). Settlemaker handles
-// oversampled polygons fine; the lower bound matters more than the upper.
-const DEFAULT_R_WORLD_PX = 60;
+//
+// Continental lakes in FMG can span hundreds of px; we want to hand
+// settlemaker the full contiguous water body near the burg, not just a
+// thin slice, so the rendered settlement sees a lake and not a puddle.
+//
+// - Floor (60 px) handles fine-scale worlds where 60 px is already a few
+//   km out.
+// - Target (3000 km) captures continental water bodies on coarse worlds
+//   like Snoopia (10 km/px → 300 px).
+// - Ceiling (500 px) caps cell-count on ultra-fine worlds where the meters
+//   target would balloon into thousands of cells.
+const MIN_R_WORLD_PX = 60;
+const MAX_R_WORLD_PX = 500;
+const TARGET_R_WORLD_METERS = 3_000_000;
 
 // Settlement-local diameter target. Matches settlemaker's `scale.diameter_local`
 // default; on re-ingest we substitute the previous sidecar's value.
 const DEFAULT_R_LOCAL = 100;
+
+async function loadMetersPerPixel(client, worldId) {
+  const { rows } = await client.query(
+    `SELECT meters_per_pixel FROM public.maps_world WHERE id = $1 LIMIT 1`,
+    [worldId],
+  );
+  return rows[0]?.meters_per_pixel ? Number(rows[0].meters_per_pixel) : null;
+}
 
 function parsePolygonRing(geojsonStr) {
   const g = JSON.parse(geojsonStr);
@@ -34,7 +52,14 @@ function parsePolygonRing(geojsonStr) {
 }
 
 export async function loadCoastlineGeometry(client, burg, opts = {}) {
-  const rWorldPx = Number.isFinite(opts.rWorldPx) ? opts.rWorldPx : DEFAULT_R_WORLD_PX;
+  let rWorldPx;
+  if (Number.isFinite(opts.rWorldPx)) {
+    rWorldPx = opts.rWorldPx;
+  } else {
+    const mpp = await loadMetersPerPixel(client, burg.world_id);
+    const target = mpp ? TARGET_R_WORLD_METERS / mpp : MIN_R_WORLD_PX;
+    rWorldPx = Math.min(MAX_R_WORLD_PX, Math.max(MIN_R_WORLD_PX, target));
+  }
   const rLocal = Number.isFinite(opts.rLocal) ? opts.rLocal : DEFAULT_R_LOCAL;
   const rWorldGeom = rWorldPx / GEOM_TO_PIXEL; // pixel → geom units
 

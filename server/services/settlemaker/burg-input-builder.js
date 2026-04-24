@@ -17,7 +17,13 @@ export async function loadBurgForSettlemaker(client, burgId) {
   return rows[0] ?? null;
 }
 
-export async function loadApproachingRoutes(client, burg, thresholdPx = 50) {
+// Routes are polylines that pass *through* burgs; ST_Distance = 0 means the
+// route geometry intersects the burg point. A small px tolerance soaks up
+// rounding without sweeping in routes that merely run nearby — at the old
+// 50 px threshold dense areas like Kaltun returned 60+ routes when only ~4
+// actually connect to the burg, which then confuses settlemaker's gate
+// consolidation.
+export async function loadApproachingRoutes(client, burg, thresholdPx = 2) {
   const { rows } = await client.query(
     `WITH b AS (SELECT geom FROM public.maps_burgs WHERE id = $1)
      SELECT r.id AS route_id,
