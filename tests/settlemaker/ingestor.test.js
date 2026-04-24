@@ -14,7 +14,11 @@ jest.unstable_mockModule('settlemaker', () => ({
 jest.unstable_mockModule('../../server/services/maps/burg-entrances-service.js', () => ({
   distinctVersionForBurg: jest.fn(),
   deleteForBurg:          jest.fn(),
-  insertMany:             jest.fn(),
+  // Default: echo input rows back with synthetic ids so the ingestor's
+  // post-insert join-table builder has something to link against.
+  insertMany:             jest.fn(async (_c, rows) =>
+    rows.map((r, i) => ({ ...r, id: `ent-${i}` }))),
+  insertEntranceRoutes:   jest.fn(),
   listByBurg:             jest.fn(),
   listByWorld:            jest.fn(),
 }));
@@ -33,6 +37,14 @@ function makeClient(burgRow, routeRows) {
   const calls = [];
   const query = jest.fn(async (sql) => {
     calls.push(String(sql).trim().split(/\s+/)[0].toUpperCase());
+    // maps_cells coastline query — match BEFORE the maps_burgs branch
+    // because the loader's CTE references both tables.
+    if (/FROM public\.maps_cells/.test(sql)) {
+      return { rows: [] };
+    }
+    if (/FROM public\.maps_burg_settlements/.test(sql)) {
+      return { rows: [] };
+    }
     if (/FROM public\.maps_burgs/.test(sql) && !/ST_ClosestPoint/.test(sql)) {
       return { rows: [burgRow] };
     }
@@ -77,7 +89,7 @@ const FAKE_FC = {
     },
   ],
   metadata: {
-    schema_version: 2,
+    schema_version: 3,
     settlemaker_version: '0.3.0-rc.1',
     settlement_generation_version: 'v2hash',
     coordinate_system: 'local_origin_y_down',
@@ -100,7 +112,7 @@ beforeEach(() => {
 describe('ingestBurg', () => {
   test('idempotent: noop when sidecar version triplet matches', async () => {
     settlementsService.getByBurg.mockResolvedValue({
-      schema_version: 2,
+      schema_version: 3,
       settlement_generation_version: 'v2hash',
       settlemaker_version: '0.3.0-rc.1',
     });
@@ -161,7 +173,7 @@ describe('ingestBurg', () => {
     const emptyFc = {
       ...FAKE_FC,
       features: [],
-      metadata: { ...FAKE_FC.metadata, schema_version: 2, settlement_generation_version: 'empty' },
+      metadata: { ...FAKE_FC.metadata, schema_version: 3, settlement_generation_version: 'empty' },
     };
     settlemaker.generateFromBurg.mockReturnValue({ model: {}, svg: '', geojson: emptyFc });
     const client = makeClient(
@@ -175,7 +187,7 @@ describe('ingestBurg', () => {
     expect(settlementsService.upsert).toHaveBeenCalled();
   });
 
-  test('hard-requires schema v2; throws SettlemakerSchemaMismatch on v1', async () => {
+  test('hard-requires schema v3; throws SettlemakerSchemaMismatch on v1', async () => {
     const v1Fc = { ...FAKE_FC, metadata: { ...FAKE_FC.metadata, schema_version: 1 } };
     settlemaker.generateFromBurg.mockReturnValue({ model: {}, svg: '', geojson: v1Fc });
     const client = makeClient(
@@ -214,7 +226,7 @@ describe('ingestBurg', () => {
 
   test('force: true bypasses the triplet check', async () => {
     settlementsService.getByBurg.mockResolvedValue({
-      schema_version: 2,
+      schema_version: 3,
       settlement_generation_version: 'v2hash',
       settlemaker_version: '0.3.0-rc.1',
     });

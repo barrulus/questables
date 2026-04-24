@@ -1,4 +1,5 @@
 import { classifyRouteKind } from './route-classifier.js';
+import { bearingToNearestWaterCentroid, loadCoastlineGeometry } from './coastline-loader.js';
 
 // Fields required to reproduce a settlemaker generation: basic flags +
 // x_px/y_px for road-bearing math + world_id for the route lookup. Aliases
@@ -31,33 +32,77 @@ export async function loadApproachingRoutes(client, burg, thresholdPx = 50) {
   return rows;
 }
 
+// Loads the previously-ingested sidecar (if any) so we can reuse its
+// `diameter_local` as the coastline scale factor on re-ingest.
+async function loadPriorDiameterLocal(client, burgId) {
+  const { rows } = await client.query(
+    `SELECT diameter_local
+       FROM public.maps_burg_settlements
+      WHERE burg_id = $1
+      LIMIT 1`,
+    [burgId],
+  );
+  return rows[0] ? Number(rows[0].diameter_local) : null;
+}
+
 function bearingFromBurgToSnap(burg, snap) {
   const dx = Number(snap.snap_x) - Number(burg.x_px);
   const dy = Number(snap.snap_y) - Number(burg.y_px);
   return ((Math.atan2(dx, -dy) * 180 / Math.PI) + 360) % 360;
 }
 
-function computeOceanBearing(burg, routes) {
-  const sea = routes.find((r) => classifyRouteKind(r.type) === 'sea');
-  if (!sea) return undefined;
-  return bearingFromBurgToSnap(burg, sea);
-}
-
 // Build the AzgaarBurgInput passed to `generateFromBurg`. The tile server AND
 // the ingestor must go through this so they produce identical settlements —
-// settlemaker's gate placement depends on `roadBearings`, so a tile-server
-// call without them produces different gates than the DB entrances that were
-// written at ingestion time.
-export function buildSettlemakerInput(burg, routes) {
-  const roadBearings = routes.map((r) => ({
+// settlemaker's gate placement depends on `roadBearings` AND now
+// `coastlineGeometry`, so a tile-server call without them produces different
+// gates/harbours than the DB entrances written at ingestion time.
+//
+// Settlemaker 0.4.0 contract:
+//   - `roadBearings` carries land/foot routes only. Sea routes drive
+//     `harbourSize` + `oceanBearing` instead — passing them in both places
+//     would double-count the harbour entrance.
+//   - `coastlineGeometry` (when present) replaces the old half-plane ocean
+//     heuristic with point-in-polygon classification against the actual
+//     world coastline. Bays/coves/headlands then come through correctly.
+export async function buildSettlemakerInput(client, burg, routes) {
+  const seaRoute = routes.find((r) => classifyRouteKind(r.type) === 'sea');
+  const landRoutes = routes.filter((r) => classifyRouteKind(r.type) !== 'sea');
+
+  const roadBearings = landRoutes.map((r) => ({
     bearing_deg: bearingFromBurgToSnap(burg, r),
     route_id: r.route_id,
     kind: classifyRouteKind(r.type),
   })).sort((a, b) => a.bearing_deg - b.bearing_deg);
 
+  const priorDiameterLocal = await loadPriorDiameterLocal(client, burg.id);
+  const coastlineGeometry = await loadCoastlineGeometry(client, burg, {
+    rLocal: priorDiameterLocal ?? undefined,
+  });
+  const hasCoastline = coastlineGeometry.length > 0;
+
+  // Harbour: settlemaker only places one when `harbourSize` is set. Set it
+  // for explicit FMG ports, for any burg with a sea route, OR for a coastal
+  // burg the FMG just didn't flag (rare — kept conservative below).
+  const wantsHarbour = Boolean(burg.port) || Boolean(seaRoute);
+  const population = Number(burg.population) || 100;
+  const harbourSize = wantsHarbour
+    ? (population >= 10000 || seaRoute ? 'large' : 'small')
+    : undefined;
+
+  // Ocean bearing: prefer the centroid of the nearest water polygon (more
+  // accurate than the route bearing for bays/inlets); fall back to the sea
+  // route bearing; else undefined.
+  let oceanBearing;
+  if (wantsHarbour && hasCoastline) {
+    oceanBearing = bearingToNearestWaterCentroid(coastlineGeometry);
+  }
+  if (oceanBearing == null && seaRoute) {
+    oceanBearing = bearingFromBurgToSnap(burg, seaRoute);
+  }
+
   return {
     name: burg.name ?? 'Unnamed',
-    population: Number(burg.population) || 100,
+    population,
     port: Boolean(burg.port),
     citadel: Boolean(burg.citadel),
     walls: Boolean(burg.walls),
@@ -66,7 +111,8 @@ export function buildSettlemakerInput(burg, routes) {
     shanty: Boolean(burg.shanty),
     capital: Boolean(burg.capital),
     roadBearings,
-    oceanBearing: burg.port ? computeOceanBearing(burg, routes) : undefined,
-    harbourSize: burg.port ? (Number(burg.population) >= 15000 ? 'large' : 'small') : undefined,
+    coastlineGeometry: hasCoastline ? coastlineGeometry : undefined,
+    oceanBearing,
+    harbourSize,
   };
 }

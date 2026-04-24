@@ -42,7 +42,7 @@ async function ensureSettlement(burgId) {
     throw err;
   }
   const routes = await loadApproachingRoutes(pool, burg);
-  const burgInput = buildSettlemakerInput(burg, routes);
+  const burgInput = await buildSettlemakerInput(pool, burg, routes);
 
   const result = generateFromBurg(burgInput);
   const viewBox = parseSvgViewBox(result.svg);

@@ -37,26 +37,35 @@ const BASE_ROW = {
   settlemaker_version: '0.3.0-rc.1',
 };
 
+// Post-0.4.0: insertMany uses RETURNING id so the join-table builder in the
+// ingestor can link maps_burg_entrance_routes rows. The mock must return a
+// row with an `id` for each INSERT.
+const makeReturningClient = () =>
+  makeClient(async () => ({ rows: [{ id: 'ent-1' }] }));
+
 describe('burg-entrances-service insertMany', () => {
-  test('returns early on empty array', async () => {
-    const client = makeClient(async () => ({ rows: [] }));
-    await insertMany(client, []);
+  test('returns empty array when no rows', async () => {
+    const client = makeReturningClient();
+    const out = await insertMany(client, []);
+    expect(out).toEqual([]);
     expect(client.query).not.toHaveBeenCalled();
   });
 
   test('stringifies arrival_local when present', async () => {
-    const client = makeClient(async () => ({ rows: [] }));
-    await insertMany(client, [{ ...BASE_ROW, arrival_local: [10, 20] }]);
+    const client = makeReturningClient();
+    const out = await insertMany(client, [{ ...BASE_ROW, arrival_local: [10, 20] }]);
     expect(client.query).toHaveBeenCalledTimes(1);
     const [sql, params] = client.query.mock.calls[0];
     expect(sql).toMatch(/INSERT INTO public\.maps_burg_entrances/);
+    expect(sql).toMatch(/RETURNING id/);
     expect(params).toHaveLength(16);
     // arrival_local sits at index 13 (0-based): after name (index 12) and before settlement_generation_version (index 14).
     expect(params[13]).toBe('[10,20]');
+    expect(out[0]).toMatchObject({ id: 'ent-1', burg_id: 'b-1' });
   });
 
   test('passes null for arrival_local when undefined', async () => {
-    const client = makeClient(async () => ({ rows: [] }));
+    const client = makeReturningClient();
     const row = { ...BASE_ROW };
     // arrival_local intentionally absent from row
     await insertMany(client, [row]);
@@ -65,7 +74,7 @@ describe('burg-entrances-service insertMany', () => {
   });
 
   test('passes null for arrival_local when explicitly null', async () => {
-    const client = makeClient(async () => ({ rows: [] }));
+    const client = makeReturningClient();
     await insertMany(client, [{ ...BASE_ROW, arrival_local: null }]);
     const [, params] = client.query.mock.calls[0];
     expect(params[13]).toBeNull();

@@ -1,9 +1,24 @@
 import { jest } from '@jest/globals';
 import { pickArrivalGate, retargetPlanToGate } from '../../server/services/movement/gate-picker.js';
 
-function makeClient(entranceRows) {
+// gate-picker now issues two distinct queries: one over maps_burg_entrances
+// for the full burg, and a second JOINed against maps_burg_entrance_routes
+// when matching by route. The mock routes by SQL substring so a single
+// `entranceRows` fixture can serve both — for the join query we filter to
+// `route_id === plan.effectiveVia` to mimic the join-table semantics.
+function makeClient(entranceRows, opts = {}) {
+  const { routeMatchesByVia } = opts;
   return {
-    query: jest.fn(async () => ({ rows: entranceRows })),
+    query: jest.fn(async (sql, params) => {
+      if (typeof sql === 'string' && sql.includes('maps_burg_entrance_routes')) {
+        const via = params?.[1];
+        const rows = routeMatchesByVia
+          ? (routeMatchesByVia[via] ?? [])
+          : entranceRows.filter((r) => r.route_id === via);
+        return { rows };
+      }
+      return { rows: entranceRows };
+    }),
   };
 }
 

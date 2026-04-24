@@ -33,6 +33,21 @@ async function loadEntrances(client, burgId) {
   return rows;
 }
 
+// Look up entrances that serve a given route via the join table. A single
+// gate can legitimately serve multiple routes on small burgs; the join
+// table is the source of truth.
+async function loadEntrancesForRoute(client, burgId, routeId) {
+  const { rows } = await client.query(
+    `SELECT e.id, e.gate_id, e.route_id, e.x_px, e.y_px, e.bearing_deg,
+            e.bearing_match_delta_deg, e.kind, e.sub_kind, e.name
+       FROM public.maps_burg_entrances e
+       JOIN public.maps_burg_entrance_routes er ON er.entrance_id = e.id
+      WHERE e.burg_id = $1 AND er.route_id = $2`,
+    [burgId, routeId],
+  );
+  return rows;
+}
+
 export async function pickArrivalGate(client, { plan, destination }) {
   if (destination?.kind !== 'burg') return null;
   if (!destination.burgId) return null;
@@ -43,7 +58,9 @@ export async function pickArrivalGate(client, { plan, destination }) {
   if (entrances.length === 1) return rowToGate(entrances[0], 'single_option');
 
   if (viaLooksLikeRouteId(plan.effectiveVia)) {
-    const matches = entrances.filter((r) => r.route_id === plan.effectiveVia);
+    const matches = await loadEntrancesForRoute(
+      client, destination.burgId, plan.effectiveVia,
+    );
     if (matches.length === 1) return rowToGate(matches[0], 'route_id');
     if (matches.length > 1) {
       matches.sort((a, b) => {

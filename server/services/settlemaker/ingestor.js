@@ -11,6 +11,7 @@ import {
 } from './burg-input-builder.js';
 import {
   deleteForBurg as deleteEntrances,
+  insertEntranceRoutes,
   insertMany as insertEntrances,
 } from '../maps/burg-entrances-service.js';
 import {
@@ -19,7 +20,7 @@ import {
 } from '../maps/burg-settlements-service.js';
 import { logInfo, logWarn } from '../../utils/logger.js';
 
-const EXPECTED_SCHEMA_VERSION = 2;
+const EXPECTED_SCHEMA_VERSION = 3;
 
 async function loadMetersPerPixel(client, worldId) {
   const { rows } = await client.query(
@@ -35,9 +36,13 @@ function wallRadiusFromFc(fc) {
   return maxRadiusFromOrigin(wall.geometry);
 }
 
+// Returns { entranceRows, joinSpecs } where joinSpecs[i] is the array of
+// per-route detail entries that belong to entranceRows[i] — the caller
+// links them after the entrance row's id is known (post-INSERT).
 function buildEntranceRows({ fc, burg, centroidPx, scale, settlemakerVersion }) {
   const version = fc.metadata.settlement_generation_version;
-  const out = [];
+  const entranceRows = [];
+  const joinSpecs = [];
   for (const f of fc.features) {
     if (f?.properties?.layer !== 'entrance') continue;
     const p = f.properties;
@@ -47,10 +52,19 @@ function buildEntranceRows({ fc, burg, centroidPx, scale, settlemakerVersion }) 
       burgCentroidPx: centroidPx,
       scale,
     });
-    out.push({
+    // Settlemaker 0.4.0: matched_route_ids is the canonical multi-route
+    // list; matched_route_id (singular, legacy) equals matched_route_ids[0].
+    // We persist matched_route_ids[0] as the denormalized scalar primary
+    // and write the full list to maps_burg_entrance_routes via joinSpecs.
+    const routeIds = Array.isArray(p.matched_route_ids)
+      ? p.matched_route_ids.filter((id) => typeof id === 'string' && id.length > 0)
+      : (p.matched_route_id ? [p.matched_route_id] : []);
+    const routeDetail = Array.isArray(p.matched_routes) ? p.matched_routes : [];
+
+    entranceRows.push({
       burg_id: burg.id,
       gate_id: p.entrance_id,                       // column name unchanged
-      route_id: p.matched_route_id ?? null,
+      route_id: routeIds[0] ?? null,
       x_px: world.x,
       y_px: world.y,
       bearing_deg: Number(p.bearing_deg),
@@ -65,8 +79,26 @@ function buildEntranceRows({ fc, burg, centroidPx, scale, settlemakerVersion }) 
       settlement_generation_version: version,
       settlemaker_version: settlemakerVersion,
     });
+
+    // Build join-table specs for this entrance. matched_routes carries the
+    // per-edge attributes; if the library only emitted matched_route_ids
+    // (or only the legacy scalar), fall back to a minimal record.
+    const detailByRouteId = new Map();
+    for (const d of routeDetail) {
+      if (d?.route_id) detailByRouteId.set(d.route_id, d);
+    }
+    const specs = routeIds.map((rid) => {
+      const d = detailByRouteId.get(rid);
+      return {
+        route_id: rid,
+        kind: d?.kind ?? null,
+        requested_bearing_deg: d?.requested_bearing_deg ?? null,
+        match_delta_deg: d?.match_delta_deg ?? null,
+      };
+    });
+    joinSpecs.push(specs);
   }
-  return out;
+  return { entranceRows, joinSpecs };
 }
 
 function extractSidecarPayload(fc, input) {
@@ -94,6 +126,7 @@ function extractSidecarPayload(fc, input) {
     svg_viewbox: viewBox,
     has_harbour: hasHarbour,
     ocean_bearing_deg: input.oceanBearing != null ? Math.round(input.oceanBearing) : null,
+    degraded_flags: Array.isArray(m.degraded_flags) ? m.degraded_flags : [],
     settlement_generation_version: m.settlement_generation_version,
     settlemaker_version: m.settlemaker_version ?? SETTLEMAKER_VERSION,
   };
@@ -108,7 +141,7 @@ export async function ingestBurg(client, { burgId, force = false }) {
     throw err;
   }
   const routes = await loadApproachingRoutes(client, burg);
-  const input = buildSettlemakerInput(burg, routes);
+  const input = await buildSettlemakerInput(client, burg, routes);
 
   const { geojson } = generateFromBurg(input);
 
@@ -144,7 +177,7 @@ export async function ingestBurg(client, { burgId, force = false }) {
   });
 
   const centroidPx = { x: Number(burg.x_px), y: Number(burg.y_px) };
-  const rows = buildEntranceRows({
+  const { entranceRows, joinSpecs } = buildEntranceRows({
     fc: geojson,
     burg,
     centroidPx,
@@ -157,7 +190,17 @@ export async function ingestBurg(client, { burgId, force = false }) {
   try {
     await deleteEntrances(client, burgId);
     await upsertSettlement(client, burgId, sidecar);
-    if (rows.length > 0) await insertEntrances(client, rows);
+    let inserted = [];
+    if (entranceRows.length > 0) {
+      inserted = await insertEntrances(client, entranceRows);
+      const joinRows = [];
+      inserted.forEach((row, i) => {
+        for (const spec of joinSpecs[i]) {
+          joinRows.push({ entrance_id: row.id, ...spec });
+        }
+      });
+      if (joinRows.length > 0) await insertEntranceRoutes(client, joinRows);
+    }
     await client.query('COMMIT');
   } catch (err) {
     try {
@@ -174,9 +217,9 @@ export async function ingestBurg(client, { burgId, force = false }) {
 
   logInfo('settlemaker ingest complete', {
     telemetryEvent: 'settlemaker.ingested',
-    burgId, gateCount: rows.length, version: newVersion,
+    burgId, gateCount: entranceRows.length, version: newVersion,
   });
-  return { updated: true, count: rows.length };
+  return { updated: true, count: entranceRows.length };
 }
 
 export async function ensureEntrancesFresh(client, { burgId }) {
