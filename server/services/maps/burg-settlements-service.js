@@ -2,6 +2,7 @@ const SELECT_COLUMNS = [
   'burg_id', 'meters_per_unit', 'diameter_meters', 'diameter_local',
   'scale_source', 'local_bounds', 'max_zoom', 'tile_extent_px',
   'svg_viewbox', 'has_harbour', 'ocean_bearing_deg', 'degraded_flags',
+  'local_origin_shift',
   'settlement_generation_version', 'settlemaker_version', 'ingested_at',
 ];
 
@@ -21,8 +22,9 @@ export async function upsert(client, burgId, payload) {
        (burg_id, meters_per_unit, diameter_meters, diameter_local,
         scale_source, local_bounds, max_zoom, tile_extent_px,
         svg_viewbox, has_harbour, ocean_bearing_deg, degraded_flags,
+        local_origin_shift,
         settlement_generation_version, settlemaker_version)
-     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)
+     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15)
      ON CONFLICT (burg_id) DO UPDATE SET
        meters_per_unit = EXCLUDED.meters_per_unit,
        diameter_meters = EXCLUDED.diameter_meters,
@@ -35,6 +37,7 @@ export async function upsert(client, burgId, payload) {
        has_harbour = EXCLUDED.has_harbour,
        ocean_bearing_deg = EXCLUDED.ocean_bearing_deg,
        degraded_flags = EXCLUDED.degraded_flags,
+       local_origin_shift = EXCLUDED.local_origin_shift,
        settlement_generation_version = EXCLUDED.settlement_generation_version,
        settlemaker_version = EXCLUDED.settlemaker_version,
        ingested_at = now()`,
@@ -52,6 +55,9 @@ export async function upsert(client, burgId, payload) {
       payload.ocean_bearing_deg ?? null,
       Array.isArray(payload.degraded_flags) && payload.degraded_flags.length > 0
         ? payload.degraded_flags
+        : null,
+      payload.local_origin_shift != null
+        ? JSON.stringify(payload.local_origin_shift)
         : null,
       payload.settlement_generation_version,
       payload.settlemaker_version,

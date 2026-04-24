@@ -50,7 +50,8 @@ async function summarize(client, burgId) {
     [burgId],
   );
   const { rows: [s] } = await client.query(
-    `SELECT has_harbour, ocean_bearing_deg, diameter_local, degraded_flags
+    `SELECT has_harbour, ocean_bearing_deg, diameter_local, degraded_flags,
+            local_origin_shift
        FROM public.maps_burg_settlements WHERE burg_id = $1`,
     [burgId],
   );
@@ -102,8 +103,12 @@ async function main() {
       const meta = s
         ? `pop=${s.burg.population} walls=${s.burg.walls} citadel=${s.burg.citadel} port=${s.burg.port}`
         : 'meta_unavailable';
+      const shift = s?.sidecar?.local_origin_shift;
+      const shiftStr = shift
+        ? `${shift.source}(dx=${shift.dx?.toFixed?.(1) ?? '-'}, dy=${shift.dy?.toFixed?.(1) ?? '-'})`
+        : '-';
       const sc = s?.sidecar
-        ? `harbour=${s.sidecar.has_harbour} ocean=${s.sidecar.ocean_bearing_deg ?? '-'} degraded=${(s.sidecar.degraded_flags ?? []).join(',') || '-'}`
+        ? `harbour=${s.sidecar.has_harbour} ocean=${s.sidecar.ocean_bearing_deg ?? '-'} degraded=${(s.sidecar.degraded_flags ?? []).join(',') || '-'} shift=${shiftStr}`
         : 'no_sidecar';
       const gates = s?.gates
         ? `gates=${s.gates.gates} harbours=${s.gates.harbours}`

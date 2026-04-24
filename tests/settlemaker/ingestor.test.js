@@ -89,7 +89,7 @@ const FAKE_FC = {
     },
   ],
   metadata: {
-    schema_version: 3,
+    schema_version: 4,
     settlemaker_version: '0.3.0-rc.1',
     settlement_generation_version: 'v2hash',
     coordinate_system: 'local_origin_y_down',
@@ -112,7 +112,7 @@ beforeEach(() => {
 describe('ingestBurg', () => {
   test('idempotent: noop when sidecar version triplet matches', async () => {
     settlementsService.getByBurg.mockResolvedValue({
-      schema_version: 3,
+      schema_version: 4,
       settlement_generation_version: 'v2hash',
       settlemaker_version: '0.3.0-rc.1',
     });
@@ -173,7 +173,7 @@ describe('ingestBurg', () => {
     const emptyFc = {
       ...FAKE_FC,
       features: [],
-      metadata: { ...FAKE_FC.metadata, schema_version: 3, settlement_generation_version: 'empty' },
+      metadata: { ...FAKE_FC.metadata, schema_version: 4, settlement_generation_version: 'empty' },
     };
     settlemaker.generateFromBurg.mockReturnValue({ model: {}, svg: '', geojson: emptyFc });
     const client = makeClient(
@@ -187,7 +187,7 @@ describe('ingestBurg', () => {
     expect(settlementsService.upsert).toHaveBeenCalled();
   });
 
-  test('hard-requires schema v3; throws SettlemakerSchemaMismatch on v1', async () => {
+  test('hard-requires schema v4; throws SettlemakerSchemaMismatch on v1', async () => {
     const v1Fc = { ...FAKE_FC, metadata: { ...FAKE_FC.metadata, schema_version: 1 } };
     settlemaker.generateFromBurg.mockReturnValue({ model: {}, svg: '', geojson: v1Fc });
     const client = makeClient(
@@ -226,7 +226,7 @@ describe('ingestBurg', () => {
 
   test('force: true bypasses the triplet check', async () => {
     settlementsService.getByBurg.mockResolvedValue({
-      schema_version: 3,
+      schema_version: 4,
       settlement_generation_version: 'v2hash',
       settlemaker_version: '0.3.0-rc.1',
     });

@@ -20,7 +20,7 @@ import {
 } from '../maps/burg-settlements-service.js';
 import { logInfo, logWarn } from '../../utils/logger.js';
 
-const EXPECTED_SCHEMA_VERSION = 3;
+const EXPECTED_SCHEMA_VERSION = 4;
 
 async function loadMetersPerPixel(client, worldId) {
   const { rows } = await client.query(
@@ -127,6 +127,7 @@ function extractSidecarPayload(fc, input) {
     has_harbour: hasHarbour,
     ocean_bearing_deg: input.oceanBearing != null ? Math.round(input.oceanBearing) : null,
     degraded_flags: Array.isArray(m.degraded_flags) ? m.degraded_flags : [],
+    local_origin_shift: m.local_origin_shift ?? null,
     settlement_generation_version: m.settlement_generation_version,
     settlemaker_version: m.settlemaker_version ?? SETTLEMAKER_VERSION,
   };
