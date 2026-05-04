@@ -1,21 +1,23 @@
 /**
  * @jest-environment node
  */
-import { describe, it, expect, beforeAll, afterAll } from '@jest/globals';
+import { describe, it, expect, beforeAll, afterAll, afterEach } from '@jest/globals';
 import { LLMContextManager } from '../../server/llm/context/context-manager.js';
 import { pool } from '../../server/db/pool.js';
 import { createTestCampaignWithTwoPlayers } from '../fixtures/llm-context-fixtures.js';
 
-describe('LLMContextManager.buildGameContext — actingUserId', () => {
-  let fixture;
-  beforeAll(async () => {
-    fixture = await createTestCampaignWithTwoPlayers();
-  });
-  afterAll(async () => {
-    await fixture.cleanup();
-    await pool.end();
-  });
+let fixture;
 
+beforeAll(async () => {
+  fixture = await createTestCampaignWithTwoPlayers();
+});
+
+afterAll(async () => {
+  await fixture.cleanup();
+  await pool.end();
+});
+
+describe('LLMContextManager.buildGameContext — actingUserId', () => {
   it('uses acting-player position for geography when actingUserId is supplied', async () => {
     const ctx = new LLMContextManager({ pool });
     const ctxBuiltForA = await ctx.buildGameContext({
@@ -47,5 +49,182 @@ describe('LLMContextManager.buildGameContext — actingUserId', () => {
       sessionId: fixture.sessionId,
     });
     expect(built.geographic?.insideBurgId).toBe(fixture.playerA.burgId);
+  });
+});
+
+describe('LLMContextManager.#loadRecentMessages — chat-history scoping', () => {
+  // Track everything inserted by this describe block so afterEach can clean up
+  // cleanly even when an assertion throws mid-test.
+  const insertedMessageIds = [];
+  const insertedSessionIds = [];
+
+  afterEach(async () => {
+    const client = await pool.connect();
+    try {
+      if (insertedMessageIds.length) {
+        await client.query(
+          `DELETE FROM public.chat_messages WHERE id = ANY($1::uuid[])`,
+          [insertedMessageIds.splice(0)],
+        );
+      }
+      if (insertedSessionIds.length) {
+        await client.query(
+          `DELETE FROM public.sessions WHERE id = ANY($1::uuid[])`,
+          [insertedSessionIds.splice(0)],
+        );
+      }
+    } finally {
+      client.release();
+    }
+  });
+
+  async function insertMessage(client, { sessionId, content, createdAt }) {
+    const params = [
+      fixture.campaignId,
+      sessionId,
+      content,
+      'text',
+      fixture.playerA.userId,
+      `${content}-sender`,
+    ];
+    let createdAtClause = 'DEFAULT';
+    if (createdAt) {
+      params.push(createdAt);
+      createdAtClause = `$${params.length}`;
+    }
+    const { rows } = await client.query(
+      `INSERT INTO public.chat_messages
+         (campaign_id, session_id, content, message_type, sender_id, sender_name, created_at)
+       VALUES ($1, $2, $3, $4, $5, $6, ${createdAtClause})
+       RETURNING id`,
+      params,
+    );
+    insertedMessageIds.push(rows[0].id);
+    return rows[0].id;
+  }
+
+  it('Case A — strict session scoping: only the supplied session\'s messages are returned', async () => {
+    const client = await pool.connect();
+    let priorSessionId;
+    try {
+      // Create a separate "prior" session on the same campaign so we have
+      // somewhere distinct to anchor the leaking message.
+      const { rows: priorSessionRows } = await client.query(
+        `INSERT INTO public.sessions (campaign_id, session_number, title, status, game_state)
+           VALUES ($1, 99, $2, 'completed', '{}'::jsonb)
+         RETURNING id`,
+        [fixture.campaignId, 'task2-prior-session'],
+      );
+      priorSessionId = priorSessionRows[0].id;
+      insertedSessionIds.push(priorSessionId);
+
+      await insertMessage(client, {
+        sessionId: fixture.sessionId,
+        content: 'TASK2_CURRENT_SESSION',
+      });
+      await insertMessage(client, {
+        sessionId: priorSessionId,
+        content: 'TASK2_PRIOR_SESSION',
+      });
+      // Regression guard for the OR-NULL clause: a session_id=NULL message
+      // (e.g. a system event) used to leak into every session's prompt.
+      await insertMessage(client, {
+        sessionId: null,
+        content: 'TASK2_NULL_SESSION',
+      });
+    } finally {
+      client.release();
+    }
+
+    const ctx = new LLMContextManager({ pool });
+    const built = await ctx.buildGameContext({
+      campaignId: fixture.campaignId,
+      sessionId: fixture.sessionId,
+    });
+
+    const contents = built.chat.recentMessages.map((m) => m.content);
+    expect(contents).toContain('TASK2_CURRENT_SESSION');
+    expect(contents).not.toContain('TASK2_PRIOR_SESSION');
+    expect(contents).not.toContain('TASK2_NULL_SESSION');
+  });
+
+  it('Case B — recency window: only messages from the last 6 hours appear when sessionId is omitted', async () => {
+    // To exercise the no-session branch in #loadRecentMessages we need
+    // #loadSession to return null. The shared fixture's campaign always has a
+    // session, so spin up a tiny dedicated campaign with no session at all,
+    // then delete it on the way out — chat_messages cascades on campaign delete.
+    const client = await pool.connect();
+    let scratchCampaignId;
+    try {
+      const suffix = `${Date.now()}-${Math.floor(Math.random() * 1e6)}`;
+      const { rows: campRows } = await client.query(
+        `INSERT INTO public.campaigns (name, dm_user_id, status)
+           VALUES ($1, $2, 'active')
+         RETURNING id`,
+        [`task2-recency-${suffix}`, fixture.playerA.userId],
+      );
+      scratchCampaignId = campRows[0].id;
+
+      const recentParams = [
+        scratchCampaignId,
+        null,
+        'TASK2_RECENT',
+        'text',
+        fixture.playerA.userId,
+        'TASK2_RECENT-sender',
+      ];
+      const { rows: recentRows } = await client.query(
+        `INSERT INTO public.chat_messages
+           (campaign_id, session_id, content, message_type, sender_id, sender_name)
+         VALUES ($1, $2, $3, $4, $5, $6)
+         RETURNING id`,
+        recentParams,
+      );
+      insertedMessageIds.push(recentRows[0].id);
+
+      const oldParams = [
+        scratchCampaignId,
+        null,
+        'TASK2_OLD',
+        'text',
+        fixture.playerA.userId,
+        'TASK2_OLD-sender',
+        new Date(Date.now() - 7 * 60 * 60 * 1000),
+      ];
+      const { rows: oldRows } = await client.query(
+        `INSERT INTO public.chat_messages
+           (campaign_id, session_id, content, message_type, sender_id, sender_name, created_at)
+         VALUES ($1, $2, $3, $4, $5, $6, $7)
+         RETURNING id`,
+        oldParams,
+      );
+      insertedMessageIds.push(oldRows[0].id);
+    } finally {
+      client.release();
+    }
+
+    try {
+      const ctx = new LLMContextManager({ pool });
+      const built = await ctx.buildGameContext({
+        campaignId: scratchCampaignId,
+        // sessionId intentionally omitted — and the scratch campaign has none,
+        // so #loadSession returns null and #loadRecentMessages takes the
+        // no-session/recency branch.
+      });
+
+      const contents = built.chat.recentMessages.map((m) => m.content);
+      expect(contents).toContain('TASK2_RECENT');
+      expect(contents).not.toContain('TASK2_OLD');
+    } finally {
+      const cleanupClient = await pool.connect();
+      try {
+        await cleanupClient.query(
+          `DELETE FROM public.campaigns WHERE id = $1`,
+          [scratchCampaignId],
+        );
+      } finally {
+        cleanupClient.release();
+      }
+    }
   });
 });

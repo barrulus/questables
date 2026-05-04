@@ -626,30 +626,35 @@ export class LLMContextManager {
   }
 
   async #loadRecentMessages(client, campaignId, sessionId, limit = 20) {
+    // Two scoping rules:
+    // 1. If a session is supplied, only return that session's messages. The
+    //    historical "OR session_id IS NULL" clause let cross-session events leak
+    //    into the prompt and the LLM hallucinated against them.
+    // 2. If no session is supplied, bound by recency (6 hours real time) so an
+    //    idle campaign doesn't dredge up stale messages.
     const params = [campaignId];
-    const whereClauses = ['m.campaign_id = $1'];
+    let whereClause = 'm.campaign_id = $1';
 
     if (sessionId) {
       params.push(sessionId);
-      whereClauses.push('(m.session_id = $2 OR m.session_id IS NULL)');
+      whereClause += ` AND m.session_id = $${params.length}`;
+    } else {
+      whereClause += ` AND m.created_at >= now() - interval '6 hours'`;
     }
 
     params.push(limit);
 
-    const messagesResult = await client.query(
-      `SELECT m.*,
-              u.username,
-              c.name AS character_name
+    const { rows } = await client.query(
+      `SELECT m.*, u.username, c.name AS character_name
          FROM public.chat_messages m
          LEFT JOIN public.user_profiles u ON u.id = m.sender_id
          LEFT JOIN public.characters c ON c.id = m.character_id
-        WHERE ${whereClauses.join(' AND ')}
+        WHERE ${whereClause}
         ORDER BY m.created_at DESC
-        LIMIT $${params.length}` ,
-      params
+        LIMIT $${params.length}`,
+      params,
     );
-
-    return messagesResult.rows.map(mapChatMessageRow);
+    return rows.map(mapChatMessageRow);
   }
 
   async #loadWorldLore(client, campaignId, geographic) {
