@@ -181,6 +181,7 @@ export async function interceptChatAction({
   gameState,
   contextualService,
   wsServer,
+  llmService = null,
 }) {
   const client = await getClient({ label: 'action-interceptor.process' });
   let committed = false;
@@ -341,6 +342,7 @@ export async function interceptChatAction({
     });
 
     // Step 4: Apply mechanical outcomes
+    let movementOccurred = false;
     if (dmResponse.mechanicalOutcome) {
       await applyMechanicalOutcome(client, {
         sessionId,
@@ -349,6 +351,9 @@ export async function interceptChatAction({
         actingCharacterId: characterId,
         wsServer: wsServer ?? null,
       });
+      if (dmResponse.mechanicalOutcome.type === 'move_player') {
+        movementOccurred = true;
+      }
     }
 
     // Step 4b: Apply scene transition (updates player.current_scene and NPC scene_tag)
@@ -467,6 +472,19 @@ export async function interceptChatAction({
 
     await client.query('COMMIT');
     committed = true;
+
+    // Bust LLM narration cache for this campaign — a movement landed inside
+    // this transaction, the prompt-hash from before is now stale.
+    if (movementOccurred && typeof llmService?.clearCacheForCampaign === 'function') {
+      try {
+        llmService.clearCacheForCampaign(campaignId);
+      } catch (cacheErr) {
+        logError('Failed to clear LLM cache after intercepted movement (non-fatal)', {
+          campaignId,
+          error: cacheErr?.message ?? String(cacheErr),
+        });
+      }
+    }
 
     logInfo('Chat action resolved', {
       campaignId,

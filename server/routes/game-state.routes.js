@@ -259,6 +259,7 @@ router.post(
             const encounterId = result.newState.encounterId;
             const participantId = nextPlayer.replace('npc:', '');
             // Fire and forget — executeEnemyTurn handles its own DB client
+            const llmService = req.app?.locals?.llmService ?? null;
             import('../services/combat/enemy-turn-service.js').then(({ executeEnemyTurn }) => {
               executeEnemyTurn(contextualService, req.app.locals.pool ?? null, {
                 campaignId,
@@ -266,6 +267,7 @@ router.post(
                 encounterId,
                 participantId,
                 wsServer,
+                llmService,
               }).catch((err) => logError('Enemy turn failed', err, { campaignId, participantId }));
             }).catch((err) => logError('Enemy turn import failed', err));
           }

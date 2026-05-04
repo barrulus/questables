@@ -31,6 +31,7 @@ export const executeEnemyTurn = async (contextualService, _pool, {
   encounterId,
   participantId,
   wsServer,
+  llmService = null,
 }) => {
   const client = await getClient({ label: 'enemy-turn' });
 
@@ -105,6 +106,7 @@ export const executeEnemyTurn = async (contextualService, _pool, {
     }
 
     // Apply mechanical outcomes
+    let movementOccurred = false;
     if (dmResponse.mechanicalOutcome) {
       await applyMechanicalOutcome(client, {
         sessionId,
@@ -112,9 +114,24 @@ export const executeEnemyTurn = async (contextualService, _pool, {
         actingCharacterId: enemy.participant_id,
         wsServer: null,
       });
+      if (dmResponse.mechanicalOutcome.type === 'move_player') {
+        movementOccurred = true;
+      }
     }
 
     await client.query('COMMIT');
+
+    // Bust LLM narration cache if the enemy's action moved a player.
+    if (movementOccurred && typeof llmService?.clearCacheForCampaign === 'function') {
+      try {
+        llmService.clearCacheForCampaign(campaignId);
+      } catch (cacheErr) {
+        logError('Failed to clear LLM cache after enemy-turn movement (non-fatal)', {
+          campaignId,
+          error: cacheErr?.message ?? String(cacheErr),
+        });
+      }
+    }
 
     // Persist narration to Adventure chat channel
     if (dmResponse.narration) {
@@ -186,6 +203,7 @@ export const executeEnemyTurn = async (contextualService, _pool, {
               encounterId,
               participantId: nextParticipantId,
               wsServer,
+              llmService,
             }).catch((err) => logError('Chained enemy turn failed', err, { participantId: nextParticipantId }));
           });
         }

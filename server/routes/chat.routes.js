@@ -226,6 +226,7 @@ router.post('/api/campaigns/:campaignId/messages', requireAuth, requireCampaignP
     if (effectiveChannelType === 'party' && (!type || type === 'text')) {
       const contextualService = req.app?.locals?.contextualLLMService;
       const wsServer = req.app?.locals?.wsServer;
+      const llmService = req.app?.locals?.llmService ?? null;
 
       if (contextualService) {
         // Fire-and-forget — don't block the chat response
@@ -241,6 +242,7 @@ router.post('/api/campaigns/:campaignId/messages', requireAuth, requireCampaignP
                 gameState,
                 contextualService,
                 wsServer,
+                llmService,
               });
             }
           })

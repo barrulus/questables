@@ -219,6 +219,7 @@ router.post(
           const finalStatus = needsRoll ? 'awaiting_roll' : 'resolved';
 
           // Apply mechanical outcomes if no roll needed
+          let movementOccurred = false;
           if (!needsRoll && dmResponse.mechanicalOutcome) {
             await applyMechanicalOutcome(asyncClient, {
               sessionId: session.id,
@@ -226,6 +227,9 @@ router.post(
               actingCharacterId: characterId,
               wsServer: req.app?.locals?.wsServer ?? null,
             });
+            if (dmResponse.mechanicalOutcome.type === 'move_player') {
+              movementOccurred = true;
+            }
           }
 
           // Auto-write NPC memory after social dialogue
@@ -257,6 +261,15 @@ router.post(
           );
 
           await asyncClient.query('COMMIT');
+
+          // Bust LLM narration cache if a movement landed during this action.
+          if (movementOccurred) {
+            try {
+              req.app?.locals?.llmService?.clearCacheForCampaign?.(campaignId);
+            } catch (cacheErr) {
+              logError('Failed to clear LLM cache after action movement (non-fatal)', cacheErr);
+            }
+          }
 
           // Persist narration to Adventure chat channel + broadcast via WebSocket
           if (dmResponse.narration) {
@@ -505,6 +518,7 @@ router.post(
           });
 
           // Apply outcomes
+          let movementOccurred = false;
           if (dmResponse.mechanicalOutcome) {
             await applyMechanicalOutcome(asyncClient, {
               sessionId: action.session_id,
@@ -512,6 +526,9 @@ router.post(
               actingCharacterId: action.character_id,
               wsServer: req.app?.locals?.wsServer ?? null,
             });
+            if (dmResponse.mechanicalOutcome.type === 'move_player') {
+              movementOccurred = true;
+            }
           }
 
           // Append the DM response. Status was already set to 'resolved' in the
@@ -524,6 +541,15 @@ router.post(
           );
 
           await asyncClient.query('COMMIT');
+
+          // Bust LLM narration cache if a movement landed during this roll resolution.
+          if (movementOccurred) {
+            try {
+              req.app?.locals?.llmService?.clearCacheForCampaign?.(campaignId);
+            } catch (cacheErr) {
+              logError('Failed to clear LLM cache after roll-result movement (non-fatal)', cacheErr);
+            }
+          }
 
           // Persist narration to Adventure chat channel
           if (dmResponse.narration) {

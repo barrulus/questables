@@ -595,6 +595,17 @@ router.post('/api/campaigns/:campaignId/players', async (req, res) => {
 
     await client.query('COMMIT');
 
+    // If auto-placement set the player's loc_current, bust any cached
+    // narration for this campaign (otherwise the next narration could
+    // still hash to a pre-spawn cache key).
+    if (autoPlacement) {
+      try {
+        req.app?.locals?.llmService?.clearCacheForCampaign?.(campaignId);
+      } catch (cacheErr) {
+        logError('[Campaigns] Failed to clear LLM cache after auto-placement (non-fatal)', cacheErr);
+      }
+    }
+
     res.json({
       message: playerStatus === 'pending' ? 'Join request submitted — awaiting DM approval' : 'Successfully joined campaign',
       playerId: campaignPlayerId,
@@ -929,6 +940,14 @@ router.post(
 
       await client.query('COMMIT');
 
+      // Bust LLM narration cache for this campaign — world state shifted,
+      // any cached prompt-hash from before the move is now stale.
+      try {
+        req.app?.locals?.llmService?.clearCacheForCampaign?.(campaignId);
+      } catch (cacheErr) {
+        logError('[Movement] Failed to clear LLM cache after move (non-fatal)', cacheErr);
+      }
+
       if (player?.id && wsServer) {
         // Fetch inside_burg_id after commit so broadcast reflects the updated value
         const { rows: burgRows } = await client.query(
@@ -1128,6 +1147,15 @@ router.post(
       });
 
       await client.query('COMMIT');
+
+      // Bust LLM narration cache for this campaign — teleport changed
+      // loc_current / inside_burg_id, the prompt hash before the jump is
+      // now stale and must not be served from the 5-min TTL cache.
+      try {
+        req.app?.locals?.llmService?.clearCacheForCampaign?.(campaignId);
+      } catch (cacheErr) {
+        logError('[Movement] Failed to clear LLM cache after teleport (non-fatal)', cacheErr);
+      }
 
       if (player?.id && wsServer) {
         wsServer.broadcastToCampaign(campaignId, 'player-teleported', {

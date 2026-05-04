@@ -197,6 +197,33 @@ export class EnhancedLLMService {
     return true;
   }
 
+  /**
+   * Bust every cache entry whose stored metadata.campaignId === campaignId.
+   *
+   * Call this after a successful movement event lands (teleport, narrative
+   * move, etc.) — the world state has shifted but a cached prompt-hash with
+   * a 5-min TTL would otherwise serve stale narration. Counted as eviction
+   * in metrics so cache-hit-rate watchers see the impact.
+   *
+   * @param {string} campaignId
+   * @returns {number} count of cache entries deleted
+   */
+  clearCacheForCampaign(campaignId) {
+    if (!campaignId) return 0;
+    let deleted = 0;
+    for (const [key, entry] of this.cache.entries()) {
+      const entryCampaignId = entry?.value?.request?.metadata?.campaignId ?? null;
+      if (entryCampaignId === campaignId) {
+        this.cache.delete(key);
+        deleted += 1;
+      }
+    }
+    if (deleted > 0) {
+      this.metrics.totals.cacheEvictions += deleted;
+    }
+    return deleted;
+  }
+
   getProvider(name) {
     const providerName = name || this.defaultProviderName;
     if (!providerName) {
