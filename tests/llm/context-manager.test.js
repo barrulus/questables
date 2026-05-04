@@ -272,6 +272,103 @@ describe('LLMContextManager — known-location default + currentBurg surfacing',
   });
 });
 
+describe('LLMContextManager.buildGameContext — scene presence filters', () => {
+  it('returns only NPCs in the acting player\'s current_scene under npcsInScene; full roster under npcs', async () => {
+    const client = await pool.connect();
+    let inserted = [];
+    try {
+      // Set fixture playerA's current_scene
+      await client.query(
+        `UPDATE public.campaign_players SET current_scene = 'task5_cave_chamber'
+          WHERE campaign_id = $1 AND user_id = $2`,
+        [fixture.campaignId, fixture.playerA.userId],
+      );
+      // npcs.personality is NOT NULL — supply a placeholder for fixture rows.
+      const result = await client.query(
+        `INSERT INTO public.npcs (campaign_id, name, race, personality, scene_tag)
+         VALUES
+           ($1, 'TASK5_IN_SCENE',  'human', 'placeholder', 'task5_cave_chamber'),
+           ($1, 'TASK5_OFF_SCENE', 'human', 'placeholder', 'task5_wellhead'),
+           ($1, 'TASK5_GLOBAL',    'human', 'placeholder', NULL)
+         RETURNING id`,
+        [fixture.campaignId],
+      );
+      inserted = result.rows.map((r) => r.id);
+
+      const ctx = new LLMContextManager({ pool });
+      const built = await ctx.buildGameContext({
+        campaignId: fixture.campaignId,
+        sessionId: fixture.sessionId,
+        actingUserId: fixture.playerA.userId,
+      });
+
+      const sceneNames = built.npcsInScene.map((n) => n.name);
+      const rosterNames = built.npcs.map((n) => n.name);
+      expect(sceneNames).toEqual(['TASK5_IN_SCENE']);
+      expect(rosterNames).toContain('TASK5_OFF_SCENE');
+      expect(rosterNames).toContain('TASK5_GLOBAL');
+    } finally {
+      // Reset playerA's scene tag and remove the inserted NPCs
+      await client.query(
+        `UPDATE public.campaign_players SET current_scene = NULL
+          WHERE campaign_id = $1 AND user_id = $2`,
+        [fixture.campaignId, fixture.playerA.userId],
+      );
+      if (inserted.length) {
+        await client.query('DELETE FROM public.npcs WHERE id = ANY($1::uuid[])', [inserted]);
+      }
+      client.release();
+    }
+  });
+
+  it('returns only co-located party members under partyInScene; full party under party', async () => {
+    // Fixture has playerA at burgA, playerB at burgB. partyInScene for actingUserId=A
+    // should contain only playerA's character.
+    const ctx = new LLMContextManager({ pool });
+    const built = await ctx.buildGameContext({
+      campaignId: fixture.campaignId,
+      sessionId: fixture.sessionId,
+      actingUserId: fixture.playerA.userId,
+    });
+    const inSceneIds = built.partyInScene.map((p) => p.character.id);
+    const rosterIds = built.party.map((p) => p.character.id);
+    expect(inSceneIds.length).toBe(1);
+    expect(rosterIds.length).toBe(2);
+    // The in-scene one should NOT be playerB's character
+    expect(rosterIds).toContain(inSceneIds[0]);
+    expect(inSceneIds[0]).not.toBe(rosterIds.find((id) => id !== inSceneIds[0]));
+  });
+
+  it('returns empty partyInScene when acting player has no inside_burg_id', async () => {
+    const client = await pool.connect();
+    try {
+      // Temporarily clear playerA's inside_burg_id
+      await client.query(
+        `UPDATE public.campaign_players SET inside_burg_id = NULL
+          WHERE campaign_id = $1 AND user_id = $2`,
+        [fixture.campaignId, fixture.playerA.userId],
+      );
+
+      const ctx = new LLMContextManager({ pool });
+      const built = await ctx.buildGameContext({
+        campaignId: fixture.campaignId,
+        sessionId: fixture.sessionId,
+        actingUserId: fixture.playerA.userId,
+      });
+      expect(built.partyInScene).toEqual([]);
+      expect(built.party.length).toBe(2);
+    } finally {
+      // Restore playerA's inside_burg_id
+      await client.query(
+        `UPDATE public.campaign_players SET inside_burg_id = $3
+          WHERE campaign_id = $1 AND user_id = $2`,
+        [fixture.campaignId, fixture.playerA.userId, fixture.playerA.burgId],
+      );
+      client.release();
+    }
+  });
+});
+
 describe('LLMContextManager.buildGameContext — lore weighting', () => {
   it('prefers state-matched lore over global, drops unrelated subsections', async () => {
     const ctx = new LLMContextManager({ pool });

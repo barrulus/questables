@@ -52,6 +52,17 @@ const summarizeParty = (party) => summarizeArray(party, (member) => {
   return `- ${member.character.name} (Level ${member.character.level} ${member.character.race} ${member.character.class})${isActive}`;
 });
 
+const summarizePartyInScene = (partyInScene) => {
+  if (!Array.isArray(partyInScene) || partyInScene.length === 0) {
+    return 'The acting player is alone (no other party members co-located).';
+  }
+  return partyInScene
+    .map((member) =>
+      `- ${member.character.name} (Level ${member.character.level} ${member.character.race} ${member.character.class})`,
+    )
+    .join('\n');
+};
+
 const summarizeNPCs = (npcs) => summarizeArray(npcs, (npc) => {
   const relationshipSummary = Array.isArray(npc.relationships) && npc.relationships.length > 0
     ? `Relationships: ${npc.relationships
@@ -67,6 +78,21 @@ const summarizeNPCs = (npcs) => summarizeArray(npcs, (npc) => {
   }
   return `- ${npc.name} (${npc.race}${npc.occupation ? `, ${npc.occupation}` : ''}) — ${sanitize(npc.personality)}. ${relationshipSummary}${voiceSuffix}`;
 });
+
+const summarizeNPCsInScene = (npcsInScene) => {
+  if (!Array.isArray(npcsInScene) || npcsInScene.length === 0) {
+    return 'No NPCs present in the current scene.';
+  }
+  return npcsInScene
+    .map((npc) => {
+      const demo = [npc.gender, npc.ageGroup].filter(Boolean).join(' ');
+      const desc = [demo, npc.occupation].filter(Boolean).join(', ');
+      const head = desc ? `${npc.name} (${npc.race}, ${desc})` : `${npc.name} (${npc.race})`;
+      const personality = sanitize(npc.personality);
+      return personality ? `- ${head} — ${personality}` : `- ${head}`;
+    })
+    .join('\n');
+};
 
 const summarizeLocations = (locations) => summarizeArray(locations, (location) => {
   const discovery = location.isDiscovered ? 'discovered' : 'undiscovered';
@@ -111,8 +137,14 @@ const buildContextSummary = (context, campaignLLMSettings) => {
     summarySections.push('Session: none selected (using latest campaign state).');
   }
 
-  summarySections.push(`Party:\n${summarizeParty(context.party)}`);
-  summarySections.push(`NPCs:\n${summarizeNPCs(context.npcs)}`);
+  summarySections.push(`### NPCs in current scene\n${summarizeNPCsInScene(context.npcsInScene)}`);
+  summarySections.push(
+    `### Campaign NPC roster (relationship lookup only — do not narrate as present unless they appear in the in-scene list above)\n${summarizeNPCs(context.npcs)}`,
+  );
+  summarySections.push(`### Party in current scene\n${summarizePartyInScene(context.partyInScene)}`);
+  summarySections.push(
+    `### Full party roster (for reference only — do not narrate as present unless they appear in the in-scene party list above)\n${summarizeParty(context.party)}`,
+  );
   summarySections.push(`Locations:\n${summarizeLocations(context.locations)}`);
   summarySections.push(`Encounters:\n${summarizeEncounters(context.encounters)}`);
   summarySections.push(`Recent chat messages:\n${summarizeChat(context.chat?.recentMessages, campaignLLMSettings?.chat_history_depth || 5)}`);
@@ -325,6 +357,13 @@ export function buildStructuredPrompt({ type, context, providerConfig, request =
         promptSections.push(`### ${section.title}`);
         promptSections.push(section.content);
       });
+  } else if (typeof request.extraSections === 'string' && request.extraSections.trim().length > 0) {
+    // String form: caller has already structured the content (often with its
+    // own markdown headers). Push as a single Additional Details section so
+    // it doesn't silently disappear. Don't sanitize — collapsing whitespace
+    // would flatten multi-line block content.
+    promptSections.push('### Additional Details');
+    promptSections.push(request.extraSections.trim());
   }
 
   // Inject custom world context from campaign LLM settings
@@ -354,7 +393,17 @@ export function buildStructuredPrompt({ type, context, providerConfig, request =
   }
 
   const prompt = promptSections.join('\n\n');
-  const systemPrompt = buildSystemPrompt({ type, providerConfig, campaignLLMSettings });
+
+  // Honour caller-supplied system prompt override (e.g.
+  // AREA_DESCRIPTION_SYSTEM_PROMPT, WORLD_TURN_SYSTEM_PROMPT). Don't sanitize —
+  // these prompts rely on multi-line whitespace and rule lists that
+  // sanitize() would collapse into a single line.
+  const overrideRaw = request.systemPromptOverride;
+  const useOverride =
+    typeof overrideRaw === 'string' && overrideRaw.trim().length > 0;
+  const systemPrompt = useOverride
+    ? overrideRaw
+    : buildSystemPrompt({ type, providerConfig, campaignLLMSettings });
 
   return {
     systemPrompt,

@@ -312,12 +312,32 @@ export class LLMContextManager {
       const worldLore = await this.#loadWorldLore(client, campaignId, geographic);
       const recentTravel = await this.#loadRecentTravel(client, campaignId);
 
+      // Scene-presence filters: derive from the acting player's current_scene
+      // and inside_burg_id so the prompt can distinguish "present in scene"
+      // from "present in campaign roster". Both full rosters are still
+      // returned alongside for relationship lookup / reference.
+      const actingScene = await this.#loadActingScene(client, campaignId, actingUserId);
+      const npcsInScene = await this.#loadNpcsInScene(client, campaignId, actingScene);
+
+      // partyInScene is computed from `party` — co-located = same inside_burg_id
+      // as the acting player. If the acting player has no inside_burg_id (or
+      // can't be located in the party), partyInScene is empty.
+      const actingPartyEntry = actingUserId
+        ? party.find((entry) => entry.player?.id === actingUserId)
+        : null;
+      const actingInsideBurgId = actingPartyEntry?.insideBurgId ?? null;
+      const partyInScene = actingInsideBurgId
+        ? party.filter((entry) => entry.insideBurgId === actingInsideBurgId)
+        : [];
+
       return {
         campaign,
         session,
         party,
+        partyInScene,
         locations,
         npcs,
+        npcsInScene,
         encounters,
         geographic,
         chat: {
@@ -478,6 +498,43 @@ export class LLMContextManager {
       role: row.role,
       joinedAt: row.joined_at?.toISOString?.() ?? null,
       isInCurrentSession: activeCharacterIds.has(row.character_id),
+      insideBurgId: row.inside_burg_id ?? null,
+    }));
+  }
+
+  async #loadActingScene(client, campaignId, actingUserId) {
+    if (!actingUserId) return null;
+    const { rows } = await client.query(
+      `SELECT current_scene
+         FROM public.campaign_players
+        WHERE campaign_id = $1 AND user_id = $2
+        LIMIT 1`,
+      [campaignId, actingUserId],
+    );
+    return rows[0]?.current_scene ?? null;
+  }
+
+  async #loadNpcsInScene(client, campaignId, sceneTag) {
+    if (!sceneTag) return [];
+    // Focused subset — relationships intentionally omitted; the LLM only
+    // narrates these NPCs as present, the relationship network lives on the
+    // full roster returned alongside.
+    const { rows } = await client.query(
+      `SELECT id, name, race, occupation, personality, motivations, gender, age_group
+         FROM public.npcs
+        WHERE campaign_id = $1 AND scene_tag = $2
+        ORDER BY name ASC`,
+      [campaignId, sceneTag],
+    );
+    return rows.map((row) => ({
+      id: row.id,
+      name: row.name,
+      race: row.race,
+      occupation: nullIfEmpty(row.occupation),
+      personality: nullIfEmpty(row.personality),
+      motivations: nullIfEmpty(row.motivations),
+      gender: nullIfEmpty(row.gender),
+      ageGroup: nullIfEmpty(row.age_group),
     }));
   }
 

@@ -186,10 +186,9 @@ RULES:
 - Mention any points of interest (markers) or campaign regions they've entered.
 - If entering a settlement, describe the approach — gates, walls, sounds, smells.
 - Keep it atmospheric and evocative but concise.
-- If a "CURRENT LOCATION" line is provided, you MUST use THAT name for the
-  settlement the party is in. Do NOT reuse names of prior locations from
-  the chat history or lore — the party has moved on. If prior lore refers
-  to another town (e.g. "Toprak"), ignore it; narrate the current location.
+- The "Geographic context" block in the snapshot tells you the party's actual
+  current location. Use that name. Do NOT reuse names of prior locations from
+  chat history or lore — the party has moved on.
 - Respond with plain narrative text, not JSON.`;
 
 /**
@@ -212,29 +211,12 @@ export async function narrateAreaEntry({
   wsServer,
 }) {
   try {
-    const sections = [];
-
-    // Anchor the LLM to the actual current burg so it can't re-use names
-    // of prior locations from chat history / lore. If the party isn't inside
-    // a burg, we still pin their terrain cell so narration doesn't drift.
-    const { rows: currentBurg } = await query(
-      `SELECT b.name AS burg_name, b.statefull, b.provincefull, b.culture
-         FROM public.campaign_players cp
-         JOIN public.maps_burgs b ON b.id = cp.inside_burg_id
-        WHERE cp.campaign_id = $1 AND cp.status = 'active' AND cp.inside_burg_id IS NOT NULL
-        LIMIT 1`,
-      [campaignId],
-      { label: 'area-narrate.current-burg' },
-    );
-    if (currentBurg.length > 0) {
-      const b = currentBurg[0];
-      const parts = [b.burg_name];
-      if (b.provincefull) parts.push(b.provincefull);
-      if (b.statefull) parts.push(b.statefull);
-      sections.push(`## CURRENT LOCATION\n${parts.join(', ')}${b.culture ? ` (${b.culture} culture)` : ''}`);
-    }
-
-    if (movementContext) sections.push(`## Movement Context\n${movementContext}`);
+    // The geographic / scene-presence sections in the prompt now anchor the
+    // narration to the party's actual current location. Movement context
+    // (when supplied) is the only extra detail the caller adds.
+    const extraSections = movementContext
+      ? [{ title: 'Movement Context', content: movementContext }]
+      : [];
 
     const { result } = await contextualService.generateFromContext({
       campaignId,
@@ -242,7 +224,7 @@ export async function narrateAreaEntry({
       actingUserId,
       type: NARRATIVE_TYPES.AREA_DESCRIPTION,
       request: {
-        extraSections: sections.join('\n\n'),
+        extraSections,
         systemPromptOverride: AREA_DESCRIPTION_SYSTEM_PROMPT,
       },
     });
@@ -295,74 +277,12 @@ RULES:
 - Respond with plain narrative text, not JSON.
 
 SCENE AWARENESS (CRITICAL — do NOT teleport NPCs):
-- The "## Current Scene" section below tells you EXACTLY where the party is right now and which NPCs are physically with them.
-- If the Current Scene says "no NPCs present", then NO NPCs are present in this narration. Do NOT have anyone speak, react, watch, or wring their hands.
-- If the Current Scene lists specific NPCs, those are the ONLY NPCs who can appear in this narration.
-- NPCs mentioned earlier in the transcript who are NOT in the current scene are ELSEWHERE — they were left behind when the party moved. Do not narrate them as present, even if they were just two paragraphs ago.
+- The "### NPCs in current scene" and "### Party in current scene" sections in the snapshot tell you EXACTLY who is physically with the party right now.
+- If "### NPCs in current scene" says no NPCs are present, then NO NPCs are present in this narration. Do NOT have anyone speak, react, watch, or wring their hands.
+- If it lists specific NPCs, those are the ONLY NPCs who can appear in this narration.
+- The "### Campaign NPC roster" section is for relationship lookup only — anyone listed there but NOT in the in-scene list is ELSEWHERE. Do not narrate them as present, even if they were just two paragraphs ago in chat.
 - Example: if the party climbed down a well into a tunnel, the villagers waiting at the wellhead are NOT in the tunnel with them. They are still up at the well.
 - When the current scene is an isolated location (a cave, a tunnel, a sealed chamber), focus on the environment and the party itself — not on absent NPCs.`;
-
-/**
- * Build the "## Current Scene" override section that tells the world-turn
- * LLM exactly where the party is and which NPCs (if any) are physically with
- * them. Reads `current_scene` from active campaign players and `scene_tag`
- * from NPCs — both maintained by `applySceneTransition`.
- */
-async function buildCurrentSceneSection(campaignId) {
-  try {
-    const { rows: players } = await query(
-      `SELECT cp.user_id, cp.current_scene, c.name AS character_name
-         FROM public.campaign_players cp
-         LEFT JOIN public.characters c ON c.id = cp.character_id
-        WHERE cp.campaign_id = $1 AND cp.status = 'active'`,
-      [campaignId],
-      { label: 'world-turn.current-scene-players' },
-    );
-
-    if (players.length === 0) {
-      return '## Current Scene\nNo active players. No NPCs present.';
-    }
-
-    // Collapse to the most-recently-set scene if all players agree, otherwise
-    // list each player's scene. In practice the party stays together.
-    const scenes = [...new Set(players.map((p) => p.current_scene).filter(Boolean))];
-    const partyScene = scenes.length === 1 ? scenes[0] : null;
-
-    let npcLines = 'No NPCs present (the party is alone in this location).';
-    if (partyScene) {
-      const { rows: sceneNpcs } = await query(
-        `SELECT name, gender, age_group, occupation
-           FROM public.npcs
-          WHERE campaign_id = $1 AND scene_tag = $2`,
-        [campaignId, partyScene],
-        { label: 'world-turn.scene-npcs' },
-      );
-      if (sceneNpcs.length > 0) {
-        npcLines = sceneNpcs
-          .map((n) => {
-            const demo = [n.gender, n.age_group].filter(Boolean).join(' ');
-            const desc = [demo, n.occupation].filter(Boolean).join(', ');
-            return desc ? `- ${n.name} (${desc})` : `- ${n.name}`;
-          })
-          .join('\n');
-      }
-    }
-
-    const sceneLine = partyScene
-      ? `Sub-scene: ${partyScene}`
-      : `Players in different scenes: ${players.map((p) => `${p.character_name ?? 'someone'} → ${p.current_scene ?? 'unspecified'}`).join('; ')}`;
-
-    return `${sceneLine}
-
-NPCs in this exact scene:
-${npcLines}
-
-The "NPCs:" list earlier in the Game Context Snapshot is the FULL CAMPAIGN ROSTER, not the in-scene cast. Use ONLY the NPCs listed above. Any NPC mentioned earlier in the transcript who is NOT listed above is ELSEWHERE and must NOT appear in this narration.`;
-  } catch (err) {
-    logError('Failed to build current scene section', { campaignId, error: err.message });
-    return '';
-  }
-}
 
 /**
  * Generate and post world turn narration after all players have acted in a round.
@@ -382,17 +302,8 @@ export async function narrateWorldTurn({
   wsServer,
 }) {
   try {
-    // Build the current-scene override so the LLM doesn't pull NPCs from the
-    // generic campaign list when they aren't physically with the party.
-    // extraSections is an array of {title, content} — see prompt-builder.js.
-    const sceneContent = await buildCurrentSceneSection(campaignId);
-    const extraSections = sceneContent
-      ? [{
-          title: 'Current Scene (HARD OVERRIDE — only these NPCs are physically present right now)',
-          content: sceneContent,
-        }]
-      : [];
-
+    // Scene presence is now handled by buildGameContext's npcsInScene /
+    // partyInScene fields and rendered in the snapshot; no override needed.
     const { result } = await contextualService.generateFromContext({
       campaignId,
       sessionId,
@@ -400,7 +311,6 @@ export async function narrateWorldTurn({
       type: NARRATIVE_TYPES.WORLD_TURN_NARRATION,
       request: {
         systemPromptOverride: WORLD_TURN_SYSTEM_PROMPT,
-        extraSections,
       },
     });
 
