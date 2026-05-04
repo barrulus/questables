@@ -205,6 +205,7 @@ RULES:
 export async function narrateAreaEntry({
   campaignId,
   sessionId,
+  actingUserId = null,
   movementContext = null,
   contextualService,
   wsServer,
@@ -237,6 +238,7 @@ export async function narrateAreaEntry({
     const { result } = await contextualService.generateFromContext({
       campaignId,
       sessionId,
+      actingUserId,
       type: NARRATIVE_TYPES.AREA_DESCRIPTION,
       request: {
         extraSections: sections.join('\n\n'),
@@ -373,6 +375,7 @@ The "NPCs:" list earlier in the Game Context Snapshot is the FULL CAMPAIGN ROSTE
 export async function narrateWorldTurn({
   campaignId,
   sessionId,
+  actingUserId = null,
   contextualService,
   wsServer,
 }) {
@@ -391,6 +394,7 @@ export async function narrateWorldTurn({
     const { result } = await contextualService.generateFromContext({
       campaignId,
       sessionId,
+      actingUserId,
       type: NARRATIVE_TYPES.WORLD_TURN_NARRATION,
       request: {
         systemPromptOverride: WORLD_TURN_SYSTEM_PROMPT,
@@ -449,7 +453,13 @@ export function fireWorldTurnIfPending({
   // a failure in one phase doesn't strand the others.
   (async () => {
     try {
-      await narrateWorldTurn({ campaignId, sessionId, contextualService, wsServer });
+      await narrateWorldTurn({
+        campaignId,
+        sessionId,
+        actingUserId: actorId ?? null,
+        contextualService,
+        wsServer,
+      });
     } catch (err) {
       logError('Auto world turn narration failed', { campaignId, error: err.message });
     }

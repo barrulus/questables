@@ -254,7 +254,7 @@ export class LLMContextManager {
     this.pool = pool;
   }
 
-  async buildGameContext({ campaignId, sessionId, llmSettings } = {}) {
+  async buildGameContext({ campaignId, sessionId, llmSettings, actingUserId = null } = {}) {
     if (!campaignId) {
       throw new LLMServiceError('Campaign ID is required to build LLM context', {
         type: 'context_builder_missing_campaign',
@@ -283,7 +283,7 @@ export class LLMContextManager {
       // Load geographic context based on active player position (must come before worldLore)
       let geographic = null;
       if (campaign.worldMapId) {
-        const playerPosition = await this.#loadActivePlayerPosition(client, campaignId, session);
+        const playerPosition = await this.#loadPlayerPosition(client, campaignId, session, actingUserId);
         if (playerPosition) {
           geographic = await buildGeographicContext({
             worldMapId: campaign.worldMapId,
@@ -572,38 +572,37 @@ export class LLMContextManager {
     );
   }
 
-  async #loadActivePlayerPosition(client, campaignId, session) {
-    // Determine the active player from game state
+  async #loadPlayerPosition(client, campaignId, session, actingUserId) {
+    // Priority: explicit actingUserId → gameState.activePlayerId → most-recently-located active player.
+    // The acting user is whoever triggered the current LLM call (e.g. the
+    // chat-message author). When the party is split, that's not necessarily
+    // the same person as gameState.activePlayerId.
     const gameState = session?.gameState;
-    const activePlayerId = gameState?.activePlayerId ?? null;
+    const fallbackId = gameState?.activePlayerId ?? null;
+    const targetUserId = actingUserId ?? fallbackId;
 
-    // Query: if there's an active player, get their position; otherwise get the party centroid
     let positionQuery;
     let positionParams;
 
-    if (activePlayerId) {
+    if (targetUserId) {
       positionQuery = `
-        SELECT ST_X(loc_current) AS x, ST_Y(loc_current) AS y,
-               inside_burg_id
+        SELECT ST_X(loc_current) AS x, ST_Y(loc_current) AS y, inside_burg_id
           FROM public.campaign_players
          WHERE campaign_id = $1 AND user_id = $2 AND loc_current IS NOT NULL
          LIMIT 1`;
-      positionParams = [campaignId, activePlayerId];
+      positionParams = [campaignId, targetUserId];
     } else {
-      // Fallback: first player with a known position
       positionQuery = `
-        SELECT ST_X(loc_current) AS x, ST_Y(loc_current) AS y,
-               inside_burg_id
+        SELECT ST_X(loc_current) AS x, ST_Y(loc_current) AS y, inside_burg_id
           FROM public.campaign_players
          WHERE campaign_id = $1 AND loc_current IS NOT NULL AND status = 'active'
-         ORDER BY last_located_at DESC
+         ORDER BY last_located_at DESC NULLS LAST
          LIMIT 1`;
       positionParams = [campaignId];
     }
 
     const { rows } = await client.query(positionQuery, positionParams);
     if (!rows.length) return null;
-
     return {
       x: Number(rows[0].x),
       y: Number(rows[0].y),

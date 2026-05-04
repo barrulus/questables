@@ -88,6 +88,7 @@ export function createContextualLLMService({ pool, llmService, providerName, pro
   const generateFromContext = async ({
     campaignId,
     sessionId,
+    actingUserId = null,
     type,
     provider: providerOverride,
     parameters,
@@ -105,7 +106,12 @@ export function createContextualLLMService({ pool, llmService, providerName, pro
       includeUndiscoveredLocations: campaignLLMSettings.include_undiscovered_locations,
     } : undefined;
 
-    const gameContext = await contextManager.buildGameContext({ campaignId, sessionId, llmSettings });
+    const gameContext = await contextManager.buildGameContext({
+      campaignId,
+      sessionId,
+      llmSettings,
+      actingUserId,
+    });
 
     // Pass campaign LLM settings to prompt builder
     const enrichedRequest = {

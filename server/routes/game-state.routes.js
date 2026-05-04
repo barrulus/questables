@@ -220,6 +220,7 @@ router.post(
             narrateWorldTurn({
               campaignId,
               sessionId,
+              actingUserId: req.user?.id ?? null,
               contextualService,
               wsServer,
             }).then(async () => {

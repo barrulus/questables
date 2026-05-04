@@ -982,6 +982,7 @@ router.post(
                 return narrateAreaEntry({
                   campaignId,
                   sessionId: sess.id,
+                  actingUserId: req.user?.id ?? null,
                   movementContext: reason || `Moved to (${Math.round(finalTarget.x)}, ${Math.round(finalTarget.y)})`,
                   contextualService,
                   wsServer,

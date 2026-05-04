@@ -98,6 +98,7 @@ export async function shouldInterceptAsAction({
 async function parseActionIntent(contextualService, {
   campaignId,
   sessionId,
+  actingUserId = null,
   characterName,
   characterClass,
   characterLevel,
@@ -120,6 +121,7 @@ async function parseActionIntent(contextualService, {
     const { result } = await contextualService.generateFromContext({
       campaignId,
       sessionId,
+      actingUserId,
       type: NARRATIVE_TYPES.CHAT_ACTION_PARSE,
       request: {
         extraSections: prompt,
@@ -220,6 +222,7 @@ export async function interceptChatAction({
     const intent = await parseActionIntent(contextualService, {
       campaignId,
       sessionId,
+      actingUserId: userId,
       characterName: character.name,
       characterClass: character.class,
       characterLevel: character.level,
