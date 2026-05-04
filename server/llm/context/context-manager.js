@@ -286,6 +286,22 @@ export class LLMContextManager {
       }
 
       const session = await this.#loadSession(client, { campaignId, sessionId });
+
+      // Resolve the acting-user-id once, sharing the same priority across
+      // every downstream lookup (scene tag, position, partyInScene). The
+      // priority mirrors #loadPlayerPosition's first two tiers so all three
+      // derive from a single resolution; #loadPlayerPosition retains its
+      // last-located-active-player fallback as a third-level guard for the
+      // rare case where the resolved id has no campaign_players row.
+      //
+      // System-triggered narration (e.g. narrateWorldTurn auto-advance) often
+      // omits actingUserId; without this consolidation, scene/party-in-scene
+      // would be empty even though geography resolved correctly.
+      const resolvedActingUserId =
+        actingUserId
+        ?? session?.gameState?.activePlayerId
+        ?? null;
+
       const party = await this.#loadParty(client, campaignId, session);
       const locations = await this.#loadLocations(client, campaignId, llmSettings);
       const npcs = await this.#loadNPCs(client, campaignId);
@@ -297,7 +313,7 @@ export class LLMContextManager {
       // Load geographic context based on the acting player's position (must come before worldLore)
       let geographic = null;
       if (campaign.worldMapId) {
-        const playerPosition = await this.#loadPlayerPosition(client, campaignId, session, actingUserId);
+        const playerPosition = await this.#loadPlayerPosition(client, campaignId, session, resolvedActingUserId);
         if (playerPosition) {
           geographic = await buildGeographicContext({
             worldMapId: campaign.worldMapId,
@@ -316,14 +332,14 @@ export class LLMContextManager {
       // and inside_burg_id so the prompt can distinguish "present in scene"
       // from "present in campaign roster". Both full rosters are still
       // returned alongside for relationship lookup / reference.
-      const actingScene = await this.#loadActingScene(client, campaignId, actingUserId);
+      const actingScene = await this.#loadActingScene(client, campaignId, resolvedActingUserId);
       const npcsInScene = await this.#loadNpcsInScene(client, campaignId, actingScene);
 
       // partyInScene is computed from `party` — co-located = same inside_burg_id
       // as the acting player. If the acting player has no inside_burg_id (or
       // can't be located in the party), partyInScene is empty.
-      const actingPartyEntry = actingUserId
-        ? party.find((entry) => entry.player?.id === actingUserId)
+      const actingPartyEntry = resolvedActingUserId
+        ? party.find((entry) => entry.player?.id === resolvedActingUserId)
         : null;
       const actingInsideBurgId = actingPartyEntry?.insideBurgId ?? null;
       const partyInScene = actingInsideBurgId

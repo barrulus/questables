@@ -152,3 +152,65 @@ describe('buildStructuredPrompt — scene-presence sections', () => {
     expect(out.prompt).toContain('alone');
   });
 });
+
+describe('buildStructuredPrompt — section ordering', () => {
+  it('renders geographic context before scene/roster sections and before recent chat', () => {
+    const ctx = {
+      ...makeContext(),
+      geographic: {
+        currentBurg: {
+          id: 'burg-1',
+          name: 'Yelensaz',
+          statefull: 'Some State',
+          provincefull: null,
+          population: 100,
+          culture: 'Some Culture',
+        },
+        isInsideSettlement: true,
+      },
+      npcsInScene: [
+        { id: 'n1', name: 'Mira', race: 'human', occupation: 'innkeeper', personality: 'gruff', gender: 'female', ageGroup: 'adult' },
+      ],
+      party: [
+        { character: { id: 'c1', name: 'Sora', level: 3, race: 'Elf', class: 'Wizard' }, isInCurrentSession: true },
+      ],
+      partyInScene: [
+        { character: { id: 'c1', name: 'Sora', level: 3, race: 'Elf', class: 'Wizard' }, isInCurrentSession: true },
+      ],
+      chat: {
+        recentMessages: [
+          {
+            messageType: 'text',
+            sender: { username: 'tester' },
+            content: 'I remember Toprak',
+            createdAt: new Date().toISOString(),
+          },
+        ],
+      },
+    };
+
+    const out = buildStructuredPrompt({
+      type: NARRATIVE_TYPES.DM_NARRATION,
+      context: ctx,
+      providerConfig: { name: 'test', model: 'test-model' },
+      request: {},
+    });
+
+    const geoIdx = out.prompt.indexOf('Current settlement');
+    const npcIdx = out.prompt.indexOf('### NPCs in current scene');
+    const partyIdx = out.prompt.indexOf('### Party in current scene');
+    const chatIdx = out.prompt.indexOf('Recent chat messages:');
+
+    expect(geoIdx).toBeGreaterThan(-1);
+    expect(npcIdx).toBeGreaterThan(-1);
+    expect(partyIdx).toBeGreaterThan(-1);
+    expect(chatIdx).toBeGreaterThan(-1);
+
+    // Geographic must precede every roster + chat block — that's the whole
+    // point of the move; chat references prior burgs and the LLM needs the
+    // structured anchor first.
+    expect(geoIdx).toBeLessThan(npcIdx);
+    expect(geoIdx).toBeLessThan(partyIdx);
+    expect(geoIdx).toBeLessThan(chatIdx);
+  });
+});

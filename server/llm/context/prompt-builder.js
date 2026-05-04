@@ -137,6 +137,14 @@ const buildContextSummary = (context, campaignLLMSettings) => {
     summarySections.push('Session: none selected (using latest campaign state).');
   }
 
+  // Geographic context renders BEFORE the roster sections so the LLM grounds
+  // on "Current settlement: …" before it ever reads chat history that may
+  // reference prior burgs. Putting this after chat reopened the exact failure
+  // mode Task 5 was meant to close.
+  if (context.geographic) {
+    summarySections.push(`Geographic context:\n${summarizeGeography(context.geographic)}`);
+  }
+
   summarySections.push(`### NPCs in current scene\n${summarizeNPCsInScene(context.npcsInScene)}`);
   summarySections.push(
     `### Campaign NPC roster (relationship lookup only — do not narrate as present unless they appear in the in-scene list above)\n${summarizeNPCs(context.npcs)}`,
@@ -148,10 +156,6 @@ const buildContextSummary = (context, campaignLLMSettings) => {
   summarySections.push(`Locations:\n${summarizeLocations(context.locations)}`);
   summarySections.push(`Encounters:\n${summarizeEncounters(context.encounters)}`);
   summarySections.push(`Recent chat messages:\n${summarizeChat(context.chat?.recentMessages, campaignLLMSettings?.chat_history_depth || 5)}`);
-
-  if (context.geographic) {
-    summarySections.push(`Geographic context:\n${summarizeGeography(context.geographic)}`);
-  }
 
   if (context.worldLore?.length > 0) {
     const loreSections = context.worldLore.map((l) => {

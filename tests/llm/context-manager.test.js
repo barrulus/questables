@@ -339,6 +339,51 @@ describe('LLMContextManager.buildGameContext — scene presence filters', () => 
     expect(inSceneIds[0]).not.toBe(rosterIds.find((id) => id !== inSceneIds[0]));
   });
 
+  it('resolves npcsInScene via gameState.activePlayerId when actingUserId is omitted', async () => {
+    // Regression guard for the system-triggered narration path
+    // (narrateWorldTurn auto-advance) — buildGameContext now resolves the
+    // acting user id with the same priority chain as #loadPlayerPosition,
+    // so omitting actingUserId still surfaces the active player's scene.
+    const client = await pool.connect();
+    let inserted = [];
+    try {
+      await client.query(
+        `UPDATE public.campaign_players SET current_scene = 'task5_fallback_scene'
+          WHERE campaign_id = $1 AND user_id = $2`,
+        [fixture.campaignId, fixture.playerA.userId],
+      );
+      const result = await client.query(
+        `INSERT INTO public.npcs (campaign_id, name, race, personality, scene_tag)
+         VALUES ($1, 'TASK5_FALLBACK_NPC', 'human', 'placeholder', 'task5_fallback_scene')
+         RETURNING id`,
+        [fixture.campaignId],
+      );
+      inserted = result.rows.map((r) => r.id);
+
+      const ctx = new LLMContextManager({ pool });
+      const built = await ctx.buildGameContext({
+        campaignId: fixture.campaignId,
+        sessionId: fixture.sessionId,
+        // actingUserId intentionally OMITTED — fixture's gameState.activePlayerId
+        // points at playerA, so the consolidated resolver should still
+        // surface playerA's scene NPCs.
+      });
+
+      const sceneNames = built.npcsInScene.map((n) => n.name);
+      expect(sceneNames).toContain('TASK5_FALLBACK_NPC');
+    } finally {
+      await client.query(
+        `UPDATE public.campaign_players SET current_scene = NULL
+          WHERE campaign_id = $1 AND user_id = $2`,
+        [fixture.campaignId, fixture.playerA.userId],
+      );
+      if (inserted.length) {
+        await client.query('DELETE FROM public.npcs WHERE id = ANY($1::uuid[])', [inserted]);
+      }
+      client.release();
+    }
+  });
+
   it('returns empty partyInScene when acting player has no inside_burg_id', async () => {
     const client = await pool.connect();
     try {
