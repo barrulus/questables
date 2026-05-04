@@ -254,6 +254,20 @@ export class LLMContextManager {
     this.pool = pool;
   }
 
+  /**
+   * Build the LLM game-context snapshot for a campaign turn.
+   *
+   * Returns a composed context object covering campaign, session, party,
+   * locations, NPCs, encounters, geography (anchored on the acting player),
+   * recent chat, director whispers, world lore, and recent travel.
+   *
+   * @param {object} opts
+   * @param {string} opts.campaignId
+   * @param {string} [opts.sessionId]
+   * @param {object} [opts.llmSettings]
+   * @param {string|null} [opts.actingUserId] - User id of the player whose action triggered this LLM call; falls back to gameState.activePlayerId, then to the most-recently-located active player.
+   * @returns {Promise<object>}
+   */
   async buildGameContext({ campaignId, sessionId, llmSettings, actingUserId = null } = {}) {
     if (!campaignId) {
       throw new LLMServiceError('Campaign ID is required to build LLM context', {
@@ -280,7 +294,7 @@ export class LLMContextManager {
       const recentMessages = await this.#loadRecentMessages(client, campaignId, session?.id, chatDepth);
       const directorWhispers = await this.#loadDirectorWhispers(client, campaignId);
 
-      // Load geographic context based on active player position (must come before worldLore)
+      // Load geographic context based on the acting player's position (must come before worldLore)
       let geographic = null;
       if (campaign.worldMapId) {
         const playerPosition = await this.#loadPlayerPosition(client, campaignId, session, actingUserId);
@@ -592,6 +606,7 @@ export class LLMContextManager {
          LIMIT 1`;
       positionParams = [campaignId, targetUserId];
     } else {
+      // last_located_at is NOT NULL today; NULLS LAST guards future schema relaxations
       positionQuery = `
         SELECT ST_X(loc_current) AS x, ST_Y(loc_current) AS y, inside_burg_id
           FROM public.campaign_players

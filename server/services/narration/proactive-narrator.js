@@ -198,6 +198,7 @@ RULES:
  * @param {object} opts
  * @param {string} opts.campaignId
  * @param {string} opts.sessionId
+ * @param {string|null} [opts.actingUserId] - User id of the player whose action triggered this narration; falls back to the session active player.
  * @param {string} [opts.movementContext] - Brief description of what triggered this (e.g. "entered new biome", "approaching settlement")
  * @param {object} opts.contextualService
  * @param {object} opts.wsServer
@@ -369,6 +370,7 @@ The "NPCs:" list earlier in the Game Context Snapshot is the FULL CAMPAIGN ROSTE
  * @param {object} opts
  * @param {string} opts.campaignId
  * @param {string} opts.sessionId
+ * @param {string|null} [opts.actingUserId] - User id of the player whose action triggered this narration; falls back to the session active player.
  * @param {object} opts.contextualService
  * @param {object} opts.wsServer
  */
