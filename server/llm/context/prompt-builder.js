@@ -146,7 +146,7 @@ const summarizeGeography = (geo) => {
   const lines = [];
 
   // Settlement level — player is inside a burg
-  const currentBurg = geo.currentBurg ?? geo.settlement ?? null;
+  const currentBurg = geo.currentBurg;
   if (geo.isInsideSettlement && currentBurg) {
     const s = currentBurg;
     const features = [

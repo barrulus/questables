@@ -29,8 +29,8 @@ describe('LLMContextManager.buildGameContext — actingUserId', () => {
     // Prove the downstream PostGIS query keyed off the supplied position —
     // a bug where buildGeographicContext ignored insideBurgId would still pass
     // the assertion above, since insideBurgId is plumbed through directly.
-    expect(ctxBuiltForA.geographic?.settlement?.name).toBeDefined();
-    const burgNameA = ctxBuiltForA.geographic.settlement.name;
+    expect(ctxBuiltForA.geographic?.currentBurg?.name).toBeDefined();
+    const burgNameA = ctxBuiltForA.geographic.currentBurg.name;
 
     const ctxBuiltForB = await ctx.buildGameContext({
       campaignId: fixture.campaignId,
@@ -38,8 +38,8 @@ describe('LLMContextManager.buildGameContext — actingUserId', () => {
       actingUserId: fixture.playerB.userId,
     });
     expect(ctxBuiltForB.geographic?.insideBurgId).toBe(fixture.playerB.burgId);
-    expect(ctxBuiltForB.geographic?.settlement?.name).toBeDefined();
-    expect(ctxBuiltForB.geographic.settlement.name).not.toBe(burgNameA);
+    expect(ctxBuiltForB.geographic?.currentBurg?.name).toBeDefined();
+    expect(ctxBuiltForB.geographic.currentBurg.name).not.toBe(burgNameA);
   });
 
   it('falls back to gameState.activePlayerId when actingUserId is omitted', async () => {

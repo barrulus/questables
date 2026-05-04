@@ -93,7 +93,6 @@ export async function buildGeographicContext({
       nearbyRoutes,
       nearbyRivers,
       campaignRegions,
-      settlement: settlementDetail,
       settlementNpcs,
       settlementShops,
     };
