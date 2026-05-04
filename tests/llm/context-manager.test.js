@@ -284,12 +284,9 @@ describe('LLMContextManager.buildGameContext — lore weighting', () => {
         `SELECT statefull FROM public.maps_burgs WHERE id = $1`,
         [fixture.playerA.burgId],
       );
-      // Skip if the fixture burg has no statefull — the test relies on it.
-      if (!statefull) {
-        // eslint-disable-next-line no-console
-        console.warn('Skipping lore weighting test — fixture burg has no statefull');
-        return;
-      }
+      // Fail loudly if the fixture has no statefull — silent skip would mask
+      // regressions in this loader.
+      expect(statefull).toBeTruthy();
 
       // section must be one of the values in campaign_world_lore_section_check
       // (history, cultures, religions, regions, factions, ...). 'cultures' is

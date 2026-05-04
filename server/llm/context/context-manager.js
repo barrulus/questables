@@ -658,14 +658,14 @@ export class LLMContextManager {
   }
 
   async #loadWorldLore(client, campaignId, geographic) {
-    // Prefer currentBurg.statefull (a state name) over terrain.state — the
-    // latter is an integer ID in maps_cells and cannot match a text subsection.
-    // nearbyBurgs[0].statefull is the last-resort fallback (may be a neighbour
-    // since nearbyBurgs no longer includes the player's own burg).
+    // Prefer the acting player's burg state, then a neighbour's (in case the
+    // party is between settlements). maps_cells.state is an integer FK and is
+    // not used here — subsection matching is text-only.
     const currentState =
       geographic?.currentBurg?.statefull ??
+      // Fallback: neighbour's statefull may differ from the party's actual
+      // state and pull cross-state lore. Acceptable when currentBurg is null.
       geographic?.nearbyBurgs?.[0]?.statefull ??
-      geographic?.terrain?.state ??
       null;
 
     const { rows } = await client.query(
