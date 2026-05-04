@@ -14,7 +14,7 @@ class FakeProvider extends EnhancedLLMProvider {
   constructor() {
     super({ name: 'fake' });
     this.model = 'fake-model';
-    this.generate = jest.fn().mockImplementation(async (_type, options) => ({
+    this.generate = jest.fn().mockImplementation(async () => ({
       content: 'hello',
       metrics: {
         latencyMs: 1,
