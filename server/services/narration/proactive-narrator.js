@@ -178,18 +178,14 @@ export async function narrateSessionOpening({
 
 // ── Area Entry Narration ────────────────────────────────────────────────────
 
-const AREA_DESCRIPTION_SYSTEM_PROMPT = `You are the Dungeon Master for a D&D 5e campaign. The party has moved to a new area. Describe what they see.
+export const AREA_DESCRIPTION_SYSTEM_PROMPT = `You are the DM. Describe the area the party has just entered. 2-4 sentences, atmospheric, plain prose (no JSON).
 
-RULES:
-- Write a brief scene description (2-4 sentences) based on the geographic context.
-- Name real settlements, routes, rivers, and terrain from the context.
-- Mention any points of interest (markers) or campaign regions they've entered.
-- If entering a settlement, describe the approach — gates, walls, sounds, smells.
-- Keep it atmospheric and evocative but concise.
-- The "Geographic context" block in the snapshot tells you the party's actual
-  current location. Use that name. Do NOT reuse names of prior locations from
-  chat history or lore — the party has moved on.
-- Respond with plain narrative text, not JSON.`;
+GROUND TRUTH (highest priority):
+- The "Current settlement" line in the geographic context is the ONLY authoritative location. Recent chat may describe a different settlement — that was THEN, not NOW. The party has moved. Do NOT reuse settlement names, scene details, or atmosphere from prior chat if they conflict with the current geographic context.
+- The "Party in current scene" list names every PC physically present. The "Full party roster" is reference only — do NOT narrate party members not in the in-scene list as present.
+- The "NPCs in current scene" list names every NPC physically present. The "Campaign NPC roster" is reference only — do NOT narrate roster NPCs as present.
+
+Use real names from the geographic context. Mention markers, terrain, or campaign regions where relevant. If approaching a settlement, describe the approach (gates, walls, sounds, smells) using that settlement's actual properties.`;
 
 /**
  * Generate area entry narration when a player moves to a notably different location.
@@ -266,23 +262,14 @@ export async function narrateAreaEntry({
 
 // ── World Turn Narration ────────────────────────────────────────────────────
 
-const WORLD_TURN_SYSTEM_PROMPT = `You are the Dungeon Master for a D&D 5e campaign. A full round of player actions has just completed. Narrate the world's response.
+export const WORLD_TURN_SYSTEM_PROMPT = `You are the DM narrating the world's response after a full round of player actions. 2-4 sentences, plain prose (no JSON).
 
-RULES:
-- Write a brief world turn narration (2-4 sentences) describing what happens in the world.
-- Consider: time passing, weather changes, environmental shifts, distant sounds.
-- Use the geographic context to ground details — reference actual nearby locations and terrain.
-- If in a dangerous area (encounter region), hint at tension or approaching threats.
-- Keep it atmospheric — this is the beat between player actions.
-- Respond with plain narrative text, not JSON.
+GROUND TRUTH (highest priority):
+- The "Current settlement" line in the geographic context is the ONLY authoritative location. Recent chat may describe a different settlement — that was THEN, not NOW. Do NOT reuse settlement names, scene details, or NPCs from prior chat if they conflict with the current context.
+- The "NPCs in current scene" list is the complete cast physically present. If empty, NO NPC speaks, acts, or reacts — focus on environment and the party. Do NOT include NPCs from the "Campaign NPC roster" who aren't in the in-scene list, even if they were mentioned moments ago in chat.
+- The "Party in current scene" list names every PC physically present. The "Full party roster" is reference only — do NOT narrate party members not in this list as present.
 
-SCENE AWARENESS (CRITICAL — do NOT teleport NPCs):
-- The "### NPCs in current scene" and "### Party in current scene" sections in the snapshot tell you EXACTLY who is physically with the party right now.
-- If "### NPCs in current scene" says no NPCs are present, then NO NPCs are present in this narration. Do NOT have anyone speak, react, watch, or wring their hands.
-- If it lists specific NPCs, those are the ONLY NPCs who can appear in this narration.
-- The "### Campaign NPC roster" section is for relationship lookup only — anyone listed there but NOT in the in-scene list is ELSEWHERE. Do not narrate them as present, even if they were just two paragraphs ago in chat.
-- Example: if the party climbed down a well into a tunnel, the villagers waiting at the wellhead are NOT in the tunnel with them. They are still up at the well.
-- When the current scene is an isolated location (a cave, a tunnel, a sealed chamber), focus on the environment and the party itself — not on absent NPCs.`;
+Use the geographic context to ground details — weather, distant sounds, environmental shifts, time passing. If the party is in an isolated location (cave, tunnel, sealed chamber), narrate what THEY perceive there, not what's happening at locations they left.`;
 
 /**
  * Generate and post world turn narration after all players have acted in a round.
