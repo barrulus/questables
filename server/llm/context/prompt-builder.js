@@ -146,8 +146,9 @@ const summarizeGeography = (geo) => {
   const lines = [];
 
   // Settlement level — player is inside a burg
-  if (geo.isInsideSettlement && geo.settlement) {
-    const s = geo.settlement;
+  const currentBurg = geo.currentBurg ?? geo.settlement ?? null;
+  if (geo.isInsideSettlement && currentBurg) {
+    const s = currentBurg;
     const features = [
       s.capital && 'capital city',
       s.port && 'port',
@@ -157,11 +158,12 @@ const summarizeGeography = (geo) => {
       s.plaza && 'market plaza',
       s.shanty && 'shanty districts',
     ].filter(Boolean);
-    lines.push(`INSIDE SETTLEMENT: ${s.name} (population ${s.population?.toLocaleString() ?? 'unknown'})`);
+    const headerParts = [`pop ${s.population?.toLocaleString() ?? 'unknown'}`];
+    if (s.statefull) headerParts.unshift(s.statefull);
+    if (s.provincefull) headerParts.unshift(s.provincefull);
+    if (s.culture) headerParts.push(`${s.culture} culture`);
+    lines.push(`Current settlement: ${s.name} (${headerParts.join(', ')})`);
     if (features.length) lines.push(`Features: ${features.join(', ')}`);
-    if (s.statefull) lines.push(`State: ${s.statefull}`);
-    if (s.provincefull) lines.push(`Province: ${s.provincefull}`);
-    if (s.culture) lines.push(`Culture: ${s.culture}`);
     if (s.religion) lines.push(`Religion: ${s.religion}`);
     if (s.elevation) lines.push(`Elevation: ${s.elevation}m`);
 
@@ -178,8 +180,9 @@ const summarizeGeography = (geo) => {
       );
       lines.push(`\nShops:\n${shopLines.join('\n')}`);
     }
-
-    return lines.join('\n');
+    // Fall through so Nearby settlements / routes / rivers / markers also
+    // render below — the LLM benefits from knowing what's just outside the
+    // gates without conflating it with the settlement the party is inside.
   }
 
   // World level

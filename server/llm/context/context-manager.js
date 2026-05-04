@@ -482,20 +482,20 @@ export class LLMContextManager {
   }
 
   async #loadLocations(client, campaignId, llmSettings) {
-    const includeUndiscovered = llmSettings?.includeUndiscoveredLocations ?? true;
+    const includeUndiscovered = llmSettings?.includeUndiscoveredLocations ?? false;
     const whereClause = includeUndiscovered
       ? 'WHERE l.campaign_id = $1'
       : 'WHERE l.campaign_id = $1 AND l.is_discovered = true';
 
-    const result = await client.query(
+    const { rows } = await client.query(
       `SELECT l.*, parent.name AS parent_name
          FROM public.locations l
          LEFT JOIN public.locations parent ON parent.id = l.parent_location_id
         ${whereClause}
-        ORDER BY l.is_discovered DESC, l.name ASC` ,
-      [campaignId]
+        ORDER BY l.is_discovered DESC, l.name ASC`,
+      [campaignId],
     );
-    return result.rows.map(mapLocationRow);
+    return rows.map(mapLocationRow);
   }
 
   async #loadNPCs(client, campaignId) {

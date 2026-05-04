@@ -51,7 +51,7 @@ export async function buildGeographicContext({
       settlementDetail,
     ] = await Promise.all([
       queryWorldMeta(worldMapId),
-      queryNearbyBurgs(worldMapId, pointWkt),
+      queryNearbyBurgs(worldMapId, pointWkt, insideBurgId),
       queryNearbyMarkers(worldMapId, pointWkt),
       queryNearbyRoutes(worldMapId, pointWkt),
       queryNearbyRivers(worldMapId, pointWkt),
@@ -78,6 +78,9 @@ export async function buildGeographicContext({
       metersPerPixel,
       insideBurgId,
       isInsideSettlement: !!insideBurgId,
+      currentBurg: settlementDetail
+        ? { id: insideBurgId, ...settlementDetail }
+        : null,
       terrain: terrainCell,
       nearbyBurgs: nearbyBurgs.map((b) => ({
         ...b,
@@ -115,19 +118,25 @@ async function queryWorldMeta(worldMapId) {
   return rows[0] ?? null;
 }
 
-async function queryNearbyBurgs(worldMapId, pointWkt) {
+async function queryNearbyBurgs(worldMapId, pointWkt, excludeBurgId) {
+  const params = [worldMapId, MAX_NEARBY_BURGS];
+  let exclusion = '';
+  if (excludeBurgId) {
+    params.push(excludeBurgId);
+    exclusion = `AND id <> $${params.length}`;
+  }
   const { rows } = await query(
     `SELECT
-       name, statefull, provincefull, culture, religion,
+       id, name, statefull, provincefull, culture, religion,
        population, elevation, temperature,
        capital, port, citadel, walls, plaza, temple, shanty,
        ST_Distance(geom, ${pointWkt}) AS distance_px,
        ST_X(geom) AS x_px, ST_Y(geom) AS y_px
      FROM public.maps_burgs
-     WHERE world_id = $1
+     WHERE world_id = $1 ${exclusion}
      ORDER BY geom <-> ${pointWkt}
      LIMIT $2`,
-    [worldMapId, MAX_NEARBY_BURGS],
+    params,
     { label: 'geo-ctx.nearby-burgs' },
   );
   return rows;
@@ -204,7 +213,7 @@ async function queryCampaignRegions(campaignId, pointWkt) {
 async function querySettlementDetail(burgId) {
   const { rows } = await query(
     `SELECT
-       name, statefull, provincefull, culture, religion,
+       id, name, statefull, provincefull, culture, religion,
        population, elevation, temperature,
        capital, port, citadel, walls, plaza, temple, shanty
      FROM public.maps_burgs

@@ -228,3 +228,46 @@ describe('LLMContextManager.#loadRecentMessages — chat-history scoping', () =>
     }
   });
 });
+
+describe('LLMContextManager — known-location default + currentBurg surfacing', () => {
+  it('omits undiscovered locations by default', async () => {
+    const client = await pool.connect();
+    let inserted = [];
+    try {
+      const known = await client.query(
+        `INSERT INTO public.locations (campaign_id, name, type, is_discovered)
+         VALUES ($1, 'TASK3_KNOWN_LOC', 'wilderness', true) RETURNING id`,
+        [fixture.campaignId],
+      );
+      const hidden = await client.query(
+        `INSERT INTO public.locations (campaign_id, name, type, is_discovered)
+         VALUES ($1, 'TASK3_HIDDEN_LOC', 'dungeon', false) RETURNING id`,
+        [fixture.campaignId],
+      );
+      inserted = [known.rows[0].id, hidden.rows[0].id];
+
+      const ctx = new LLMContextManager({ pool });
+      const built = await ctx.buildGameContext({ campaignId: fixture.campaignId });
+      const names = built.locations.map((l) => l.name);
+      expect(names).toContain('TASK3_KNOWN_LOC');
+      expect(names).not.toContain('TASK3_HIDDEN_LOC');
+    } finally {
+      if (inserted.length) {
+        await client.query('DELETE FROM public.locations WHERE id = ANY($1::uuid[])', [inserted]);
+      }
+      client.release();
+    }
+  });
+
+  it('exposes currentBurg distinct from nearbyBurgs', async () => {
+    const ctx = new LLMContextManager({ pool });
+    const built = await ctx.buildGameContext({
+      campaignId: fixture.campaignId,
+      sessionId: fixture.sessionId,
+      actingUserId: fixture.playerA.userId,
+    });
+    expect(built.geographic?.currentBurg?.id).toBe(fixture.playerA.burgId);
+    const nearbyIds = built.geographic.nearbyBurgs.map((b) => b.id);
+    expect(nearbyIds).not.toContain(fixture.playerA.burgId);
+  });
+});
