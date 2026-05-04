@@ -271,3 +271,66 @@ describe('LLMContextManager — known-location default + currentBurg surfacing',
     expect(nearbyIds).not.toContain(fixture.playerA.burgId);
   });
 });
+
+describe('LLMContextManager.buildGameContext — lore weighting', () => {
+  it('prefers state-matched lore over global, drops unrelated subsections', async () => {
+    const ctx = new LLMContextManager({ pool });
+    const client = await pool.connect();
+    let inserted = [];
+    try {
+      // Look up the actual statefull for the fixture's playerA burg so we can
+      // insert state-matched lore that the loader will recognise.
+      const { rows: [{ statefull }] } = await client.query(
+        `SELECT statefull FROM public.maps_burgs WHERE id = $1`,
+        [fixture.playerA.burgId],
+      );
+      // Skip if the fixture burg has no statefull — the test relies on it.
+      if (!statefull) {
+        // eslint-disable-next-line no-console
+        console.warn('Skipping lore weighting test — fixture burg has no statefull');
+        return;
+      }
+
+      // section must be one of the values in campaign_world_lore_section_check
+      // (history, cultures, religions, regions, factions, ...). 'cultures' is
+      // the closest match to the spec's intended 'culture'.
+      const result = await client.query(
+        `INSERT INTO public.campaign_world_lore (campaign_id, section, subsection, content)
+         VALUES
+           ($1, 'history',  NULL,        'TASK4_GLOBAL'),
+           ($1, 'history',  $2,          'TASK4_STATE_MATCH'),
+           ($1, 'cultures', 'Atlantis',  'TASK4_UNRELATED_1'),
+           ($1, 'cultures', 'Lemuria',   'TASK4_UNRELATED_2'),
+           ($1, 'cultures', 'Mu',        'TASK4_UNRELATED_3'),
+           ($1, 'cultures', 'Pangaea',   'TASK4_UNRELATED_4'),
+           ($1, 'cultures', 'Avalon',    'TASK4_UNRELATED_5'),
+           ($1, 'cultures', 'Eldorado',  'TASK4_UNRELATED_6')
+         RETURNING id`,
+        [fixture.campaignId, statefull],
+      );
+      inserted = result.rows.map((r) => r.id);
+
+      const built = await ctx.buildGameContext({
+        campaignId: fixture.campaignId,
+        sessionId: fixture.sessionId,
+        actingUserId: fixture.playerA.userId,
+      });
+      const contents = built.worldLore.map((l) => l.content);
+      // Filter to only the rows this test inserted (other tests may inject lore
+      // earlier and the loader's MAX_LORE_SECTIONS cap is 6 globally).
+      const ours = contents.filter((c) => c.startsWith('TASK4_'));
+      expect(ours[0]).toBe('TASK4_STATE_MATCH');
+      expect(ours).toContain('TASK4_GLOBAL');
+      const hasUnrelated = ours.some((c) => c.startsWith('TASK4_UNRELATED_'));
+      expect(hasUnrelated).toBe(false);
+    } finally {
+      if (inserted.length) {
+        await client.query(
+          'DELETE FROM public.campaign_world_lore WHERE id = ANY($1::uuid[])',
+          [inserted],
+        );
+      }
+      client.release();
+    }
+  });
+});

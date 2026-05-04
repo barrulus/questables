@@ -658,36 +658,45 @@ export class LLMContextManager {
   }
 
   async #loadWorldLore(client, campaignId, geographic) {
-    // Load world lore — location-aware: prefer lore matching current state/region
-    const currentState = geographic?.terrain?.state ??
-      geographic?.nearbyBurgs?.[0]?.statefull ?? null;
+    // Prefer currentBurg.statefull (a state name) over terrain.state — the
+    // latter is an integer ID in maps_cells and cannot match a text subsection.
+    // nearbyBurgs[0].statefull is the last-resort fallback (may be a neighbour
+    // since nearbyBurgs no longer includes the player's own burg).
+    const currentState =
+      geographic?.currentBurg?.statefull ??
+      geographic?.nearbyBurgs?.[0]?.statefull ??
+      geographic?.terrain?.state ??
+      null;
 
-    const result = await client.query(
-      `SELECT section, subsection, content
+    const { rows } = await client.query(
+      `SELECT section, subsection, content, updated_at
          FROM public.campaign_world_lore
-        WHERE campaign_id = $1
-        ORDER BY
-          CASE
-            WHEN subsection IS NULL THEN 0
-            WHEN subsection = $2 THEN 1
-            ELSE 2
-          END,
-          section, updated_at DESC`,
-      [campaignId, currentState],
+        WHERE campaign_id = $1`,
+      [campaignId],
     );
+    if (rows.length === 0) return [];
 
-    if (result.rows.length === 0) return [];
-
-    // Include: all global sections (subsection IS NULL) + location-relevant subsections
-    // Limit total to prevent prompt bloat
+    // Weight: state-matched first, then global, then drop unrelated subsections.
+    // Recency is a tiebreaker. Hard cap at 6 to keep the prompt bounded.
     const MAX_LORE_SECTIONS = 6;
-    const filtered = result.rows.filter((r) =>
-      r.subsection === null || r.subsection === currentState
-    );
-    return filtered.slice(0, MAX_LORE_SECTIONS).map((r) => ({
-      section: r.section,
-      subsection: r.subsection,
-      content: r.content,
+    const scored = rows
+      .map((r) => {
+        let score;
+        if (currentState && r.subsection === currentState) score = 0;
+        else if (r.subsection === null) score = 1;
+        else score = null; // unrelated — drop entirely
+        return { row: r, score };
+      })
+      .filter((entry) => entry.score !== null)
+      .sort((a, b) => {
+        if (a.score !== b.score) return a.score - b.score;
+        return new Date(b.row.updated_at) - new Date(a.row.updated_at);
+      });
+
+    return scored.slice(0, MAX_LORE_SECTIONS).map(({ row }) => ({
+      section: row.section,
+      subsection: row.subsection,
+      content: row.content,
     }));
   }
 
