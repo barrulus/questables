@@ -7,8 +7,14 @@
  */
 import { describe, it, expect, beforeAll, afterAll } from '@jest/globals';
 import { pool } from '../../server/db/pool.js';
-import { resolveEntity, normaliseName } from '../../server/services/world-building/entity-resolver.js';
+import { resolveEntity, normaliseName, buildEntityIndex } from '../../server/services/world-building/entity-resolver.js';
 import { createTestCampaignWithTwoPlayers } from '../fixtures/llm-context-fixtures.js';
+
+// Single global pool teardown — runs after ALL describe blocks finish.
+// Each describe block only cleans up its own fixture, not the pool.
+afterAll(async () => {
+  await pool.end();
+});
 
 describe('normaliseName', () => {
   it('lowercases and trims', () => {
@@ -62,7 +68,7 @@ describe('resolveEntity', () => {
   });
   afterAll(async () => {
     await fixture.cleanup();
-    await pool.end();
+    // pool.end() is handled by the global afterAll at the top of this file.
   });
 
   it('resolves a real burg by exact name', async () => {
@@ -239,5 +245,121 @@ describe('resolveEntity', () => {
       kinds: ['burg'],
     });
     expect(out).toBeNull();
+  });
+});
+
+describe('buildEntityIndex', () => {
+  let fixture;
+  let burgACoords;
+
+  beforeAll(async () => {
+    fixture = await createTestCampaignWithTwoPlayers();
+    const { rows } = await pool.query(
+      `SELECT ST_X(geom) AS x, ST_Y(geom) AS y FROM public.maps_burgs WHERE id = $1`,
+      [fixture.playerA.burgId],
+    );
+    burgACoords = { x: Number(rows[0].x), y: Number(rows[0].y) };
+  });
+  afterAll(async () => {
+    await fixture.cleanup();
+    // pool.end() is handled by the global afterAll at the top of this file.
+  });
+
+  it('returns the current burg plus k-nearest others', async () => {
+    const idx = await buildEntityIndex({
+      campaignId: fixture.campaignId,
+      scope: { insideBurgId: fixture.playerA.burgId, locX: burgACoords.x, locY: burgACoords.y },
+    });
+    const burgIds = idx.burgs.map((b) => b.id);
+    expect(burgIds).toContain(fixture.playerA.burgId);
+    expect(idx.burgs.length).toBeGreaterThan(0);
+    expect(idx.burgs.length).toBeLessThanOrEqual(9); // current + up to 8 neighbours
+  });
+
+  it('returns distinct states drawn from those burgs', async () => {
+    const idx = await buildEntityIndex({
+      campaignId: fixture.campaignId,
+      scope: { insideBurgId: fixture.playerA.burgId, locX: burgACoords.x, locY: burgACoords.y },
+    });
+    const names = new Set(idx.states.map((s) => s.name));
+    expect(names.size).toBe(idx.states.length); // distinct
+  });
+
+  it('returns NPCs whose linked_burg_id is in scope', async () => {
+    await pool.query(
+      `INSERT INTO public.npcs (campaign_id, name, race, personality, linked_burg_id)
+       VALUES ($1, 'Local NPC', 'human', 'friendly', $2)`,
+      [fixture.campaignId, fixture.playerA.burgId],
+    );
+    await pool.query(
+      `INSERT INTO public.npcs (campaign_id, name, race, personality)
+       VALUES ($1, 'Unlinked NPC', 'human', 'distant')`,
+      [fixture.campaignId],
+    );
+
+    const idx = await buildEntityIndex({
+      campaignId: fixture.campaignId,
+      scope: { insideBurgId: fixture.playerA.burgId, locX: burgACoords.x, locY: burgACoords.y },
+    });
+    const names = idx.npcs.map((n) => n.name);
+    expect(names).toContain('Local NPC');
+    expect(names).not.toContain('Unlinked NPC');
+  });
+
+  it('excludes undiscovered locations', async () => {
+    await pool.query(
+      `INSERT INTO public.locations (campaign_id, name, type, is_discovered)
+       VALUES ($1, 'Discovered Vale', 'wilderness', true),
+              ($1, 'Hidden Lair', 'dungeon', false)`,
+      [fixture.campaignId],
+    );
+    const idx = await buildEntityIndex({
+      campaignId: fixture.campaignId,
+      scope: { insideBurgId: fixture.playerA.burgId, locX: burgACoords.x, locY: burgACoords.y },
+    });
+    const names = idx.locations.map((l) => l.name);
+    expect(names).toContain('Discovered Vale');
+    expect(names).not.toContain('Hidden Lair');
+  });
+
+  it('returns shops linked to NPCs whose linked_burg_id is in scope', async () => {
+    const { rows: npcRows } = await pool.query(
+      `INSERT INTO public.npcs (campaign_id, name, race, personality, linked_burg_id)
+       VALUES ($1, 'Shopkeeper', 'human', 'shrewd', $2)
+       RETURNING id`,
+      [fixture.campaignId, fixture.playerA.burgId],
+    );
+    await pool.query(
+      `INSERT INTO public.npc_shops (campaign_id, npc_id, name, shop_type)
+       VALUES ($1, $2, 'Local Wares', 'general')`,
+      [fixture.campaignId, npcRows[0].id],
+    );
+
+    const idx = await buildEntityIndex({
+      campaignId: fixture.campaignId,
+      scope: { insideBurgId: fixture.playerA.burgId, locX: burgACoords.x, locY: burgACoords.y },
+    });
+    const names = idx.shops.map((s) => s.name);
+    expect(names).toContain('Local Wares');
+  });
+
+  it('returns an empty index when scope has no insideBurgId or coords', async () => {
+    const idx = await buildEntityIndex({
+      campaignId: fixture.campaignId,
+      scope: {},
+    });
+    expect(idx).toEqual({
+      burgs: [], states: [], regions: [], npcs: [], locations: [], shops: [],
+    });
+  });
+
+  it('does not throw on DB failure — returns empty index', async () => {
+    const idx = await buildEntityIndex({
+      campaignId: 'not-a-uuid',
+      scope: { insideBurgId: 'also-not-a-uuid', locX: 0, locY: 0 },
+    });
+    expect(idx).toEqual({
+      burgs: [], states: [], regions: [], npcs: [], locations: [], shops: [],
+    });
   });
 });

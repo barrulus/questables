@@ -115,6 +115,168 @@ const RESOLVERS = {
   },
 };
 
+const MAX_NEARBY_BURGS = 8;
+
+/**
+ * Resolve the campaign's world map id once. Used for scoping burg/state lookups.
+ */
+async function getWorldMapId(campaignId) {
+  const { rows } = await query(
+    `SELECT world_map_id FROM public.campaigns WHERE id = $1 LIMIT 1`,
+    [campaignId],
+    { label: 'entity-resolver.world-map-id' },
+  );
+  return rows[0]?.world_map_id ?? null;
+}
+
+const EMPTY_INDEX = Object.freeze({
+  burgs: [], states: [], regions: [], npcs: [], locations: [], shops: [],
+});
+
+/**
+ * Build a scoped index of all named entities relevant to a position on the
+ * world map. Used to populate the `## Known entities` block in extractor
+ * prompts so the LLM has a positive list to anchor against.
+ *
+ * Scope mirrors geographic-context-builder: k-nearest burgs (≤ MAX_NEARBY_BURGS
+ * + current), `linked_burg_id`-scoped NPCs and shops, geometry-contains regions.
+ *
+ * @param {object} opts
+ * @param {string} opts.campaignId
+ * @param {object} opts.scope
+ * @param {string} [opts.scope.insideBurgId]
+ * @param {number} [opts.scope.locX]
+ * @param {number} [opts.scope.locY]
+ * @returns {Promise<{
+ *   burgs: Array<{id: string, name: string, statefull: string|null}>,
+ *   states: Array<{name: string}>,
+ *   regions: Array<{id: string, name: string}>,
+ *   npcs: Array<{id: string, name: string}>,
+ *   locations: Array<{id: string, name: string}>,
+ *   shops: Array<{id: string, name: string}>,
+ * }>}
+ */
+export async function buildEntityIndex({ campaignId, scope = {} }) {
+  if (!campaignId) return { ...EMPTY_INDEX };
+  const { insideBurgId = null, locX = null, locY = null } = scope;
+  if (!insideBurgId && (locX == null || locY == null)) {
+    return { ...EMPTY_INDEX };
+  }
+
+  try {
+    const worldMapId = await getWorldMapId(campaignId);
+    if (!worldMapId) return { ...EMPTY_INDEX };
+
+    const haveCoords = typeof locX === 'number' && typeof locY === 'number';
+    const pointWkt = haveCoords
+      ? `ST_SetSRID(ST_MakePoint(${Number(locX)}, ${Number(locY)}), 0)`
+      : null;
+
+    // Burgs: current burg first, then k-nearest others by distance.
+    // Caller passes either (insideBurgId + coords), coords only, or insideBurgId only.
+    const burgParams = [worldMapId, MAX_NEARBY_BURGS];
+    let burgsQuery;
+    if (insideBurgId && pointWkt) {
+      burgParams.push(insideBurgId);
+      burgsQuery = `
+        WITH ranked AS (
+          SELECT id, name, statefull,
+                 (CASE WHEN id = $3 THEN 0 ELSE 1 END) AS pri,
+                 ST_Distance(geom, ${pointWkt}) AS dist
+            FROM public.maps_burgs
+           WHERE world_id = $1
+        )
+        SELECT id, name, statefull FROM ranked
+         ORDER BY pri ASC, dist ASC
+         LIMIT $2 + 1`;
+    } else if (pointWkt) {
+      burgsQuery = `
+        SELECT id, name, statefull
+          FROM public.maps_burgs
+         WHERE world_id = $1
+         ORDER BY ST_Distance(geom, ${pointWkt})
+         LIMIT $2`;
+    } else {
+      // insideBurgId only, no coords — return that burg alone.
+      burgParams.push(insideBurgId);
+      burgsQuery = `
+        SELECT id, name, statefull
+          FROM public.maps_burgs
+         WHERE world_id = $1 AND id = $3
+         LIMIT 1`;
+    }
+
+    const { rows: burgRows } = await query(burgsQuery, burgParams, {
+      label: 'entity-resolver.index-burgs',
+    });
+
+    const burgIds = burgRows.map((b) => b.id);
+    const states = Array.from(
+      new Map(burgRows.filter((b) => b.statefull).map((b) => [b.statefull, { name: b.statefull }])).values(),
+    );
+
+    // Regions: campaign_map_regions whose geom contains the player point.
+    let regionRows = [];
+    if (pointWkt) {
+      const regionResult = await query(
+        `SELECT id, name
+           FROM public.campaign_map_regions
+          WHERE campaign_id = $1
+            AND ST_Contains(region, ${pointWkt})`,
+        [campaignId],
+        { label: 'entity-resolver.index-regions' },
+      );
+      regionRows = regionResult.rows;
+    }
+
+    // NPCs: linked_burg_id IN (scope burgs).
+    let npcRows = [];
+    if (burgIds.length > 0) {
+      const npcResult = await query(
+        `SELECT id, name FROM public.npcs
+          WHERE campaign_id = $1 AND linked_burg_id = ANY($2::uuid[])`,
+        [campaignId, burgIds],
+        { label: 'entity-resolver.index-npcs' },
+      );
+      npcRows = npcResult.rows;
+    }
+
+    // Locations: campaign-scoped, discovered only.
+    const { rows: locationRows } = await query(
+      `SELECT id, name FROM public.locations
+        WHERE campaign_id = $1 AND is_discovered = true`,
+      [campaignId],
+      { label: 'entity-resolver.index-locations' },
+    );
+
+    // Shops: npc_shops where the NPC's linked_burg_id is in scope.
+    let shopRows = [];
+    if (burgIds.length > 0) {
+      const shopResult = await query(
+        `SELECT s.id, s.name
+           FROM public.npc_shops s
+           JOIN public.npcs n ON n.id = s.npc_id
+          WHERE s.campaign_id = $1 AND n.linked_burg_id = ANY($2::uuid[])`,
+        [campaignId, burgIds],
+        { label: 'entity-resolver.index-shops' },
+      );
+      shopRows = shopResult.rows;
+    }
+
+    return {
+      burgs: burgRows.map((b) => ({ id: b.id, name: b.name, statefull: b.statefull ?? null })),
+      states,
+      regions: regionRows.map((r) => ({ id: r.id, name: r.name })),
+      npcs: npcRows.map((n) => ({ id: n.id, name: n.name })),
+      locations: locationRows.map((l) => ({ id: l.id, name: l.name })),
+      shops: shopRows.map((s) => ({ id: s.id, name: s.name })),
+    };
+  } catch (err) {
+    logError('entity-resolver: buildEntityIndex failed', { campaignId, error: err.message });
+    return { ...EMPTY_INDEX };
+  }
+}
+
 /**
  * Resolve a name to an entity in the campaign's world.
  *
