@@ -53,4 +53,14 @@ describe('Narration system prompts — Task 7 anchors', () => {
     const worldGroundIdx = WORLD_TURN_SYSTEM_PROMPT.indexOf('GROUND TRUTH');
     expect(worldGroundIdx).toBeGreaterThanOrEqual(0);
   });
+
+  it('AREA_DESCRIPTION forbids inventing named establishments', () => {
+    expect(AREA_DESCRIPTION_SYSTEM_PROMPT).toMatch(/Do not invent named establishments/i);
+    expect(AREA_DESCRIPTION_SYSTEM_PROMPT).toMatch(/generically/i);
+  });
+
+  it('WORLD_TURN forbids inventing named establishments', () => {
+    expect(WORLD_TURN_SYSTEM_PROMPT).toMatch(/Do not invent named establishments/i);
+    expect(WORLD_TURN_SYSTEM_PROMPT).toMatch(/generically/i);
+  });
 });

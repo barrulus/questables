@@ -184,6 +184,7 @@ GROUND TRUTH (highest priority):
 - The "Current settlement" line in the geographic context is the ONLY authoritative location. Recent chat may describe a different settlement — that was THEN, not NOW. The party has moved. Do NOT reuse settlement names, scene details, or atmosphere from prior chat if they conflict with the current geographic context.
 - The "Party in current scene" list names every PC physically present. The "Full party roster" is reference only — do NOT narrate party members not in the in-scene list as present.
 - The "NPCs in current scene" list names every NPC physically present. The "Campaign NPC roster" is reference only — do NOT narrate roster NPCs as present.
+- Do not invent named establishments, shops, taverns, items, or settlements. Refer to commerce, lodging, and goods generically ("a market stall", "an inn", "a clay jug") unless a specific name appears in the geographic or NPC context above.
 
 Use real names from the geographic context. Mention markers, terrain, or campaign regions where relevant. If approaching a settlement, describe the approach (gates, walls, sounds, smells) using that settlement's actual properties.`;
 
@@ -268,6 +269,7 @@ GROUND TRUTH (highest priority):
 - The "Current settlement" line in the geographic context is the ONLY authoritative location. Recent chat may describe a different settlement — that was THEN, not NOW. Do NOT reuse settlement names, scene details, or NPCs from prior chat if they conflict with the current context.
 - The "NPCs in current scene" list is the complete cast physically present. If empty, NO NPC speaks, acts, or reacts — focus on environment and the party. Do NOT include NPCs from the "Campaign NPC roster" who aren't in the in-scene list, even if they were mentioned moments ago in chat.
 - The "Party in current scene" list names every PC physically present. The "Full party roster" is reference only — do NOT narrate party members not in this list as present.
+- Do not invent named establishments, shops, taverns, items, or settlements. Refer to commerce, lodging, and goods generically ("a market stall", "an inn", "a clay jug") unless a specific name appears in the geographic or NPC context above.
 
 Use the geographic context to ground details — weather, distant sounds, environmental shifts, time passing. If the party is in an isolated location (cave, tunnel, sealed chamber), narrate what THEY perceive there, not what's happening at locations they left.`;
 
