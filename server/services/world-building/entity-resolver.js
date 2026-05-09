@@ -21,7 +21,7 @@ export const normaliseName = (name) => {
   return name
     .toLowerCase()
     .replace(/[^a-z0-9 ]+/g, '')
-    .replace(/[[:space:]]+/g, ' ')
+    .replace(/\s+/g, ' ')
     .trim();
 };
 

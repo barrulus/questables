@@ -7,8 +7,46 @@
  */
 import { describe, it, expect, beforeAll, afterAll } from '@jest/globals';
 import { pool } from '../../server/db/pool.js';
-import { resolveEntity } from '../../server/services/world-building/entity-resolver.js';
+import { resolveEntity, normaliseName } from '../../server/services/world-building/entity-resolver.js';
 import { createTestCampaignWithTwoPlayers } from '../fixtures/llm-context-fixtures.js';
+
+describe('normaliseName', () => {
+  it('lowercases and trims', () => {
+    expect(normaliseName('  Hello World  ')).toBe('hello world');
+  });
+
+  it('strips punctuation', () => {
+    expect(normaliseName("Mira's General Store!")).toBe('miras general store');
+  });
+
+  it('collapses multiple spaces into one', () => {
+    expect(normaliseName('foo   bar')).toBe('foo bar');
+  });
+
+  it('does not corrupt names containing the letters s, p, a, c, e', () => {
+    // Regression test: a buggy regex /[[:space:]]+/g would treat the
+    // characters {s, p, a, c, e} as whitespace and collapse runs of
+    // them. Verify these names round-trip cleanly.
+    expect(normaliseName('Spacer')).toBe('spacer');
+    expect(normaliseName('Escape')).toBe('escape');
+    expect(normaliseName('Cape Spear')).toBe('cape spear');
+  });
+
+  it('handles tabs and newlines — strips them (non-alphanumeric/space chars removed first)', () => {
+    // The first .replace(/[^a-z0-9 ]+/g, '') removes tabs and newlines outright
+    // before the \s+ collapse runs.  Spaces embedded in the original string are
+    // preserved and collapsed; tabs/newlines disappear without a space substitute.
+    expect(normaliseName('foo\tbar\nbaz')).toBe('foobarbaz');
+    // But a tab that sits between words where there is also a space does collapse:
+    expect(normaliseName('foo \t bar')).toBe('foo bar');
+  });
+
+  it('returns empty string for non-string input', () => {
+    expect(normaliseName(null)).toBe('');
+    expect(normaliseName(undefined)).toBe('');
+    expect(normaliseName(42)).toBe('');
+  });
+});
 
 describe('resolveEntity', () => {
   let fixture;
