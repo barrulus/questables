@@ -22,6 +22,7 @@
 import { query } from '../../db/pool.js';
 import { logInfo, logError } from '../../utils/logger.js';
 import { NARRATIVE_TYPES } from '../../llm/narrative-types.js';
+import { buildEntityIndex } from './entity-resolver.js';
 
 const AGE_GROUPS = ['child', 'teen', 'young_adult', 'adult', 'middle_aged', 'elder'];
 
@@ -81,6 +82,7 @@ RULES:
 - A list of "Existing NPCs" is provided. SKIP any NPC that matches an entry in that list — they are already persisted.
 - A "Population Cap" tells you the MAXIMUM number of new NPCs you may extract for this location. If the narration introduces more than the cap, extract only the most prominent ones up to the cap.
 - A "Current Demographics" breakdown is provided. Avoid extracting NPCs that would make the demographics unrealistic (e.g. don't add a 5th elder to a hamlet of 10 that already has 4 elders).
+- A "## Known entities" list of real settlements, NPCs, and shops is provided. If the narration anchors an NPC to a place not in Known settlements (e.g. names a village, tavern, or shop that is not listed), do NOT extract that NPC — they are tied to a fabricated location.
 - If no NEW NPCs were introduced, return {"npcs": []}.`;
 
 /**
@@ -206,6 +208,21 @@ export async function extractAndPersistNpcs({
     );
     const playerCharNames = new Set(playerCharRows.map((r) => normaliseName(r.name)).filter(Boolean));
 
+    // 1c. Build the Known entities index for prompt injection.
+    const entityIndex = await buildEntityIndex({
+      campaignId,
+      scope: { insideBurgId, locX, locY },
+    });
+    const formatList = (label, items) =>
+      items.length === 0 ? null : `${label}: ${items.map((i) => i.name).join(', ')}`;
+    const knownLines = [
+      formatList('Settlements', entityIndex.burgs),
+      formatList('NPCs', entityIndex.npcs),
+      formatList('Locations', entityIndex.locations),
+      formatList('Shops', entityIndex.shops),
+    ].filter(Boolean);
+    const knownBlock = knownLines.length > 0 ? knownLines.join('\n') : '(none)';
+
     // 2. Load existing NPCs scoped to this burg (or nearby if no burg)
     let existingNpcs;
     if (burg?.id) {
@@ -264,7 +281,10 @@ export async function extractAndPersistNpcs({
       .map((g) => `${g}: ${currentDist[g]}/${ageCaps[g]} (${remainingByAge[g]} slots free)`)
       .join('\n');
 
-    const userPrompt = `## Location
+    const userPrompt = `## Known entities (do NOT anchor NPCs to places not in this list)
+${knownBlock}
+
+## Location
 ${burgLabel}
 
 ## Population Cap
