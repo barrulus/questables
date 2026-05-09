@@ -174,10 +174,10 @@ export async function buildEntityIndex({ campaignId, scope = {} }) {
 
     // Burgs: current burg first, then k-nearest others by distance.
     // Caller passes either (insideBurgId + coords), coords only, or insideBurgId only.
-    const burgParams = [worldMapId, MAX_NEARBY_BURGS];
     let burgsQuery;
+    let burgParams;
     if (insideBurgId && pointWkt) {
-      burgParams.push(insideBurgId);
+      burgParams = [worldMapId, MAX_NEARBY_BURGS, insideBurgId];
       burgsQuery = `
         WITH ranked AS (
           SELECT id, name, statefull,
@@ -190,6 +190,7 @@ export async function buildEntityIndex({ campaignId, scope = {} }) {
          ORDER BY pri ASC, dist ASC
          LIMIT $2 + 1`;
     } else if (pointWkt) {
+      burgParams = [worldMapId, MAX_NEARBY_BURGS];
       burgsQuery = `
         SELECT id, name, statefull
           FROM public.maps_burgs
@@ -198,11 +199,11 @@ export async function buildEntityIndex({ campaignId, scope = {} }) {
          LIMIT $2`;
     } else {
       // insideBurgId only, no coords — return that burg alone.
-      burgParams.push(insideBurgId);
+      burgParams = [worldMapId, insideBurgId];
       burgsQuery = `
         SELECT id, name, statefull
           FROM public.maps_burgs
-         WHERE world_id = $1 AND id = $3
+         WHERE world_id = $1 AND id = $2
          LIMIT 1`;
     }
 
