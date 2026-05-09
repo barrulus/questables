@@ -21,7 +21,7 @@ export const normaliseName = (name) => {
   return name
     .toLowerCase()
     .replace(/[^a-z0-9 ]+/g, '')
-    .replace(/\s+/g, ' ')
+    .replace(/[[:space:]]+/g, ' ')
     .trim();
 };
 
@@ -32,7 +32,8 @@ const RESOLVERS = {
          FROM public.maps_burgs b
          JOIN public.campaigns c ON c.world_map_id = b.world_id
         WHERE c.id = $1
-          AND lower(regexp_replace(b.name, '[^a-zA-Z0-9 ]+', '', 'g')) = $2
+          AND btrim(regexp_replace(lower(regexp_replace(b.name, '[^a-zA-Z0-9 ]+', '', 'g')), '[[:space:]]+', ' ', 'g')) = $2
+        ORDER BY b.id ASC
         LIMIT 1`,
       [campaignId, normalised],
       { label: 'entity-resolver.burg' },
@@ -47,7 +48,8 @@ const RESOLVERS = {
          JOIN public.campaigns c ON c.world_map_id = b.world_id
         WHERE c.id = $1
           AND b.statefull IS NOT NULL
-          AND lower(regexp_replace(b.statefull, '[^a-zA-Z0-9 ]+', '', 'g')) = $2
+          AND btrim(regexp_replace(lower(regexp_replace(b.statefull, '[^a-zA-Z0-9 ]+', '', 'g')), '[[:space:]]+', ' ', 'g')) = $2
+        ORDER BY b.statefull ASC
         LIMIT 1`,
       [campaignId, normalised],
       { label: 'entity-resolver.state' },
@@ -60,7 +62,8 @@ const RESOLVERS = {
       `SELECT id, name
          FROM public.campaign_map_regions
         WHERE campaign_id = $1
-          AND lower(regexp_replace(name, '[^a-zA-Z0-9 ]+', '', 'g')) = $2
+          AND btrim(regexp_replace(lower(regexp_replace(name, '[^a-zA-Z0-9 ]+', '', 'g')), '[[:space:]]+', ' ', 'g')) = $2
+        ORDER BY id ASC
         LIMIT 1`,
       [campaignId, normalised],
       { label: 'entity-resolver.region' },
@@ -73,7 +76,8 @@ const RESOLVERS = {
       `SELECT id, name
          FROM public.npcs
         WHERE campaign_id = $1
-          AND lower(regexp_replace(name, '[^a-zA-Z0-9 ]+', '', 'g')) = $2
+          AND btrim(regexp_replace(lower(regexp_replace(name, '[^a-zA-Z0-9 ]+', '', 'g')), '[[:space:]]+', ' ', 'g')) = $2
+        ORDER BY id ASC
         LIMIT 1`,
       [campaignId, normalised],
       { label: 'entity-resolver.npc' },
@@ -87,7 +91,8 @@ const RESOLVERS = {
          FROM public.locations
         WHERE campaign_id = $1
           AND is_discovered = true
-          AND lower(regexp_replace(name, '[^a-zA-Z0-9 ]+', '', 'g')) = $2
+          AND btrim(regexp_replace(lower(regexp_replace(name, '[^a-zA-Z0-9 ]+', '', 'g')), '[[:space:]]+', ' ', 'g')) = $2
+        ORDER BY id ASC
         LIMIT 1`,
       [campaignId, normalised],
       { label: 'entity-resolver.location' },
@@ -100,7 +105,8 @@ const RESOLVERS = {
       `SELECT id, name
          FROM public.npc_shops
         WHERE campaign_id = $1
-          AND lower(regexp_replace(name, '[^a-zA-Z0-9 ]+', '', 'g')) = $2
+          AND btrim(regexp_replace(lower(regexp_replace(name, '[^a-zA-Z0-9 ]+', '', 'g')), '[[:space:]]+', ' ', 'g')) = $2
+        ORDER BY id ASC
         LIMIT 1`,
       [campaignId, normalised],
       { label: 'entity-resolver.shop' },

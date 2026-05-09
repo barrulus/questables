@@ -28,30 +28,43 @@ describe('resolveEntity', () => {
   });
 
   it('resolves a real burg by exact name', async () => {
+    const { rows: candidates } = await pool.query(
+      `SELECT b.id FROM public.maps_burgs b
+         JOIN public.campaigns c ON c.world_map_id = b.world_id
+        WHERE c.id = $1
+          AND btrim(regexp_replace(lower(regexp_replace(b.name, '[^a-zA-Z0-9 ]+', '', 'g')), '[[:space:]]+', ' ', 'g'))
+            = btrim(regexp_replace(lower(regexp_replace($2,    '[^a-zA-Z0-9 ]+', '', 'g')), '[[:space:]]+', ' ', 'g'))`,
+      [fixture.campaignId, burgAName],
+    );
+    const validIds = new Set(candidates.map((r) => r.id));
+    expect(candidates.length).toBeGreaterThan(0);
+
     const out = await resolveEntity({
-      campaignId: fixture.campaignId,
-      name: burgAName,
-      kinds: ['burg'],
+      campaignId: fixture.campaignId, name: burgAName, kinds: ['burg'],
     });
-    // There may be multiple burgs with the same name in the world; the resolver
-    // returns one of them. We check kind and canonicalName — not the exact id —
-    // because name-based resolution cannot guarantee a specific row when names
-    // are duplicated in the world data.
-    expect(out).not.toBeNull();
     expect(out?.kind).toBe('burg');
     expect(out?.canonicalName).toBe(burgAName);
-    expect(typeof out?.id).toBe('string');
+    expect(validIds.has(out?.id)).toBe(true);
   });
 
   it('resolves with case and whitespace variation', async () => {
+    const { rows: candidates } = await pool.query(
+      `SELECT b.id FROM public.maps_burgs b
+         JOIN public.campaigns c ON c.world_map_id = b.world_id
+        WHERE c.id = $1
+          AND btrim(regexp_replace(lower(regexp_replace(b.name, '[^a-zA-Z0-9 ]+', '', 'g')), '[[:space:]]+', ' ', 'g'))
+            = btrim(regexp_replace(lower(regexp_replace($2,    '[^a-zA-Z0-9 ]+', '', 'g')), '[[:space:]]+', ' ', 'g'))`,
+      [fixture.campaignId, burgAName],
+    );
+    const validIds = new Set(candidates.map((r) => r.id));
+
     const upper = burgAName.toUpperCase();
     const padded = `   ${burgAName.toLowerCase()}   `;
     const a = await resolveEntity({ campaignId: fixture.campaignId, name: upper, kinds: ['burg'] });
     const b = await resolveEntity({ campaignId: fixture.campaignId, name: padded, kinds: ['burg'] });
-    // The resolver matches by normalised name — any matching burg id is correct.
-    expect(a?.kind).toBe('burg');
+    expect(validIds.has(a?.id)).toBe(true);
+    expect(validIds.has(b?.id)).toBe(true);
     expect(a?.canonicalName).toBe(burgAName);
-    expect(b?.kind).toBe('burg');
     expect(b?.canonicalName).toBe(burgAName);
   });
 
