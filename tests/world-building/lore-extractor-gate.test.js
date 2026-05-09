@@ -17,6 +17,12 @@ import { pool } from '../../server/db/pool.js';
 import { extractAndPersistLore } from '../../server/services/world-building/lore-extractor.js';
 import { createTestCampaignWithTwoPlayers } from '../fixtures/llm-context-fixtures.js';
 
+// Single global pool teardown — runs after ALL describe blocks finish.
+// Each describe block only cleans up its own fixture, not the pool.
+afterAll(async () => {
+  await pool.end();
+});
+
 const buildStubLlm = (facts) => {
   const captured = { lastPrompt: null, lastSystemPrompt: null };
   const llmService = {
@@ -47,7 +53,7 @@ describe('lore-extractor — post-LLM gate', () => {
 
   afterAll(async () => {
     await fixture.cleanup();
-    await pool.end();
+    // pool.end() is handled by the global afterAll at the top of this file.
   });
 
   it('persists a fact whose subsection resolves to a real burg', async () => {
