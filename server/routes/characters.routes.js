@@ -281,8 +281,18 @@ router.delete('/:id', checkCharacterOwnership, async (req, res) => {
 export const registerCharacterRoutes = (app) => {
   app.use('/api/characters', router);
 
-  app.get('/api/users/:userId/characters', async (req, res) => {
+  app.get('/api/users/:userId/characters', requireAuth, async (req, res) => {
     const { userId } = req.params;
+
+    // Only the owning user (or an admin) may list a user's characters.
+    // Previously this route was unauthenticated and leaked every character's
+    // full sheet — HP, stats, inventory JSON, location — for any user id.
+    const requesterId = req.user.id;
+    const isAdmin = Array.isArray(req.user.roles) && req.user.roles.includes('admin');
+    if (!isAdmin && requesterId !== userId) {
+      return res.status(403).json({ error: 'forbidden', message: 'You can only list your own characters' });
+    }
+
     let client;
     try {
       client = await getClient({ label: 'characters.by-user' });
