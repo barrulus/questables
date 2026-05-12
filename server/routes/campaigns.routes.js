@@ -519,9 +519,11 @@ router.get('/api/campaigns/:id', requireAuth, async (req, res) => {
   }
 });
 
-router.post('/api/campaigns/:campaignId/players', async (req, res) => {
+router.post('/api/campaigns/:campaignId/players', requireAuth, async (req, res) => {
   const { campaignId } = req.params;
   const { userId, characterId } = req.body;
+  const callerId = req.user.id;
+  const isAdmin = Array.isArray(req.user.roles) && req.user.roles.includes('admin');
 
   if (!userId) {
     return res.status(400).json({ error: 'User ID is required' });
@@ -551,6 +553,17 @@ router.post('/api/campaigns/:campaignId/players', async (req, res) => {
     }
 
     const campaignMeta = campaignCheck.rows[0];
+
+    // Authorisation: either the caller is enrolling themselves, the caller
+    // is the campaign DM (or an admin) enrolling someone else.
+    if (!isAdmin && callerId !== userId && callerId !== campaignMeta.dm_user_id) {
+      await client.query('ROLLBACK');
+      return res.status(403).json({
+        error: 'forbidden',
+        message: 'You can only add yourself to a campaign; only the DM may add others.',
+      });
+    }
+
     if (campaignMeta.current_players >= campaignMeta.max_players) {
       await client.query('ROLLBACK');
       return res.status(400).json({ error: 'Campaign is full' });
@@ -870,22 +883,46 @@ router.get(
   }
 );
 
-router.delete('/api/campaigns/:campaignId/players/:userId', async (req, res) => {
+router.delete('/api/campaigns/:campaignId/players/:userId', requireAuth, async (req, res) => {
   const { campaignId, userId } = req.params;
+  const callerId = req.user.id;
+  const isAdmin = Array.isArray(req.user.roles) && req.user.roles.includes('admin');
 
   try {
     const client = await getClient();
-    const result = await client.query(
-      'DELETE FROM campaign_players WHERE campaign_id = $1 AND user_id = $2 RETURNING *',
-      [campaignId, userId]
-    );
-    client.release();
+    try {
+      // Authorisation: either the caller is leaving the campaign themselves,
+      // or the caller is the campaign DM (or admin) kicking another player.
+      const dmCheck = await client.query(
+        'SELECT dm_user_id FROM campaigns WHERE id = $1',
+        [campaignId],
+      );
 
-    if (result.rows.length === 0) {
-      return res.status(404).json({ error: 'Player not found in campaign' });
+      if (dmCheck.rows.length === 0) {
+        return res.status(404).json({ error: 'Campaign not found' });
+      }
+
+      const dmUserId = dmCheck.rows[0].dm_user_id;
+      if (!isAdmin && callerId !== userId && callerId !== dmUserId) {
+        return res.status(403).json({
+          error: 'forbidden',
+          message: 'You can only remove yourself from a campaign; only the DM may remove other players.',
+        });
+      }
+
+      const result = await client.query(
+        'DELETE FROM campaign_players WHERE campaign_id = $1 AND user_id = $2 RETURNING *',
+        [campaignId, userId],
+      );
+
+      if (result.rows.length === 0) {
+        return res.status(404).json({ error: 'Player not found in campaign' });
+      }
+
+      res.json({ message: 'Successfully left campaign' });
+    } finally {
+      client.release();
     }
-
-    res.json({ message: 'Successfully left campaign' });
   } catch (error) {
     logError('[Campaigns] Leave campaign error:', error);
     res.status(500).json({ error: 'Failed to leave campaign' });
