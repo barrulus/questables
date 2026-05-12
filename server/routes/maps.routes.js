@@ -1,6 +1,10 @@
 import { Router } from 'express';
 import { logError, logInfo } from '../utils/logger.js';
-import { requireAuth, requireCampaignParticipation } from '../auth-middleware.js';
+import {
+  requireAuth,
+  requireCampaignOwnership,
+  requireCampaignParticipation,
+} from '../auth-middleware.js';
 import { getClient } from '../db/pool.js';
 import {
   createWorldMap,
@@ -27,11 +31,12 @@ import { getViewerContextOrThrow, ensureDmControl } from '../services/campaigns/
 
 const router = Router();
 
-router.post('/world', async (req, res) => {
-  const { name, description, bounds, layers, uploaded_by: uploadedBy } = req.body ?? {};
+router.post('/world', requireAuth, async (req, res) => {
+  const { name, description, bounds, layers } = req.body ?? {};
+  const uploadedBy = req.user.id;
 
-  if (!name || !uploadedBy) {
-    return res.status(400).json({ error: 'Name and uploaded_by are required' });
+  if (!name) {
+    return res.status(400).json({ error: 'Name is required' });
   }
 
   try {
@@ -297,7 +302,7 @@ router.get('/settlements/:burgId/tiles/:z/:x/:y.png', async (req, res) => {
 export const registerMapRoutes = (app) => {
   app.use('/api/maps', router);
 
-  app.post('/api/campaigns/:campaignId/locations', async (req, res) => {
+  app.post('/api/campaigns/:campaignId/locations', requireAuth, requireCampaignOwnership, async (req, res) => {
     const { campaignId } = req.params;
     const {
       name,
@@ -338,7 +343,7 @@ export const registerMapRoutes = (app) => {
     }
   });
 
-  app.get('/api/campaigns/:campaignId/locations', async (req, res) => {
+  app.get('/api/campaigns/:campaignId/locations', requireAuth, requireCampaignParticipation, async (req, res) => {
     const { campaignId } = req.params;
 
     try {
