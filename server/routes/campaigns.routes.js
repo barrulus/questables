@@ -443,29 +443,76 @@ router.get('/api/campaigns/public', async (req, res) => {
   }
 });
 
-router.get('/api/campaigns/:id', async (req, res) => {
+// Fields exposed to non-participants who hit a public campaign. Mirrors the
+// shape already published by GET /api/campaigns/public so anonymous browsing
+// still works, while keeping DM-only data (dm_user_id, custom_rules, level
+// range, visibility radius, etc.) inside the campaign membership.
+const PUBLIC_CAMPAIGN_FIELDS = [
+  'id',
+  'name',
+  'description',
+  'status',
+  'is_public',
+  'max_players',
+  'world_map_id',
+  'created_at',
+  'updated_at',
+  'dm_username',
+];
+
+router.get('/api/campaigns/:id', requireAuth, async (req, res) => {
   const { id } = req.params;
+  const userId = req.user.id;
+  const isAdmin = Array.isArray(req.user.roles) && req.user.roles.includes('admin');
 
   try {
     const client = await getClient();
-    const result = await client.query(`
-      SELECT c.*, u.username as dm_username
-      FROM campaigns c
-      JOIN user_profiles u ON c.dm_user_id = u.id
-      WHERE c.id = $1
-    `, [id]);
-    client.release();
+    try {
+      const result = await client.query(`
+        SELECT c.*,
+               u.username AS dm_username,
+               CASE WHEN c.dm_user_id = $2 THEN 'dm'
+                    WHEN cp.user_id IS NOT NULL THEN 'player'
+                    ELSE NULL END AS viewer_role
+          FROM campaigns c
+          JOIN user_profiles u ON c.dm_user_id = u.id
+          LEFT JOIN campaign_players cp
+                 ON cp.campaign_id = c.id AND cp.user_id = $2
+         WHERE c.id = $1
+      `, [id, userId]);
 
-    if (result.rows.length === 0) {
-      return res.status(404).json({ error: 'Campaign not found' });
+      if (result.rows.length === 0) {
+        return res.status(404).json({ error: 'Campaign not found' });
+      }
+
+      const row = result.rows[0];
+      const isParticipant = Boolean(row.viewer_role) || isAdmin;
+
+      if (!isParticipant && !row.is_public) {
+        // Return 404 rather than 403 to avoid confirming the campaign exists.
+        return res.status(404).json({ error: 'Campaign not found' });
+      }
+
+      delete row.viewer_role;
+
+      if (!isParticipant) {
+        const publicView = PUBLIC_CAMPAIGN_FIELDS.reduce((acc, key) => {
+          if (Object.prototype.hasOwnProperty.call(row, key)) {
+            acc[key] = row[key];
+          }
+          return acc;
+        }, {});
+        return res.json({ campaign: publicView });
+      }
+
+      if (!Object.prototype.hasOwnProperty.call(row, 'visibility_radius')) {
+        row.visibility_radius = DEFAULT_VISIBILITY_RADIUS;
+      }
+
+      res.json({ campaign: row });
+    } finally {
+      client.release();
     }
-
-    const campaign = result.rows[0];
-    if (!Object.prototype.hasOwnProperty.call(campaign, 'visibility_radius')) {
-      campaign.visibility_radius = DEFAULT_VISIBILITY_RADIUS;
-    }
-
-    res.json({ campaign });
   } catch (error) {
     logError('[Campaigns] Get error:', error);
     res.status(500).json({ error: 'Failed to fetch campaign' });
