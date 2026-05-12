@@ -133,7 +133,23 @@ const limiter = rateLimit({
 
 app.use('/api', limiter);
 
-// Configure multer for file uploads
+// Configure multer for file uploads.
+//
+// Security notes:
+// - SVG is intentionally NOT allowed. SVGs can contain <script> and would
+//   execute as XSS if served back from the same origin via /uploads.
+// - The on-disk extension is derived from a trusted mime→ext map, NEVER from
+//   user-supplied originalname (which could be `evil.html`, `.php`, `.svg`,
+//   or any extension that a downstream static server would honour).
+const MIME_EXT_MAP = {
+  'image/jpeg': 'jpg',
+  'image/png': 'png',
+  'image/webp': 'webp',
+  'application/json': 'json',
+  'application/geo+json': 'geojson',
+};
+const ALLOWED_UPLOAD_MIMETYPES = Object.keys(MIME_EXT_MAP);
+
 const storage = multer.diskStorage({
   destination: async (req, file, cb) => {
     const uploadDir = join(process.cwd(), 'uploads');
@@ -142,25 +158,60 @@ const storage = multer.diskStorage({
   },
   filename: (req, file, cb) => {
     const uniqueSuffix = Date.now() + '-' + Math.round(Math.random() * 1E9);
-    cb(null, file.fieldname + '-' + uniqueSuffix + '.' + file.originalname.split('.').pop());
+    const ext = MIME_EXT_MAP[file.mimetype] || 'bin';
+    cb(null, `${file.fieldname}-${uniqueSuffix}.${ext}`);
   }
 });
 
-const upload = multer({ 
+const upload = multer({
   storage,
   limits: { fileSize: 50 * 1024 * 1024 }, // 50MB limit
   fileFilter: (req, file, cb) => {
-    const allowedTypes = ['image/jpeg', 'image/png', 'image/webp', 'application/json', 'image/svg+xml'];
-    if (allowedTypes.includes(file.mimetype)) {
+    if (ALLOWED_UPLOAD_MIMETYPES.includes(file.mimetype)) {
       cb(null, true);
     } else {
-      cb(new Error('Invalid file type. Allowed: JPEG, PNG, WebP, JSON, SVG'));
+      cb(new Error('Invalid file type. Allowed: JPEG, PNG, WebP, JSON, GeoJSON'));
     }
   }
 });
 
-// Serve uploaded files
-app.use('/uploads', express.static(join(process.cwd(), 'uploads')));
+// Scoped multer for the map-wizard SVG ingestion path only. The persisted file
+// is read once to extract dimensions and then deleted by the route handler, so
+// it never appears under /uploads — eliminating the stored-XSS vector.
+const svgStorage = multer.diskStorage({
+  destination: async (_req, _file, cb) => {
+    const uploadDir = join(process.cwd(), 'uploads');
+    await fs.mkdir(uploadDir, { recursive: true });
+    cb(null, uploadDir);
+  },
+  filename: (_req, file, cb) => {
+    const uniqueSuffix = Date.now() + '-' + Math.round(Math.random() * 1E9);
+    cb(null, `${file.fieldname}-${uniqueSuffix}.svg`);
+  }
+});
+
+const uploadSvg = multer({
+  storage: svgStorage,
+  limits: { fileSize: 50 * 1024 * 1024 },
+  fileFilter: (_req, file, cb) => {
+    if (file.mimetype === 'image/svg+xml') {
+      cb(null, true);
+    } else {
+      cb(new Error('Invalid file type. Allowed: SVG only on this endpoint.'));
+    }
+  }
+});
+
+// Serve uploaded files. CSP + nosniff are defence-in-depth: even if a
+// malicious file made it past the upload filter, the browser will refuse to
+// execute scripts on this origin and will not MIME-sniff its way around the
+// declared Content-Type.
+app.use('/uploads', express.static(join(process.cwd(), 'uploads'), {
+  setHeaders: (res) => {
+    res.setHeader('Content-Security-Policy', "default-src 'none'; sandbox");
+    res.setHeader('X-Content-Type-Options', 'nosniff');
+  }
+}));
 
 // Health check endpoint
 app.get('/api/health', async (req, res) => {
@@ -433,7 +484,7 @@ registerMapRoutes(app);
 registerSessionRoutes(app);
 registerEncounterRoutes(app);
 registerNpcRoutes(app);
-registerUploadRoutes(app, { upload });
+registerUploadRoutes(app, { upload, uploadSvg });
 registerSrdRoutes(app);
 registerGameStateRoutes(app);
 registerActionRoutes(app);

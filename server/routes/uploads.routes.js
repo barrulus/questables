@@ -1,5 +1,10 @@
 import { Router } from 'express';
 import { promises as fs } from 'fs';
+import {
+  requireAuth,
+  requireCampaignOwnership,
+  requireCampaignParticipation,
+} from '../auth-middleware.js';
 import { logError, logInfo } from '../utils/logger.js';
 import {
   createWorldMapFromUpload,
@@ -15,12 +20,19 @@ import {
 } from '../services/maps/ingestion-service.js';
 import { getWorldMapById } from '../services/maps/service.js';
 
-export const registerUploadRoutes = (app, { upload }) => {
+export const registerUploadRoutes = (app, { upload, uploadSvg }) => {
   if (!upload) {
     throw new Error('registerUploadRoutes requires an upload middleware instance');
   }
+  if (!uploadSvg) {
+    throw new Error('registerUploadRoutes requires an uploadSvg middleware instance');
+  }
 
   const router = Router();
+
+  // All upload endpoints require authentication. Pre-pentest, every upload
+  // route was anonymous — anyone on the network could persist files to /uploads.
+  router.use(requireAuth);
 
   router.post('/upload/avatar', upload.single('avatar'), async (req, res) => {
     if (!req.file) {
@@ -32,6 +44,7 @@ export const registerUploadRoutes = (app, { upload }) => {
       telemetryEvent: 'upload.avatar',
       filename: req.file.filename,
       size: req.file.size,
+      userId: req.user.id,
     });
 
     return res.json({ url: fileUrl, filename: req.file.filename });
@@ -42,7 +55,8 @@ export const registerUploadRoutes = (app, { upload }) => {
       return res.status(400).json({ error: 'No file uploaded' });
     }
 
-    const { name, description, uploaded_by: uploadedBy } = req.body ?? {};
+    const { name, description } = req.body ?? {};
+    const uploadedBy = req.user.id;
 
     try {
       if (req.file.mimetype === 'application/json') {
@@ -80,6 +94,7 @@ export const registerUploadRoutes = (app, { upload }) => {
         telemetryEvent: 'upload.map.asset',
         filename: req.file.filename,
         size: req.file.size,
+        uploadedBy,
       });
       return res.json({ url: fileUrl, filename: req.file.filename });
     } catch (error) {
@@ -88,63 +103,78 @@ export const registerUploadRoutes = (app, { upload }) => {
     }
   });
 
-  router.post('/campaigns/:campaignId/assets', upload.single('asset'), async (req, res) => {
-    const { campaignId } = req.params;
+  router.post(
+    '/campaigns/:campaignId/assets',
+    requireCampaignOwnership,
+    upload.single('asset'),
+    async (req, res) => {
+      const { campaignId } = req.params;
 
-    if (!req.file) {
-      return res.status(400).json({ error: 'No file uploaded' });
-    }
+      if (!req.file) {
+        return res.status(400).json({ error: 'No file uploaded' });
+      }
 
-    const { name, description, type = 'image' } = req.body ?? {};
-    const fileUrl = `/uploads/${req.file.filename}`;
+      const { name, description, type = 'image' } = req.body ?? {};
+      const fileUrl = `/uploads/${req.file.filename}`;
 
-    try {
-      const payload = [{
-        id: req.file.filename,
-        name,
-        description,
-        type,
-        url: fileUrl,
-        size: req.file.size,
-        uploadedAt: new Date().toISOString(),
-      }];
+      try {
+        const payload = [{
+          id: req.file.filename,
+          name,
+          description,
+          type,
+          url: fileUrl,
+          size: req.file.size,
+          uploadedAt: new Date().toISOString(),
+          uploadedBy: req.user.id,
+        }];
 
-      await appendCampaignAsset(campaignId, payload[0]);
+        await appendCampaignAsset(campaignId, payload[0]);
 
-      logInfo('Campaign asset uploaded', {
-        telemetryEvent: 'upload.campaign_asset',
-        campaignId,
-        filename: req.file.filename,
-      });
+        logInfo('Campaign asset uploaded', {
+          telemetryEvent: 'upload.campaign_asset',
+          campaignId,
+          filename: req.file.filename,
+          userId: req.user.id,
+        });
 
-      return res.json({ asset: payload[0] });
-    } catch (error) {
-      logError('Campaign asset upload failed', error, { campaignId });
-      return res.status(500).json({ error: error.message });
-    }
-  });
+        return res.json({ asset: payload[0] });
+      } catch (error) {
+        logError('Campaign asset upload failed', error, { campaignId });
+        return res.status(500).json({ error: error.message });
+      }
+    },
+  );
 
-  router.get('/campaigns/:campaignId/assets', async (req, res) => {
-    const { campaignId } = req.params;
+  router.get(
+    '/campaigns/:campaignId/assets',
+    requireCampaignParticipation,
+    async (req, res) => {
+      const { campaignId } = req.params;
 
-    try {
-      const assets = await listCampaignAssets(campaignId);
-      return res.json(assets);
-    } catch (error) {
-      logError('Campaign asset listing failed', error, { campaignId });
-      const status = error.status || 500;
-      return res.status(status).json({ error: error.code || 'campaign_assets_failed', message: error.message });
-    }
-  });
+      try {
+        const assets = await listCampaignAssets(campaignId);
+        return res.json(assets);
+      } catch (error) {
+        logError('Campaign asset listing failed', error, { campaignId });
+        const status = error.status || 500;
+        return res.status(status).json({ error: error.code || 'campaign_assets_failed', message: error.message });
+      }
+    },
+  );
 
   // --- Map Wizard: SVG upload (Step 0) ---
-  router.post('/upload/map/svg', upload.single('svgFile'), async (req, res) => {
+  // Uses scoped uploadSvg middleware. The SVG is parsed for dimensions and
+  // then deleted, so it never appears under /uploads — neutralising the
+  // stored-XSS vector for the only path that legitimately accepts SVG.
+  router.post('/upload/map/svg', uploadSvg.single('svgFile'), async (req, res) => {
     if (!req.file) {
       return res.status(400).json({ error: 'No SVG file uploaded' });
     }
 
     const { name, description, metersPerPixel } = req.body ?? {};
     if (!name || typeof name !== 'string' || !name.trim()) {
+      await fs.unlink(req.file.path).catch(() => {});
       return res.status(400).json({ error: 'Name is required' });
     }
 
@@ -159,7 +189,7 @@ export const registerUploadRoutes = (app, { upload }) => {
         widthPixels: width,
         heightPixels: height,
         metersPerPixel: Number.isFinite(mpp) ? mpp : null,
-        uploadedBy: req.body?.uploaded_by ?? null,
+        uploadedBy: req.user.id,
       });
 
       logInfo('Map SVG uploaded', {
@@ -167,6 +197,7 @@ export const registerUploadRoutes = (app, { upload }) => {
         worldId,
         width,
         height,
+        userId: req.user.id,
       });
 
       return res.json({
@@ -179,6 +210,8 @@ export const registerUploadRoutes = (app, { upload }) => {
     } catch (error) {
       logError('Map SVG upload failed', error, { filename: req.file?.filename });
       return res.status(500).json({ error: error.message });
+    } finally {
+      await fs.unlink(req.file.path).catch(() => {});
     }
   });
 
@@ -219,6 +252,7 @@ export const registerUploadRoutes = (app, { upload }) => {
         worldId,
         layerType,
         rowCount: result.rowCount,
+        userId: req.user.id,
       });
 
       return res.json({ worldId, layerType: result.layerType, rowCount: result.rowCount, status: 'complete' });
