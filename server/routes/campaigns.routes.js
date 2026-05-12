@@ -2651,36 +2651,22 @@ router.put('/api/campaigns/:id', requireAuth, requireCampaignOwnership, async (r
   }
 });
 
-router.delete('/api/campaigns/:id', async (req, res) => {
+router.delete('/api/campaigns/:id', requireAuth, requireCampaignOwnership, async (req, res) => {
   const { id } = req.params;
-  const { dmUserId } = req.body;
 
-  if (!dmUserId) {
-    return res.status(400).json({ error: 'DM user ID required for campaign deletion' });
-  }
-
+  // requireCampaignOwnership has already verified that req.user.id is the
+  // campaign DM. The previous implementation read dmUserId from the request
+  // body, which was both unauthenticated and trivially bypassable because the
+  // DM's user id is leaked by GET /api/campaigns/public.
   try {
     const client = await getClient();
-    
-    // Verify user is the DM
-    const campaignCheck = await client.query(
-      'SELECT dm_user_id FROM campaigns WHERE id = $1',
-      [id]
-    );
-    
-    if (campaignCheck.rows.length === 0) {
+    try {
+      await client.query('DELETE FROM campaigns WHERE id = $1', [id]);
+    } finally {
       client.release();
-      return res.status(404).json({ error: 'Campaign not found' });
     }
-    
-    if (campaignCheck.rows[0].dm_user_id !== dmUserId) {
-      client.release();
-      return res.status(403).json({ error: 'Only the DM can delete this campaign' });
-    }
-    
-    await client.query('DELETE FROM campaigns WHERE id = $1 RETURNING *', [id]);
-    client.release();
 
+    logInfo('Campaign deleted', { campaignId: id, userId: req.user.id });
     res.json({ message: 'Campaign deleted successfully' });
   } catch (error) {
     logError('[Campaigns] Delete error:', error);
