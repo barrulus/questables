@@ -6,6 +6,7 @@ import {
 } from './utils/logger.js';
 import { verifyToken } from './auth-middleware.js';
 import { getClient } from './db/pool.js';
+import { stripHtmlTags } from './utils/sanitization.js';
 
 export const REALTIME_EVENTS = {
   spawnUpdated: 'spawn-updated',
@@ -86,6 +87,10 @@ class WebSocketServer {
           id: decoded.userId,
           username: decoded.username ?? socket.handshake.auth.username ?? 'unknown',
         };
+        // Per-event authorisation cache. Populated by `join-campaign` once
+        // membership has been verified against the database; consulted by
+        // every handler that takes a campaignId.
+        socket.campaignAccess = new Map();
         next();
       } catch (err) {
         logWarn('WebSocket authentication failed', {
@@ -96,79 +101,179 @@ class WebSocketServer {
     });
   }
 
+  // Resolve the socket's relationship to a campaign and cache the result on
+  // the socket. Returns the role ('dm' | 'player') or null if the user is
+  // neither the DM nor an active player.
+  async resolveCampaignRole(socket, campaignId) {
+    if (!campaignId || typeof campaignId !== 'string') return null;
+    if (socket.campaignAccess.has(campaignId)) {
+      return socket.campaignAccess.get(campaignId);
+    }
+    const client = await getClient({ label: 'ws.resolveCampaignRole' });
+    try {
+      const { rows } = await client.query(
+        `SELECT CASE
+                  WHEN c.dm_user_id = $2 THEN 'dm'
+                  WHEN cp.user_id IS NOT NULL THEN 'player'
+                  ELSE NULL
+                END AS role
+           FROM campaigns c
+           LEFT JOIN campaign_players cp
+                  ON cp.campaign_id = c.id
+                 AND cp.user_id = $2
+                 AND cp.status = 'active'
+          WHERE c.id = $1
+          LIMIT 1`,
+        [campaignId, socket.user.id],
+      );
+      const role = rows[0]?.role ?? null;
+      socket.campaignAccess.set(campaignId, role);
+      return role;
+    } catch (error) {
+      logError('WebSocket campaign role resolution failed', error, {
+        campaignId,
+        userId: socket.user.id,
+      });
+      return null;
+    } finally {
+      client.release();
+    }
+  }
+
+  // Guard a callback that requires campaign membership. Reads campaignId from
+  // either a string argument (legacy typing-start/stop signature) or the
+  // .campaignId field of an object payload. Emits a 'error' to the client and
+  // returns null when access is denied.
+  async requireCampaignAccess(socket, payload, eventName) {
+    const campaignId = typeof payload === 'string' ? payload : payload?.campaignId;
+    if (!campaignId) {
+      socket.emit('error', { type: `${eventName}-error`, message: 'campaignId required' });
+      return null;
+    }
+    const role = await this.resolveCampaignRole(socket, campaignId);
+    if (!role) {
+      logWarn('WebSocket authorisation denied', {
+        event: eventName,
+        campaignId,
+        userId: socket.user.id,
+      });
+      socket.emit('error', {
+        type: `${eventName}-error`,
+        message: 'You are not a participant in this campaign',
+      });
+      return null;
+    }
+    return { campaignId, role };
+  }
+
   setupEventHandlers() {
     this.io.on('connection', (socket) => {
       logInfo('WebSocket client connected', {
         userId: socket.user.id,
         username: socket.user.username,
       });
-      
-      // Handle joining campaign rooms
-      socket.on('join-campaign', (campaignId) => {
-        socket.join(`${CAMPAIGN_ROOM_PREFIX}${campaignId}`);
-        socket.campaignId = campaignId;
+
+      // join-campaign: verify membership against the DB BEFORE adding the
+      // socket to the broadcast room. Without this, any JWT-holder (and
+      // anyone can self-register via /api/auth/register) could subscribe to
+      // any campaign's stream of DM-only objectives, combat state, npc
+      // sentiment, etc.
+      socket.on('join-campaign', async (campaignId) => {
+        const access = await this.requireCampaignAccess(socket, campaignId, 'join-campaign');
+        if (!access) return;
+
+        socket.join(`${CAMPAIGN_ROOM_PREFIX}${access.campaignId}`);
+        socket.campaignId = access.campaignId;
         logInfo('WebSocket campaign joined', {
-          campaignId,
+          campaignId: access.campaignId,
           userId: socket.user.id,
+          role: access.role,
         });
-        
-        // Notify other users in the campaign
-        socket.to(`${CAMPAIGN_ROOM_PREFIX}${campaignId}`).emit('user-joined', {
+
+        socket.to(`${CAMPAIGN_ROOM_PREFIX}${access.campaignId}`).emit('user-joined', {
           userId: socket.user.id,
           username: socket.user.username,
-          timestamp: new Date().toISOString()
+          timestamp: new Date().toISOString(),
         });
       });
 
-      // Handle leaving campaign rooms
       socket.on('leave-campaign', (campaignId) => {
+        if (typeof campaignId !== 'string') return;
+        // Leaving a room you are not in is a no-op; safe to allow without a
+        // membership check.
         socket.leave(`${CAMPAIGN_ROOM_PREFIX}${campaignId}`);
+        socket.campaignAccess.delete(campaignId);
         logInfo('WebSocket campaign left', {
           campaignId,
           userId: socket.user.id,
         });
-        
-        // Notify other users in the campaign
+
         socket.to(`${CAMPAIGN_ROOM_PREFIX}${campaignId}`).emit('user-left', {
           userId: socket.user.id,
           username: socket.user.username,
-          timestamp: new Date().toISOString()
+          timestamp: new Date().toISOString(),
         });
       });
 
-      // Handle chat messages (channel-aware)
       socket.on('chat-message', async (payload) => {
         try {
-          const { campaignId } = payload;
-          if (!campaignId) {
-            throw new Error('Campaign ID missing for chat message');
-          }
+          const access = await this.requireCampaignAccess(socket, payload, 'chat-message');
+          if (!access) return;
+          const { campaignId, role } = access;
 
           const incoming = payload?.message || {};
           const now = new Date().toISOString();
 
-          // Resolve character_name from DB to prevent spoofing
+          // Channel-type authorisation. dm_whisper messages may only be
+          // initiated by the campaign DM. Without this gate, any participant
+          // could whisper any other participant pretending to be a DM-only
+          // channel.
+          const channelType = incoming.channelType ?? 'party';
+          const channelTargetUserId = incoming.channelTargetUserId ?? null;
+          if (channelType === 'dm_whisper' && role !== 'dm') {
+            socket.emit('error', {
+              type: 'chat-message-error',
+              message: 'Only the DM can send dm_whisper messages',
+            });
+            return;
+          }
+          if (channelType === 'dm_broadcast' && role !== 'dm') {
+            socket.emit('error', {
+              type: 'chat-message-error',
+              message: 'Only the DM can broadcast as the DM',
+            });
+            return;
+          }
+
+          // Resolve character_name from DB to prevent spoofing and confirm
+          // that the character belongs to the sender.
           const characterId = incoming.characterId ?? null;
           let characterName = null;
           if (characterId) {
             const client = await getClient({ label: 'ws-character-name' });
             try {
-              const { rows } = await client.query('SELECT name FROM characters WHERE id = $1', [characterId]);
-              characterName = rows[0]?.name ?? null;
+              const { rows } = await client.query(
+                'SELECT name, user_id FROM characters WHERE id = $1',
+                [characterId],
+              );
+              if (rows[0] && rows[0].user_id === socket.user.id) {
+                characterName = rows[0].name ?? null;
+              }
+              // If the character is not owned by the sender we silently drop
+              // the character_name attribution rather than fail the message.
             } finally {
               client.release();
             }
           }
 
-          const channelType = incoming.channelType ?? 'party';
-          const channelTargetUserId = incoming.channelTargetUserId ?? null;
+          const sanitizedContent = stripHtmlTags(incoming.content || incoming.message || '');
 
           const messageData = {
             type: 'new_message',
             data: {
               id: incoming.messageId || incoming.id || Date.now().toString(),
               campaign_id: campaignId,
-              content: incoming.content || incoming.message || '',
+              content: sanitizedContent,
               message_type: incoming.messageType || 'text',
               sender_id: socket.user.id,
               sender_name: socket.user.username,
@@ -179,18 +284,15 @@ class WebSocketServer {
               channel_type: channelType,
               channel_target_user_id: channelTargetUserId,
               created_at: incoming.createdAt || now,
-            }
+            },
           };
 
-          // Channel-aware delivery
           if (channelType === 'private' || channelType === 'dm_whisper') {
-            // Only emit to sender + target
             this.emitToUser(campaignId, socket.user.id, 'new-message', messageData);
             if (channelTargetUserId && channelTargetUserId !== socket.user.id) {
               this.emitToUser(campaignId, channelTargetUserId, 'new-message', messageData);
             }
           } else {
-            // party / dm_broadcast → broadcast to whole campaign room
             this.io.to(`${CAMPAIGN_ROOM_PREFIX}${campaignId}`).emit('new-message', messageData);
           }
 
@@ -206,21 +308,19 @@ class WebSocketServer {
             campaignId: payload?.campaignId,
             userId: socket.user.id,
           });
-          socket.emit('error', { type: 'chat-error', message: 'Failed to send message' });
+          socket.emit('error', { type: 'chat-message-error', message: 'Failed to send message' });
         }
       });
 
-      // Handle typing indicators (channel-aware)
-      socket.on('typing-start', (campaignIdOrPayload) => {
-        const campaignId = typeof campaignIdOrPayload === 'string'
-          ? campaignIdOrPayload
-          : campaignIdOrPayload?.campaignId;
+      socket.on('typing-start', async (campaignIdOrPayload) => {
+        const access = await this.requireCampaignAccess(socket, campaignIdOrPayload, 'typing-start');
+        if (!access) return;
+        const { campaignId } = access;
         const targetUserId = typeof campaignIdOrPayload === 'object'
           ? campaignIdOrPayload?.targetUserId
           : null;
 
         if (targetUserId) {
-          // Private typing: only tell the target
           this.emitToUser(campaignId, targetUserId, 'user-typing', {
             userId: socket.user.id,
             username: socket.user.username,
@@ -233,10 +333,10 @@ class WebSocketServer {
         }
       });
 
-      socket.on('typing-stop', (campaignIdOrPayload) => {
-        const campaignId = typeof campaignIdOrPayload === 'string'
-          ? campaignIdOrPayload
-          : campaignIdOrPayload?.campaignId;
+      socket.on('typing-stop', async (campaignIdOrPayload) => {
+        const access = await this.requireCampaignAccess(socket, campaignIdOrPayload, 'typing-stop');
+        if (!access) return;
+        const { campaignId } = access;
         const targetUserId = typeof campaignIdOrPayload === 'object'
           ? campaignIdOrPayload?.targetUserId
           : null;
@@ -254,117 +354,43 @@ class WebSocketServer {
         }
       });
 
-      // Handle combat updates
-      socket.on('combat-update', (data) => {
-        try {
-          const { campaignId, encounterId, update } = data;
-          
-          // Broadcast combat state to all campaign participants
-          socket.to(`${CAMPAIGN_ROOM_PREFIX}${campaignId}`).emit('combat-state-update', {
-            encounterId,
-            update,
-            timestamp: new Date().toISOString(),
-            updatedBy: socket.user.id
-          });
-          
-          logInfo('WebSocket combat update emitted', {
-            campaignId,
-            encounterId,
-            userId: socket.user.id,
-          });
-        } catch (error) {
-          logError('WebSocket combat update failed', error, {
-            campaignId: data?.campaignId,
-            userId: socket.user.id,
-          });
-          socket.emit('error', { type: 'combat-error', message: 'Failed to update combat state' });
-        }
+      // combat-update / character-update / session-update were client-emit
+      // mirrors of server-side state. With per-event auth in place, the
+      // canonical events for these flows are already emitted server-side by
+      // dedicated services (action-completed, live-state-changed, combat-*,
+      // session-focus-updated, etc.). The client-emit surface has been
+      // dropped to prevent forged HP/character/session events from reaching
+      // every connected client. Frontend hook methods are no-ops now.
+
+      socket.on('update-presence', async (status) => {
+        if (!socket.campaignId) return;
+        const access = await this.requireCampaignAccess(socket, socket.campaignId, 'update-presence');
+        if (!access) return;
+
+        socket.to(`${CAMPAIGN_ROOM_PREFIX}${access.campaignId}`).emit('presence-update', {
+          userId: socket.user.id,
+          username: socket.user.username,
+          status,
+          timestamp: new Date().toISOString(),
+        });
       });
 
-      // Handle character updates
-      socket.on('character-update', (data) => {
-        try {
-          const { campaignId, characterId, update } = data;
-          
-          // Broadcast character changes to campaign participants
-          socket.to(`${CAMPAIGN_ROOM_PREFIX}${campaignId}`).emit('character-changed', {
-            characterId,
-            update,
-            timestamp: new Date().toISOString(),
-            updatedBy: socket.user.id
-          });
-          
-          logInfo('WebSocket character update emitted', {
-            campaignId,
-            characterId,
-            userId: socket.user.id,
-          });
-        } catch (error) {
-          logError('WebSocket character update failed', error, {
-            campaignId: data?.campaignId,
-            userId: socket.user.id,
-          });
-          socket.emit('error', { type: 'character-error', message: 'Failed to update character' });
-        }
-      });
-
-      // Handle session updates
-      socket.on('session-update', (data) => {
-        try {
-          const { campaignId, sessionId, update } = data;
-          
-          // Broadcast session changes to campaign participants
-          socket.to(`${CAMPAIGN_ROOM_PREFIX}${campaignId}`).emit('session-changed', {
-            sessionId,
-            update,
-            timestamp: new Date().toISOString(),
-            updatedBy: socket.user.id
-          });
-          
-          logInfo('WebSocket session update emitted', {
-            campaignId,
-            sessionId,
-            userId: socket.user.id,
-          });
-        } catch (error) {
-          logError('WebSocket session update failed', error, {
-            campaignId: data?.campaignId,
-            userId: socket.user.id,
-          });
-          socket.emit('error', { type: 'session-error', message: 'Failed to update session' });
-        }
-      });
-
-      // Handle user presence
-      socket.on('update-presence', (status) => {
-        if (socket.campaignId) {
-          socket.to(`${CAMPAIGN_ROOM_PREFIX}${socket.campaignId}`).emit('presence-update', {
-            userId: socket.user.id,
-            username: socket.user.username,
-            status,
-            timestamp: new Date().toISOString()
-          });
-        }
-      });
-
-      // Handle disconnection
       socket.on('disconnect', () => {
         logInfo('WebSocket client disconnected', {
           userId: socket.user.id,
           username: socket.user.username,
           campaignId: socket.campaignId,
         });
-        
+
         if (socket.campaignId) {
           socket.to(`${CAMPAIGN_ROOM_PREFIX}${socket.campaignId}`).emit('user-left', {
             userId: socket.user.id,
             username: socket.user.username,
-            timestamp: new Date().toISOString()
+            timestamp: new Date().toISOString(),
           });
         }
       });
 
-      // Health check
       socket.on('ping', () => {
         socket.emit('pong', { timestamp: new Date().toISOString() });
       });
