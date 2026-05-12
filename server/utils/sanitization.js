@@ -23,6 +23,20 @@ export const sanitizeHTML = (html) => {
     .trim();
 };
 
+// Less destructive sibling of sanitizeHTML: strips HTML tags and script/style
+// blocks but preserves whitespace and newlines. Use this for stored free-text
+// fields (NPC personality, encounter description, etc.) where collapsing
+// whitespace would damage formatting but tags still need to be neutralised
+// at the API boundary as defence-in-depth against stored XSS.
+export const stripHtmlTags = (input) => {
+  if (typeof input !== 'string') return '';
+  return input
+    .replace(/<script[\s\S]*?>[\s\S]*?<\/script>/gi, '')
+    .replace(/<style[\s\S]*?>[\s\S]*?<\/style>/gi, '')
+    .replace(/<[^>]+>/g, '')
+    .slice(0, 10000);
+};
+
 export const sanitizeFilename = (filename) => {
   if (typeof filename !== 'string') return 'file';
   const base = path.basename(filename);
@@ -37,6 +51,7 @@ export const sanitizeUserInput = (input, maxLength = 1000) => sanitizePlainText(
 export default {
   sanitizePlainText,
   sanitizeHTML,
+  stripHtmlTags,
   sanitizeFilename,
   sanitizeChatMessage,
   sanitizeUserInput,

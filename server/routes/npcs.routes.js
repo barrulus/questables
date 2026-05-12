@@ -8,7 +8,7 @@ import {
 import { handleValidationErrors } from '../validation/common.js';
 import { query as dbQuery } from '../db/pool.js';
 import { logError, logInfo } from '../utils/logger.js';
-import { sanitizeUserInput } from '../utils/sanitization.js';
+import { sanitizeUserInput, stripHtmlTags } from '../utils/sanitization.js';
 import { clamp, VALID_SENTIMENTS } from '../llm/npc-interaction-utils.js';
 import { MAX_SENTIMENT_SUMMARY_LENGTH } from '../services/campaigns/service.js';
 import {
@@ -151,33 +151,34 @@ router.post(
   },
 );
 
+// Free-text NPC string fields that must be stripped of HTML on write. stats
+// and voice_config are structured JSON and go through their own validators.
+const NPC_TEXT_FIELDS = ['name', 'description', 'race', 'occupation', 'personality', 'appearance', 'motivations', 'secrets'];
+
 router.post('/campaigns/:campaignId/npcs', requireAuth, requireCampaignOwnership, async (req, res) => {
   const { campaignId } = req.params;
+  const body = req.body ?? {};
+  const sanitized = NPC_TEXT_FIELDS.reduce((acc, key) => {
+    acc[key] = typeof body[key] === 'string' ? stripHtmlTags(body[key]) : body[key] ?? null;
+    return acc;
+  }, {});
   const {
-    name,
-    description,
-    race,
-    occupation,
-    personality,
-    appearance,
-    motivations,
-    secrets,
     current_location_id: currentLocationId,
     stats,
     voice_config: voiceConfig,
-  } = req.body ?? {};
+  } = body;
 
   try {
     const npc = await createNpc({
       campaignId,
-      name,
-      description,
-      race,
-      occupation,
-      personality,
-      appearance,
-      motivations,
-      secrets,
+      name: sanitized.name,
+      description: sanitized.description,
+      race: sanitized.race,
+      occupation: sanitized.occupation,
+      personality: sanitized.personality,
+      appearance: sanitized.appearance,
+      motivations: sanitized.motivations,
+      secrets: sanitized.secrets,
       currentLocationId,
       stats,
       voiceConfig,
@@ -191,7 +192,7 @@ router.post('/campaigns/:campaignId/npcs', requireAuth, requireCampaignOwnership
 
     return res.status(201).json(npc);
   } catch (error) {
-    logError('NPC creation failed', error, { campaignId, name });
+    logError('NPC creation failed', error, { campaignId, name: sanitized.name });
     return res.status(500).json({ error: error.message });
   }
 });
@@ -210,7 +211,15 @@ router.get('/campaigns/:campaignId/npcs', requireAuth, requireCampaignParticipat
 
 router.put('/npcs/:npcId', requireAuth, resolveCampaignFromNpc, requireCampaignOwnership, async (req, res) => {
   const { npcId } = req.params;
-  const updates = req.body ?? {};
+  const raw = req.body ?? {};
+  const updates = Object.entries(raw).reduce((acc, [key, value]) => {
+    if (NPC_TEXT_FIELDS.includes(key) && typeof value === 'string') {
+      acc[key] = stripHtmlTags(value);
+    } else {
+      acc[key] = value;
+    }
+    return acc;
+  }, {});
 
   try {
     const npc = await updateNpc(npcId, updates);

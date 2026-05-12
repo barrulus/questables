@@ -11,6 +11,7 @@ import {
 } from '../auth-middleware.js';
 import { getClient, query as dbQuery } from '../db/pool.js';
 import { logError, logInfo } from '../utils/logger.js';
+import { stripHtmlTags } from '../utils/sanitization.js';
 
 const router = Router();
 
@@ -64,7 +65,10 @@ router.post(
   requireCampaignOwnership,
   async (req, res) => {
   const { campaignId } = req.params;
-  const { name, description, type, difficulty, session_id: sessionId, location_id: locationId } = req.body ?? {};
+  const body = req.body ?? {};
+  const name = typeof body.name === 'string' ? stripHtmlTags(body.name) : body.name;
+  const description = typeof body.description === 'string' ? stripHtmlTags(body.description) : body.description;
+  const { type, difficulty, session_id: sessionId, location_id: locationId } = body;
 
   if (!name || !type) {
     return res.status(400).json({ error: 'Encounter name and type are required' });
