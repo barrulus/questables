@@ -4,12 +4,65 @@
 // confirming the roadmap status. See analysis_8-4-26.md (item C5).
 
 import { Router } from 'express';
-import { getClient } from '../db/pool.js';
+import {
+  requireAuth,
+  requireCampaignOwnership,
+  requireCampaignParticipation,
+} from '../auth-middleware.js';
+import { getClient, query as dbQuery } from '../db/pool.js';
 import { logError, logInfo } from '../utils/logger.js';
 
 const router = Router();
 
-router.post('/campaigns/:campaignId/encounters', async (req, res) => {
+// Resolve campaignId from an encounter id and inject it into req.params so
+// that the standard campaign auth middlewares can be reused on routes that
+// only carry encounterId in the URL. Returns 404 if the encounter does not
+// exist (matches the previous behaviour of the route handlers).
+const resolveCampaignFromEncounter = async (req, res, next) => {
+  const { encounterId } = req.params;
+  try {
+    const { rows } = await dbQuery(
+      'SELECT campaign_id FROM encounters WHERE id = $1',
+      [encounterId],
+    );
+    if (rows.length === 0) {
+      return res.status(404).json({ error: 'Encounter not found' });
+    }
+    req.params.campaignId = rows[0].campaign_id;
+    next();
+  } catch (error) {
+    logError('Encounter campaign resolution failed', error, { encounterId });
+    res.status(500).json({ error: 'authorization_failed' });
+  }
+};
+
+// Same idea for routes that only carry encounter-participant id.
+const resolveCampaignFromParticipant = async (req, res, next) => {
+  const { participantId } = req.params;
+  try {
+    const { rows } = await dbQuery(
+      `SELECT e.campaign_id
+         FROM encounter_participants ep
+         JOIN encounters e ON e.id = ep.encounter_id
+        WHERE ep.id = $1`,
+      [participantId],
+    );
+    if (rows.length === 0) {
+      return res.status(404).json({ error: 'Encounter participant not found' });
+    }
+    req.params.campaignId = rows[0].campaign_id;
+    next();
+  } catch (error) {
+    logError('Encounter participant campaign resolution failed', error, { participantId });
+    res.status(500).json({ error: 'authorization_failed' });
+  }
+};
+
+router.post(
+  '/campaigns/:campaignId/encounters',
+  requireAuth,
+  requireCampaignOwnership,
+  async (req, res) => {
   const { campaignId } = req.params;
   const { name, description, type, difficulty, session_id: sessionId, location_id: locationId } = req.body ?? {};
 
@@ -59,7 +112,12 @@ router.post('/campaigns/:campaignId/encounters', async (req, res) => {
   }
 });
 
-router.get('/encounters/:encounterId', async (req, res) => {
+router.get(
+  '/encounters/:encounterId',
+  requireAuth,
+  resolveCampaignFromEncounter,
+  requireCampaignParticipation,
+  async (req, res) => {
   const { encounterId } = req.params;
 
   let client;
@@ -80,7 +138,11 @@ router.get('/encounters/:encounterId', async (req, res) => {
   }
 });
 
-router.get('/campaigns/:campaignId/encounters', async (req, res) => {
+router.get(
+  '/campaigns/:campaignId/encounters',
+  requireAuth,
+  requireCampaignParticipation,
+  async (req, res) => {
   const { campaignId } = req.params;
 
   let client;
@@ -110,7 +172,12 @@ router.get('/campaigns/:campaignId/encounters', async (req, res) => {
   }
 });
 
-router.post('/encounters/:encounterId/participants', async (req, res) => {
+router.post(
+  '/encounters/:encounterId/participants',
+  requireAuth,
+  resolveCampaignFromEncounter,
+  requireCampaignOwnership,
+  async (req, res) => {
   const { encounterId } = req.params;
   const {
     participant_id: participantId,
@@ -159,7 +226,12 @@ router.post('/encounters/:encounterId/participants', async (req, res) => {
   }
 });
 
-router.post('/encounters/:encounterId/initiative', async (req, res) => {
+router.post(
+  '/encounters/:encounterId/initiative',
+  requireAuth,
+  resolveCampaignFromEncounter,
+  requireCampaignOwnership,
+  async (req, res) => {
   const { encounterId } = req.params;
   const { overrides } = req.body ?? {};
 
@@ -268,7 +340,12 @@ router.post('/encounters/:encounterId/initiative', async (req, res) => {
   }
 });
 
-router.get('/encounters/:encounterId/participants', async (req, res) => {
+router.get(
+  '/encounters/:encounterId/participants',
+  requireAuth,
+  resolveCampaignFromEncounter,
+  requireCampaignParticipation,
+  async (req, res) => {
   const { encounterId } = req.params;
 
   let client;
@@ -296,7 +373,12 @@ router.get('/encounters/:encounterId/participants', async (req, res) => {
   }
 });
 
-router.put('/encounters/:encounterId', async (req, res) => {
+router.put(
+  '/encounters/:encounterId',
+  requireAuth,
+  resolveCampaignFromEncounter,
+  requireCampaignOwnership,
+  async (req, res) => {
   const { encounterId } = req.params;
   const { status, current_round: currentRound, initiative_order: initiativeOrder, current_turn: currentTurn } = req.body ?? {};
 
@@ -328,7 +410,12 @@ router.put('/encounters/:encounterId', async (req, res) => {
   }
 });
 
-router.put('/encounter-participants/:participantId', async (req, res) => {
+router.put(
+  '/encounter-participants/:participantId',
+  requireAuth,
+  resolveCampaignFromParticipant,
+  requireCampaignOwnership,
+  async (req, res) => {
   const { participantId } = req.params;
   const updates = req.body ?? {};
 
@@ -384,7 +471,12 @@ router.put('/encounter-participants/:participantId', async (req, res) => {
   }
 });
 
-router.delete('/encounter-participants/:participantId', async (req, res) => {
+router.delete(
+  '/encounter-participants/:participantId',
+  requireAuth,
+  resolveCampaignFromParticipant,
+  requireCampaignOwnership,
+  async (req, res) => {
   const { participantId } = req.params;
 
   let client;
@@ -411,4 +503,3 @@ router.delete('/encounter-participants/:participantId', async (req, res) => {
 export const registerEncounterRoutes = (app) => {
   app.use('/api', router);
 };
-
