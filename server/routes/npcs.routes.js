@@ -1,7 +1,12 @@
 import { Router } from 'express';
 import { body, param } from 'express-validator';
-import { requireAuth } from '../auth-middleware.js';
+import {
+  requireAuth,
+  requireCampaignOwnership,
+  requireCampaignParticipation,
+} from '../auth-middleware.js';
 import { handleValidationErrors } from '../validation/common.js';
+import { query as dbQuery } from '../db/pool.js';
 import { logError, logInfo } from '../utils/logger.js';
 import { sanitizeUserInput } from '../utils/sanitization.js';
 import { clamp, VALID_SENTIMENTS } from '../llm/npc-interaction-utils.js';
@@ -18,6 +23,26 @@ import {
 import { incrementCounter, recordEvent } from '../utils/telemetry.js';
 
 const router = Router();
+
+// Resolve campaignId from an npc id so the standard auth middlewares can be
+// reused on routes that only carry npcId in the URL.
+const resolveCampaignFromNpc = async (req, res, next) => {
+  const { npcId } = req.params;
+  try {
+    const { rows } = await dbQuery(
+      'SELECT campaign_id FROM public.npcs WHERE id = $1',
+      [npcId],
+    );
+    if (rows.length === 0) {
+      return res.status(404).json({ error: 'NPC not found' });
+    }
+    req.params.campaignId = rows[0].campaign_id;
+    next();
+  } catch (error) {
+    logError('NPC campaign resolution failed', error, { npcId });
+    res.status(500).json({ error: 'authorization_failed' });
+  }
+};
 
 router.post(
   '/npcs/:npcId/sentiment',
@@ -126,7 +151,7 @@ router.post(
   },
 );
 
-router.post('/campaigns/:campaignId/npcs', async (req, res) => {
+router.post('/campaigns/:campaignId/npcs', requireAuth, requireCampaignOwnership, async (req, res) => {
   const { campaignId } = req.params;
   const {
     name,
@@ -171,7 +196,7 @@ router.post('/campaigns/:campaignId/npcs', async (req, res) => {
   }
 });
 
-router.get('/campaigns/:campaignId/npcs', async (req, res) => {
+router.get('/campaigns/:campaignId/npcs', requireAuth, requireCampaignParticipation, async (req, res) => {
   const { campaignId } = req.params;
 
   try {
@@ -183,7 +208,7 @@ router.get('/campaigns/:campaignId/npcs', async (req, res) => {
   }
 });
 
-router.put('/npcs/:npcId', async (req, res) => {
+router.put('/npcs/:npcId', requireAuth, resolveCampaignFromNpc, requireCampaignOwnership, async (req, res) => {
   const { npcId } = req.params;
   const updates = req.body ?? {};
 
@@ -202,7 +227,7 @@ router.put('/npcs/:npcId', async (req, res) => {
   }
 });
 
-router.delete('/npcs/:npcId', async (req, res) => {
+router.delete('/npcs/:npcId', requireAuth, resolveCampaignFromNpc, requireCampaignOwnership, async (req, res) => {
   const { npcId } = req.params;
 
   try {
@@ -219,7 +244,7 @@ router.delete('/npcs/:npcId', async (req, res) => {
   }
 });
 
-router.post('/npcs/:npcId/relationships', async (req, res) => {
+router.post('/npcs/:npcId/relationships', requireAuth, resolveCampaignFromNpc, requireCampaignOwnership, async (req, res) => {
   const { npcId } = req.params;
   const {
     target_id: targetId,
@@ -299,7 +324,7 @@ router.get(
   },
 );
 
-router.get('/npcs/:npcId/relationships', async (req, res) => {
+router.get('/npcs/:npcId/relationships', requireAuth, resolveCampaignFromNpc, requireCampaignParticipation, async (req, res) => {
   const { npcId } = req.params;
 
   try {
