@@ -614,7 +614,13 @@ const websocketUrl = `${websocketProtocol}://${publicHost}${portSegment}/socket.
 const wsServer = shouldStartServer ? new WebSocketServerClass(server) : null;
 app.locals.wsServer = wsServer;
 
-// Add WebSocket health check endpoint
+// WebSocket health check endpoint.
+//
+// Anonymous callers see only an aggregate health signal. The full
+// getStatus() result includes live `campaign-<uuid>` room names and socket
+// IDs which let attackers enumerate every active campaign UUID — combined
+// with other read endpoints that lookup-by-uuid, this was the bootstrapping
+// primitive in the pentest report (F10). Detailed status is now admin-only.
 app.get('/api/websocket/status', (req, res) => {
   if (!wsServer) {
     setGauge('websocket.connections', 0);
@@ -626,8 +632,16 @@ app.get('/api/websocket/status', (req, res) => {
   }
   res.json({
     status: 'active',
-    ...status
+    connected: status.connected,
+    uptime: status.uptime,
   });
+});
+
+app.get('/api/admin/websocket/status', requireAuth, requireRole('admin'), (req, res) => {
+  if (!wsServer) {
+    return res.json({ status: 'inactive', connected: 0 });
+  }
+  res.json({ status: 'active', ...wsServer.getStatus() });
 });
 
 if (shouldStartServer) {
