@@ -335,13 +335,28 @@ export async function generateWorldLore({
     // Schema-enforced JSON was parsed by the provider
     content = result.parsed.content;
   } else {
-    // Fallback: try parsing the raw response ourselves
+    // Fallback: try parsing the raw response ourselves. Strip markdown
+    // code fences first — Anthropic Haiku sometimes wraps JSON in
+    // ```json ... ``` despite instructions not to.
     const raw = result.content || '';
+    const fenced = raw.match(/```(?:json)?\s*([\s\S]*?)```/);
+    const candidate = fenced ? fenced[1].trim() : raw.trim();
     try {
-      const parsed = JSON.parse(raw);
+      const parsed = JSON.parse(candidate);
       content = parsed.content || raw;
     } catch {
-      content = raw;
+      // Last-ditch: try to find a JSON object anywhere in the response
+      const objMatch = candidate.match(/\{[\s\S]*\}/);
+      if (objMatch) {
+        try {
+          const parsed = JSON.parse(objMatch[0]);
+          content = parsed.content || raw;
+        } catch {
+          content = raw;
+        }
+      } else {
+        content = raw;
+      }
     }
   }
   // Clean up common LLM artifacts

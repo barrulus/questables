@@ -55,7 +55,7 @@ const ADAPTERS = {
       apiKey: config.apiKey,
       model: config.model,
       timeoutMs: parseInteger(config.timeoutMs, parseInteger(process.env.LLM_ANTHROPIC_TIMEOUT_MS, 60000)),
-      maxTokens: parseInteger(config.options?.maxTokens, parseInteger(process.env.LLM_ANTHROPIC_MAX_TOKENS, 1024)),
+      maxTokens: parseInteger(config.options?.maxTokens, parseInteger(process.env.LLM_ANTHROPIC_MAX_TOKENS, 4096)),
       defaultOptions: {
         temperature: config.options?.temperature ?? (process.env.LLM_ANTHROPIC_TEMPERATURE ? Number(process.env.LLM_ANTHROPIC_TEMPERATURE) : undefined),
         ...config.options,

@@ -5,7 +5,12 @@ import { NARRATIVE_TYPES } from '../narrative-types.js';
 import { LLMConfigurationError, LLMProviderError } from '../errors.js';
 import { logDebug, logError, logInfo, logWarn } from '../../utils/logger.js';
 
-const DEFAULT_MAX_TOKENS = 400;
+// 400 is enough for the chat_action_parse classifier but truncates anything
+// narrative — world lore, scene description, NPC dialogue all blow past it
+// and come back as unparseable half-JSON. Anthropic Haiku supports 8K+ tokens
+// out, so default to a value that fits the heavy generators and let chat
+// classifier callers override down where they care about cost/latency.
+const DEFAULT_MAX_TOKENS = 4096;
 
 export class AnthropicProvider extends EnhancedLLMProvider {
   constructor(options = {}) {
