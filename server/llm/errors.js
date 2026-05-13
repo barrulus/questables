@@ -33,5 +33,10 @@ export class LLMServiceError extends Error {
     this.provider = options.provider;
     this.type = options.type;
     this.cause = options.cause;
+    if (Number.isInteger(options.status)) {
+      this.status = options.status;
+    }
+    if (options.scope) this.scope = options.scope;
+    if (Number.isFinite(options.limit)) this.limit = options.limit;
   }
 }

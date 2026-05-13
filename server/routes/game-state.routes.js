@@ -22,6 +22,7 @@ import { checkLevelUps } from '../services/levelling/service.js';
 import { logError } from '../utils/logger.js';
 import { getActiveSession, userOwnsCharacterInCampaign } from '../services/sessions/service.js';
 import { narrateWorldTurn } from '../services/narration/proactive-narrator.js';
+import { consumeLLMQuota } from '../utils/llm-quota.js';
 
 const router = Router();
 
@@ -215,7 +216,20 @@ router.post(
         // Auto-fire LLM world turn narration when round completes
         if (result.newState.worldTurnPending) {
           const contextualService = req.app?.locals?.contextualLLMService;
+          let worldTurnQuotaOk = false;
           if (contextualService) {
+            try {
+              consumeLLMQuota(req);
+              worldTurnQuotaOk = true;
+            } catch (quotaErr) {
+              logError('World turn narration skipped (quota)', null, {
+                campaignId,
+                userId: req.user?.id,
+                reason: quotaErr.type || quotaErr.message,
+              });
+            }
+          }
+          if (contextualService && worldTurnQuotaOk) {
             // Fire-and-forget: narrate, then execute the world turn to advance state
             narrateWorldTurn({
               campaignId,
@@ -255,7 +269,20 @@ router.post(
 
           // Trigger async enemy turn processing
           const contextualService = req.app?.locals?.contextualLLMService;
+          let enemyQuotaOk = false;
           if (contextualService) {
+            try {
+              consumeLLMQuota(req);
+              enemyQuotaOk = true;
+            } catch (quotaErr) {
+              logError('Enemy turn LLM skipped (quota)', null, {
+                campaignId,
+                userId: req.user?.id,
+                reason: quotaErr.type || quotaErr.message,
+              });
+            }
+          }
+          if (contextualService && enemyQuotaOk) {
             const encounterId = result.newState.encounterId;
             const participantId = nextPlayer.replace('npc:', '');
             // Fire and forget — executeEnemyTurn handles its own DB client

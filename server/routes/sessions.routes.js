@@ -20,6 +20,7 @@ import { initializeGameState } from '../services/game-state/service.js';
 import { initializeLiveStates } from '../services/live-state/service.js';
 import { narrateSessionOpening } from '../services/narration/proactive-narrator.js';
 import { decryptUserFields } from '../utils/user-pii.js';
+import { consumeLLMQuota } from '../utils/llm-quota.js';
 
 const router = Router();
 
@@ -328,12 +329,25 @@ router.put(
         const llmService = req.app?.locals?.llmService;
         const wsServer = req.app?.locals?.wsServer;
         if (llmService) {
-          narrateSessionOpening({
-            campaignId: sessionRow.campaign_id,
-            sessionId,
-            llmService,
-            wsServer,
-          }).catch((err) => logError('Session opening narration failed', { error: err.message }));
+          let openingQuotaOk = false;
+          try {
+            consumeLLMQuota(req);
+            openingQuotaOk = true;
+          } catch (quotaErr) {
+            logError('Session opening narration skipped (quota)', null, {
+              sessionId,
+              userId: req.user?.id,
+              reason: quotaErr.type || quotaErr.message,
+            });
+          }
+          if (openingQuotaOk) {
+            narrateSessionOpening({
+              campaignId: sessionRow.campaign_id,
+              sessionId,
+              llmService,
+              wsServer,
+            }).catch((err) => logError('Session opening narration failed', { error: err.message }));
+          }
         }
       }
 

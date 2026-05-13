@@ -1,4 +1,5 @@
 import { LLMServiceError } from './index.js';
+import { consumeLLMQuota } from '../utils/llm-quota.js';
 
 export const ensureLLMReady = (req) => {
   const contextualService = req.app?.locals?.contextualLLMService;
@@ -7,6 +8,7 @@ export const ensureLLMReady = (req) => {
       type: 'llm_not_initialized',
     });
   }
+  consumeLLMQuota(req);
   return contextualService;
 };
 
@@ -17,5 +19,6 @@ export const ensureLLMService = (req) => {
       type: 'llm_not_initialized',
     });
   }
+  consumeLLMQuota(req);
   return llmService;
 };

@@ -16,6 +16,7 @@ import {
   markChannelRead,
 } from '../services/chat/service.js';
 import { shouldInterceptAsAction, interceptChatAction } from '../services/chat/action-interceptor.js';
+import { consumeLLMQuota } from '../utils/llm-quota.js';
 import { getClient, query } from '../db/pool.js';
 
 const router = Router();
@@ -232,19 +233,31 @@ router.post('/api/campaigns/:campaignId/messages', requireAuth, requireCampaignP
         // Fire-and-forget — don't block the chat response
         shouldInterceptAsAction({ campaignId, userId: senderId })
           .then(({ shouldIntercept, session, gameState, characterId: charId }) => {
-            if (shouldIntercept) {
-              return interceptChatAction({
+            if (!shouldIntercept) return;
+            // Charge the LLM call to the user who triggered it. If they're
+            // over quota we drop the interception silently — the chat
+            // message itself is already saved + broadcast.
+            try {
+              consumeLLMQuota(req);
+            } catch (quotaErr) {
+              logError('Action interception skipped (quota)', {
                 campaignId,
-                sessionId: session.id,
                 userId: senderId,
-                characterId: charId,
-                chatMessage: sanitizedContent,
-                gameState,
-                contextualService,
-                wsServer,
-                llmService,
+                reason: quotaErr.type || quotaErr.message,
               });
+              return;
             }
+            return interceptChatAction({
+              campaignId,
+              sessionId: session.id,
+              userId: senderId,
+              characterId: charId,
+              chatMessage: sanitizedContent,
+              gameState,
+              contextualService,
+              wsServer,
+              llmService,
+            });
           })
           .catch((err) => {
             logError('Action interception failed', { error: err.message, campaignId });

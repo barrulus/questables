@@ -12,6 +12,7 @@ import { handleValidationErrors } from '../validation/common.js';
 import { ensureDmControl, resolveCampaignViewerContext } from '../services/campaigns/service.js';
 import { getClient } from '../db/pool.js';
 import { logError, logInfo } from '../utils/logger.js';
+import { consumeLLMQuota } from '../utils/llm-quota.js';
 import {
   generateWorldLore,
   listWorldLore,
@@ -62,6 +63,7 @@ router.post(
       if (!llmService) {
         return res.status(503).json({ error: 'LLM service not available' });
       }
+      consumeLLMQuota(req);
 
       const result = await generateWorldLore({
         campaignId,

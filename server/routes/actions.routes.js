@@ -24,6 +24,7 @@ import {
 import { writeNpcMemoryInternal } from '../services/npcs/service.js';
 import { consumeAction } from '../services/combat/service.js';
 import { logError, logInfo } from '../utils/logger.js';
+import { consumeLLMQuota } from '../utils/llm-quota.js';
 import { postNarrationToChat, postPrivateNarration } from '../services/chat/dm-narrator.js';
 import { endTurn, getGameState } from '../services/game-state/service.js';
 import { fireWorldTurnIfPending } from '../services/narration/proactive-narrator.js';
@@ -180,6 +181,16 @@ router.post(
       if (!contextualService) {
         logError('Contextual LLM service not available for action processing', null, {
           actionId: action.id,
+        });
+        return;
+      }
+      try {
+        consumeLLMQuota(req);
+      } catch (quotaErr) {
+        logError('Action LLM processing skipped (quota)', null, {
+          actionId: action.id,
+          userId: req.user?.id,
+          reason: quotaErr.type || quotaErr.message,
         });
         return;
       }
@@ -464,6 +475,16 @@ router.post(
       const contextualService = req.app?.locals?.contextualLLMService;
 
       if (!contextualService) return;
+      try {
+        consumeLLMQuota(req);
+      } catch (quotaErr) {
+        logError('Roll-resolve LLM processing skipped (quota)', null, {
+          actionId,
+          userId: req.user?.id,
+          reason: quotaErr.type || quotaErr.message,
+        });
+        return;
+      }
 
       try {
         const asyncClient = await getClient({ label: 'actions.roll-resolve' });
