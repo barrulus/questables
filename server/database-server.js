@@ -6,8 +6,10 @@ import express from 'express';
 // logInfo, logError imported below with other logger utilities
 import { pool, query as dbQuery } from './db/pool.js';
 import cors from 'cors';
+import helmet from 'helmet';
 import multer from 'multer';
 import rateLimit from 'express-rate-limit';
+import crypto from 'crypto';
 import { createServer as createHttpServer } from 'http';
 import { createServer as createHttpsServer } from 'https';
 import WebSocketServerClass from './websocket-server.js';
@@ -108,6 +110,18 @@ if (shouldUseTls) {
     }
   }
 }
+
+// Security headers (F11). helmet sets X-Content-Type-Options, X-Frame-Options,
+// Referrer-Policy, HSTS, etc. and removes x-powered-by. We disable
+// contentSecurityPolicy globally because the static /uploads handler below
+// sets its own stricter CSP, and a default CSP on a JSON API offers no real
+// XSS protection.
+app.use(helmet({
+  contentSecurityPolicy: false,
+  crossOriginEmbedderPolicy: false,
+  crossOriginResourcePolicy: { policy: 'cross-origin' },
+}));
+app.disable('x-powered-by');
 
 // Enable CORS for frontend requests
 app.use(cors({
@@ -642,6 +656,37 @@ app.get('/api/admin/websocket/status', requireAuth, requireRole('admin'), (req, 
     return res.json({ status: 'inactive', connected: 0 });
   }
   res.json({ status: 'active', ...wsServer.getStatus() });
+});
+
+// Generic error handler (F11). Routes that throw or pass an error to next()
+// land here. We log the full error server-side (including stack and any
+// Postgres metadata) and return a generic envelope to the client so that
+// driver error text like `null value in column "x" of relation "y"
+// violates not-null constraint` never leaks. Routes are still free to send
+// shaped 4xx responses; this only catches the unhandled case.
+//
+// eslint-disable-next-line no-unused-vars -- Express recognises 4-arg sig
+app.use((err, req, res, _next) => {
+  if (res.headersSent) {
+    return _next(err);
+  }
+  const status = Number.isInteger(err?.status) ? err.status : 500;
+  const requestId = req.id || crypto.randomBytes(8).toString('hex');
+  logError('Unhandled route error', err, {
+    requestId,
+    method: req.method,
+    path: req.originalUrl,
+    userId: req.user?.id,
+  });
+  if (status >= 500) {
+    return res.status(status).json({ error: 'internal_error', requestId });
+  }
+  // 4xx errors thrown intentionally — pass through a sanitised message
+  res.status(status).json({
+    error: err.code || 'request_failed',
+    message: typeof err.publicMessage === 'string' ? err.publicMessage : 'Request failed.',
+    requestId,
+  });
 });
 
 if (shouldStartServer) {
