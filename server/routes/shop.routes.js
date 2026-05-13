@@ -23,6 +23,19 @@ import {
   purchaseItem,
 } from '../services/shop/service.js';
 import { logError } from '../utils/logger.js';
+import { consumeLLMQuota } from '../utils/llm-quota.js';
+import { sanitizeFreeText } from '../utils/sanitization.js';
+
+const SHOP_TEXT_FIELDS = ['name', 'description', 'locationText', 'location_text', 'notes'];
+const sanitizeShopFields = (obj) => {
+  if (!obj || typeof obj !== 'object') return obj;
+  for (const field of SHOP_TEXT_FIELDS) {
+    if (obj[field] !== undefined && obj[field] !== null) {
+      obj[field] = sanitizeFreeText(obj[field]);
+    }
+  }
+  return obj;
+};
 
 const router = Router();
 
@@ -43,7 +56,7 @@ router.post(
     try {
       const viewer = await getViewerContextOrThrow(client, campaignId, req.user);
       ensureDmControl(viewer, 'Only the DM can create shops.');
-      const shop = await createShop(client, { campaignId, ...req.body });
+      const shop = await createShop(client, { campaignId, ...sanitizeShopFields({ ...req.body }) });
       res.status(201).json(shop);
     } catch (error) {
       logError('Shop creation failed', error, { campaignId });
@@ -114,7 +127,7 @@ router.put(
     try {
       const viewer = await getViewerContextOrThrow(client, campaignId, req.user);
       ensureDmControl(viewer, 'Only the DM can update shops.');
-      const shop = await updateShop(client, { shopId, updates: req.body });
+      const shop = await updateShop(client, { shopId, updates: sanitizeShopFields({ ...req.body }) });
       res.json(shop);
     } catch (error) {
       logError('Shop update failed', error, { campaignId, shopId });
@@ -164,7 +177,7 @@ router.post(
     try {
       const viewer = await getViewerContextOrThrow(client, campaignId, req.user);
       ensureDmControl(viewer, 'Only the DM can manage shop inventory.');
-      const entry = await addShopItem(client, { shopId, ...req.body });
+      const entry = await addShopItem(client, { shopId, ...sanitizeShopFields({ ...req.body }) });
       res.status(201).json(entry);
     } catch (error) {
       logError('Shop inventory add failed', error, { campaignId, shopId });
@@ -191,7 +204,7 @@ router.put(
     try {
       const viewer = await getViewerContextOrThrow(client, campaignId, req.user);
       ensureDmControl(viewer, 'Only the DM can manage shop inventory.');
-      const entry = await updateShopItem(client, { entryId, ...req.body });
+      const entry = await updateShopItem(client, { entryId, ...sanitizeShopFields({ ...req.body }) });
       res.json(entry);
     } catch (error) {
       logError('Shop inventory update failed', error, { campaignId, entryId });
@@ -299,6 +312,7 @@ router.post(
       if (!contextualService) {
         return res.status(503).json({ error: 'llm_not_available', message: 'LLM service is not available' });
       }
+      consumeLLMQuota(req);
 
       const { result } = await contextualService.generateFromContext({
         campaignId,

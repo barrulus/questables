@@ -4,6 +4,35 @@ import { getClient, query as dbQuery } from '../db/pool.js';
 import { validateCharacter, validateCharacterUpdate } from '../validation/characters.js';
 import { handleValidationErrors, validateUUID } from '../validation/common.js';
 import { logError, logInfo } from '../utils/logger.js';
+import { sanitizeFreeText } from '../utils/sanitization.js';
+
+// Character fields the React UI renders as text. Stripping HTML tags here is
+// defence-in-depth against stored XSS at the API boundary, in addition to
+// any sanitisation at render sinks. Add new free-text columns to this list
+// rather than calling sanitizeFreeText ad hoc.
+const CHARACTER_TEXT_FIELDS = [
+  'name',
+  'character_class',
+  'race',
+  'background',
+  'subrace',
+  'subclass',
+  'alignment',
+  'backstory',
+  'personality',
+  'ideals',
+  'bonds',
+  'flaws',
+];
+
+const sanitizeCharacterFields = (obj) => {
+  for (const field of CHARACTER_TEXT_FIELDS) {
+    if (obj[field] !== undefined && obj[field] !== null) {
+      obj[field] = sanitizeFreeText(obj[field]);
+    }
+  }
+  return obj;
+};
 
 const router = Router();
 
@@ -37,6 +66,7 @@ const checkCharacterOwnership = async (req, res, next) => {
 };
 
 router.post('/', requireAuth, validateCharacter, handleValidationErrors, async (req, res) => {
+  sanitizeCharacterFields(req.body);
   const {
     user_id,
     name,
@@ -194,6 +224,7 @@ router.put(
 
     delete updates.id;
     delete updates.created_at;
+    sanitizeCharacterFields(updates);
     updates.updated_at = new Date().toISOString();
 
     const fields = Object.keys(updates);

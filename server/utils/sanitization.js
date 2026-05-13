@@ -37,6 +37,16 @@ export const stripHtmlTags = (input) => {
     .slice(0, 10000);
 };
 
+// Convenience for "string-or-null" free-text fields coming off req.body:
+// returns null for non-strings or empty-after-strip, otherwise the stripped
+// + trimmed value. Use at write sites for user-controlled fields the React
+// app renders as text (campaign description, character backstory, etc.).
+export const sanitizeFreeText = (value) => {
+  if (typeof value !== 'string') return null;
+  const stripped = stripHtmlTags(value).trim();
+  return stripped.length > 0 ? stripped : null;
+};
+
 export const sanitizeFilename = (filename) => {
   if (typeof filename !== 'string') return 'file';
   const base = path.basename(filename);
@@ -52,6 +62,7 @@ export default {
   sanitizePlainText,
   sanitizeHTML,
   stripHtmlTags,
+  sanitizeFreeText,
   sanitizeFilename,
   sanitizeChatMessage,
   sanitizeUserInput,

@@ -24,6 +24,8 @@ import {
   DEATH_SAVE_RULE_VALUES,
 } from '../services/campaigns/utils.js';
 import { ensureLLMReady } from '../llm/request-helpers.js';
+import { consumeLLMQuota } from '../utils/llm-quota.js';
+import { sanitizeFreeText } from '../utils/sanitization.js';
 import { insertNarrativeRecord } from '../services/narratives/service.js';
 import {
   MOVE_MODES,
@@ -260,7 +262,7 @@ router.post('/api/campaigns', requireAuth, validateCampaign, handleValidationErr
     });
   }
 
-  const trimmedName = typeof req.body.name === 'string' ? req.body.name.trim() : '';
+  const trimmedName = sanitizeFreeText(req.body.name) ?? '';
   if (!trimmedName) {
     return res.status(400).json({
       error: 'invalid_name',
@@ -268,7 +270,7 @@ router.post('/api/campaigns', requireAuth, validateCampaign, handleValidationErr
     });
   }
 
-  const description = coerceNullableString(req.body.description);
+  const description = sanitizeFreeText(req.body.description);
   let maxPlayers;
   try {
     maxPlayers = parseMaxPlayersInput(req.body.maxPlayers, { fallback: DEFAULT_MAX_PLAYERS, required: false });
@@ -300,7 +302,7 @@ router.post('/api/campaigns', requireAuth, validateCampaign, handleValidationErr
     });
   }
 
-  const system = coerceNullableString(req.body.system);
+  const system = sanitizeFreeText(req.body.system);
   if (req.body.system !== undefined && system === null) {
     return res.status(400).json({
       error: 'invalid_system',
@@ -308,7 +310,7 @@ router.post('/api/campaigns', requireAuth, validateCampaign, handleValidationErr
     });
   }
 
-  const setting = coerceNullableString(req.body.setting, { trim: true });
+  const setting = sanitizeFreeText(req.body.setting);
 
   const columns = ['name', 'description', 'dm_user_id', 'status', 'max_players', 'level_range', 'is_public', 'world_map_id'];
   const values = [
@@ -1079,7 +1081,20 @@ router.post(
 
           // Auto-narrate area entry (non-blocking)
           const contextualService = req.app?.locals?.contextualLLMService;
+          let areaEntryQuotaOk = false;
           if (contextualService) {
+            try {
+              consumeLLMQuota(req);
+              areaEntryQuotaOk = true;
+            } catch (quotaErr) {
+              logError('[Movement] Area narration skipped (quota)', null, {
+                campaignId,
+                userId: req.user?.id,
+                reason: quotaErr.type || quotaErr.message,
+              });
+            }
+          }
+          if (contextualService && areaEntryQuotaOk) {
             // Find active session for this campaign
             getActiveSession(client, campaignId).then((sess) => {
               if (sess) {
@@ -2564,26 +2579,26 @@ router.put('/api/campaigns/:id', requireAuth, requireCampaignOwnership, async (r
     const updates = {};
 
     if (Object.prototype.hasOwnProperty.call(req.body, 'name')) {
-      const trimmed = typeof req.body.name === 'string' ? req.body.name.trim() : '';
-      if (!trimmed) {
+      const cleanName = sanitizeFreeText(req.body.name);
+      if (!cleanName) {
         return res.status(400).json({
           error: 'invalid_name',
           message: 'Campaign name cannot be empty.',
         });
       }
-      updates.name = trimmed;
+      updates.name = cleanName;
     }
 
     if (Object.prototype.hasOwnProperty.call(req.body, 'description')) {
-      updates.description = coerceNullableString(req.body.description);
+      updates.description = sanitizeFreeText(req.body.description);
     }
 
     if (Object.prototype.hasOwnProperty.call(req.body, 'system')) {
-      updates.system = coerceNullableString(req.body.system);
+      updates.system = sanitizeFreeText(req.body.system);
     }
 
     if (Object.prototype.hasOwnProperty.call(req.body, 'setting')) {
-      updates.setting = coerceNullableString(req.body.setting);
+      updates.setting = sanitizeFreeText(req.body.setting);
     }
 
     const maxPlayersInput = pickProvided(req.body.max_players, req.body.maxPlayers);
