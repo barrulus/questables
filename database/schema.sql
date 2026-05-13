@@ -1138,8 +1138,8 @@ CREATE INDEX IF NOT EXISTS idx_chat_messages_channel
 
 CREATE TABLE IF NOT EXISTS public.chat_read_cursors (
   id BIGSERIAL PRIMARY KEY,
-  user_id UUID NOT NULL REFERENCES public.user_profiles(id),
-  campaign_id UUID NOT NULL REFERENCES public.campaigns(id),
+  user_id UUID NOT NULL REFERENCES public.user_profiles(id) ON DELETE CASCADE,
+  campaign_id UUID NOT NULL REFERENCES public.campaigns(id) ON DELETE CASCADE,
   channel_type TEXT NOT NULL,
   channel_target_user_id UUID,
   last_read_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW()
