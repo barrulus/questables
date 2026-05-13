@@ -3,12 +3,10 @@ import {
   ReactNode,
   useCallback,
   useContext,
-  useEffect,
-  useRef,
   useState,
 } from "react";
 import { useGameSession } from "./GameSessionContext";
-import { useWebSocket } from "../hooks/useWebSocket";
+import { useWsEvent } from "./WebSocketContext";
 import { apiFetch, readJsonBody, readErrorMessage } from "../utils/api-client";
 
 // ---------------------------------------------------------------------------
@@ -88,7 +86,6 @@ const ActionContext = createContext<ActionContextValue | undefined>(undefined);
 
 export function ActionProvider({ children }: { children: ReactNode }) {
   const { activeCampaignId } = useGameSession();
-  const { messages: wsMessages } = useWebSocket(activeCampaignId ?? "");
 
   const [pendingAction, setPendingAction] = useState<PendingAction | null>(null);
   const [processingActionId, setProcessingActionId] = useState<string | null>(null);
@@ -100,68 +97,42 @@ export function ActionProvider({ children }: { children: ReactNode }) {
     newLevel: number;
   } | null>(null);
 
-  const lastWsMsgCountRef = useRef(0);
-
   // ── WebSocket event listeners ─────────────────────────────────────────
-  useEffect(() => {
-    // useWebSocket clears its `messages` array when the socket reconnects
-    // (cleanupSocket → setMessages([])). Without this guard, lastWsMsgCountRef
-    // stays at the pre-reset count and `wsMessages.length <= ref` skips every
-    // event until the buffer climbs back above the stale count — silently
-    // dropping events like roll-requested across a reconnect.
-    if (wsMessages.length < lastWsMsgCountRef.current) {
-      lastWsMsgCountRef.current = 0;
+  // Narration is no longer a dm-narration event — it flows through chat
+  // messages on the dm_broadcast channel.
+
+  useWsEvent<RollRequest>("roll-requested", (data) => {
+    if (data?.actionId) {
+      setAwaitingRoll(data);
+      setProcessingActionId(data.actionId);
     }
-    if (wsMessages.length <= lastWsMsgCountRef.current) return;
+  });
 
-    for (let i = lastWsMsgCountRef.current; i < wsMessages.length; i++) {
-      const envelope = wsMessages[i];
-      if (!envelope) continue;
+  useWsEvent<{ actionId?: string }>("action-completed", (data) => {
+    if (data?.actionId === processingActionId) {
+      setProcessingActionId(null);
+      setAwaitingRoll(null);
+      setPendingAction(null);
+    }
+  });
 
-      switch (envelope.type) {
-        // Note: dm-narration event removed — narration now flows through chat messages (dm_broadcast channel)
-        case "roll-requested": {
-          const data = envelope.data as RollRequest | undefined;
-          if (data?.actionId) {
-            setAwaitingRoll(data);
-            setProcessingActionId(data.actionId);
-          }
-          break;
-        }
-        case "action-completed": {
-          const data = envelope.data as { actionId?: string } | undefined;
-          if (data?.actionId === processingActionId) {
-            setProcessingActionId(null);
-            setAwaitingRoll(null);
-            setPendingAction(null);
-          }
-          break;
-        }
-        case "game-phase-changed": {
-          const data = envelope.data as { newPhase?: string } | undefined;
-          if (data?.newPhase !== "social") {
-            setActiveNpcId(null);
-          }
-          break;
-        }
-        case "level-up-available": {
-          const data = envelope.data as {
-            characterId?: string;
-            newLevel?: number;
-          } | undefined;
-          if (data?.characterId && data?.newLevel) {
-            setLevelUpAvailable({
-              characterId: data.characterId,
-              newLevel: data.newLevel,
-            });
-          }
-          break;
-        }
+  useWsEvent<{ newPhase?: string }>("game-phase-changed", (data) => {
+    if (data?.newPhase !== "social") {
+      setActiveNpcId(null);
+    }
+  });
+
+  useWsEvent<{ characterId?: string; newLevel?: number }>(
+    "level-up-available",
+    (data) => {
+      if (data?.characterId && data?.newLevel) {
+        setLevelUpAvailable({
+          characterId: data.characterId,
+          newLevel: data.newLevel,
+        });
       }
-    }
-
-    lastWsMsgCountRef.current = wsMessages.length;
-  }, [wsMessages, processingActionId]);
+    },
+  );
 
   // ── Actions ───────────────────────────────────────────────────────────
   const declareAction = useCallback(

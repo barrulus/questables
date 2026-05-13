@@ -20,6 +20,7 @@ import { GameSessionProvider, useGameSession } from "./contexts/GameSessionConte
 import { GameStateProvider } from "./contexts/GameStateContext";
 import { ActionProvider } from "./contexts/ActionContext";
 import { LiveStateProvider } from "./contexts/LiveStateContext";
+import { WebSocketProvider } from "./contexts/WebSocketContext";
 import { PhaseIndicator } from "./components/game-state/phase-indicator";
 import { TurnBanner } from "./components/game-state/turn-banner";
 import { ActionPanel } from "./components/action-panel/action-panel";
@@ -479,13 +480,15 @@ export default function App() {
       <DatabaseProvider>
         <UserProvider>
           <GameSessionProvider>
-            <GameStateProvider>
-              <ActionProvider>
-                <LiveStateProvider>
-                  <AppContent />
-                </LiveStateProvider>
-              </ActionProvider>
-            </GameStateProvider>
+            <WebSocketProvider>
+              <GameStateProvider>
+                <ActionProvider>
+                  <LiveStateProvider>
+                    <AppContent />
+                  </LiveStateProvider>
+                </ActionProvider>
+              </GameStateProvider>
+            </WebSocketProvider>
           </GameSessionProvider>
         </UserProvider>
       </DatabaseProvider>

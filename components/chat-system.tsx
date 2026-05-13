@@ -8,7 +8,7 @@ import { Switch } from "./ui/switch";
 import { toast } from "sonner";
 import { Send, Users, Crown, Dice6, Loader2, Trash2, AlertCircle, Wifi, WifiOff } from "lucide-react";
 import { useUser } from "../contexts/UserContext";
-import { useWebSocket } from "../hooks/useWebSocket";
+import { useWebSocket, useWsEvent } from "../contexts/WebSocketContext";
 import { apiFetch, readErrorMessage, readJsonBody } from "../utils/api-client";
 import { handleAsyncError } from "../utils/error-handling";
 import {
@@ -145,18 +145,16 @@ export function ChatSystem({ campaignId, campaignName, campaignRole, dmUserId }:
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const messageInputRef = useRef<HTMLInputElement | null>(null);
   const typingActiveRef = useRef(false);
-  const lastProcessedWsIndexRef = useRef(0);
 
   const {
     connected,
-    messages: wsMessages,
     typingUsers,
     presenceUsers,
     sendChatMessage,
     startTyping,
     stopTyping,
     connectionAttempts,
-  } = useWebSocket(campaignId);
+  } = useWebSocket();
 
   const isDm = campaignRole === "dm" || (user && dmUserId === user.id);
   const channelTabs = useMemo(() => buildDefaultTabs(isDm ?? false), [isDm]);
@@ -363,63 +361,36 @@ export function ChatSystem({ campaignId, campaignName, campaignRole, dmUserId }:
     hasEverConnectedRef.current = true;
   }, [connected, loadMessages]);
 
-  useEffect(() => {
-    if (wsMessages.length < lastProcessedWsIndexRef.current) {
-      // wsMessages was reset (e.g. on reconnect) — restart from the beginning
-      lastProcessedWsIndexRef.current = 0;
-    }
-    if (wsMessages.length === lastProcessedWsIndexRef.current) {
-      return;
-    }
-
-    const newEnvelopes = wsMessages.slice(lastProcessedWsIndexRef.current);
-    lastProcessedWsIndexRef.current = wsMessages.length;
-
-    const incomingMessages: ChatMessage[] = [];
-    for (const envelope of newEnvelopes) {
-      if (!envelope || envelope.type !== "new_message" || !envelope.data) {
-        continue;
-      }
-      incomingMessages.push(normalizeChatMessage(envelope.data as ApiChatMessage));
-    }
-
-    if (incomingMessages.length === 0) {
-      return;
-    }
+  useWsEvent<unknown>("new-message", (rawPayload) => {
+    // The server may emit either a bare message payload or a pre-envelope
+    // `{ type: 'new_message', data: {...} }`. Normalise to the inner message.
+    const wrapped =
+      rawPayload && typeof rawPayload === "object"
+        ? (rawPayload as { type?: unknown; data?: unknown })
+        : null;
+    const payload = wrapped?.type === "new_message" && wrapped.data ? wrapped.data : rawPayload;
+    if (!payload || typeof payload !== "object") return;
+    const incoming = normalizeChatMessage(payload as ApiChatMessage);
 
     setMessages((prev) => {
-      const seen = new Set(prev.map((m) => m.id));
-      const additions = incomingMessages.filter((m) => !seen.has(m.id));
-      if (additions.length === 0) {
-        return prev;
-      }
-      const next = [...prev, ...additions];
+      if (prev.some((m) => m.id === incoming.id)) return prev;
+      const next = [...prev, incoming];
       next.sort((a, b) => new Date(a.created_at).getTime() - new Date(b.created_at).getTime());
       return next;
     });
 
     const activeKey = channelKey(activeChannel.channelType, activeChannel.targetUserId);
-    const unreadDeltas: Record<string, number> = {};
-    for (const incoming of incomingMessages) {
-      const incomingKey = channelKey(incoming.channel_type ?? "party", incoming.channel_target_user_id);
-      if (incomingKey !== activeKey && incoming.sender_id !== user?.id) {
-        unreadDeltas[incomingKey] = (unreadDeltas[incomingKey] ?? 0) + 1;
-      }
-      if (incoming.sender_id !== user?.id) {
-        toast.success(`New message from ${incoming.sender_name}`);
-      }
+    const incomingKey = channelKey(incoming.channel_type ?? "party", incoming.channel_target_user_id);
+    if (incomingKey !== activeKey && incoming.sender_id !== user?.id) {
+      setUnreadCounts((prev) => ({
+        ...prev,
+        [incomingKey]: (prev[incomingKey] ?? 0) + 1,
+      }));
     }
-
-    if (Object.keys(unreadDeltas).length > 0) {
-      setUnreadCounts((prev) => {
-        const next = { ...prev };
-        for (const [key, delta] of Object.entries(unreadDeltas)) {
-          next[key] = (next[key] ?? 0) + delta;
-        }
-        return next;
-      });
+    if (incoming.sender_id !== user?.id) {
+      toast.success(`New message from ${incoming.sender_name}`);
     }
-  }, [wsMessages, user, activeChannel, channelKey]);
+  });
 
   useEffect(() => {
     if (loading) {
@@ -475,6 +446,7 @@ export function ChatSystem({ campaignId, campaignName, campaignRole, dmUserId }:
         const persisted = normalizeChatMessage(message);
 
         setMessages((prev) => {
+          if (prev.some((m) => m.id === persisted.id)) return prev;
           const next = [...prev, persisted];
           next.sort((a, b) => new Date(a.created_at).getTime() - new Date(b.created_at).getTime());
           return next;

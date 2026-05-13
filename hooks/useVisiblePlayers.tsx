@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { useWebSocket } from './useWebSocket';
+import { useWsEvent } from '../contexts/WebSocketContext';
 import { apiFetch } from '../utils/api-client';
 
 export interface VisiblePlayer {
@@ -63,17 +63,8 @@ export function useVisiblePlayers(campaignId: string | null, radiusOverride?: nu
 
   // Re-fetch when any player in this campaign moves/teleports so MapRoot's
   // decision to swap to SettlementMap picks up the new inside_burg_id.
-  const { messages } = useWebSocket(campaignId ?? '');
-  const lastMoveCountRef = useRef(0);
-  useEffect(() => {
-    const count = messages.filter(
-      (m) => m.type === 'player-moved' || m.type === 'player-teleported',
-    ).length;
-    if (count > lastMoveCountRef.current) {
-      lastMoveCountRef.current = count;
-      void refresh();
-    }
-  }, [messages, refresh]);
+  useWsEvent('player-moved', () => { void refresh(); });
+  useWsEvent('player-teleported', () => { void refresh(); });
 
   return { players, loading, refresh };
 }

@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { toast } from "sonner";
 import {
   createObjective,
@@ -19,7 +19,7 @@ import {
   type CampaignRegion,
 } from "../utils/api-client";
 import { Campaign } from "./campaign-shared";
-import { useWebSocket } from "../hooks/useWebSocket";
+import { useWsEvent } from "../contexts/WebSocketContext";
 import { useGameSession } from "../contexts/GameSessionContext";
 import { Button } from "./ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "./ui/card";
@@ -853,9 +853,7 @@ export function ObjectivesPanel({ campaign, canEdit, worldMap, worldMapLoading, 
   const [assistStates, setAssistStates] = useState<Record<ObjectiveAssistField, AssistUiState>>(createAssistUiState);
   const [spawn, setSpawn] = useState<SpawnPoint | null>(null);
   const [spawnLoaded, setSpawnLoaded] = useState(false);
-  const { messages } = useWebSocket(campaign?.id ?? "");
   const { playerVisibilityRadius } = useGameSession();
-  const processedMessageIndexRef = useRef(0);
 
   const disabledAssistState = useMemo(createAssistUiState, []);
 
@@ -929,7 +927,6 @@ export function ObjectivesPanel({ campaign, canEdit, worldMap, worldMapLoading, 
   }, [campaign?.id]);
 
   useEffect(() => {
-    processedMessageIndexRef.current = 0;
     void loadObjectives();
   }, [loadObjectives, refreshKey]);
 
@@ -1119,52 +1116,37 @@ export function ObjectivesPanel({ campaign, canEdit, worldMap, worldMapLoading, 
     void fetchMarkers();
   }, [fetchBurgs, fetchMarkers]);
 
-  useEffect(() => {
+  useWsEvent<{ objective?: unknown }>("objective-created", (data) => {
     if (!campaign?.id) return;
-    const pendingMessages = messages.slice(processedMessageIndexRef.current);
-    if (pendingMessages.length === 0) {
-      return;
-    }
-
-    pendingMessages.forEach((message) => {
-      if (!isPlainObject(message)) {
-        return;
+    if (!data || !isObjectiveRecord(data.objective)) return;
+    const record = data.objective;
+    setObjectives((prev) => {
+      const exists = prev.some((item) => item.id === record.id);
+      if (exists) {
+        return prev.map((item) => (item.id === record.id ? record : item));
       }
-
-      const type = typeof message.type === "string" ? message.type : null;
-      if (!type) {
-        return;
-      }
-
-      const data = isPlainObject(message.data) ? message.data : null;
-
-      if (type === "objective-created" && data && isObjectiveRecord(data.objective)) {
-        const record = data.objective;
-        setObjectives((prev) => {
-          const exists = prev.some((item) => item.id === record.id);
-          if (exists) {
-            return prev.map((item) => (item.id === record.id ? record : item));
-          }
-          return [...prev, record];
-        });
-      } else if (type === "objective-updated" && data && isObjectiveRecord(data.objective)) {
-        const record = data.objective;
-        setObjectives((prev) => prev.map((item) => (item.id === record.id ? record : item)));
-        if (editingObjective && editingObjective.id === record.id) {
-          setEditingObjective(record);
-          setEditFormValues((prev) => (prev ? objectiveToFormValues(record) : prev));
-        }
-      } else if (type === "objective-deleted" && data) {
-        const ids = toStringArray(data.deletedObjectiveIds);
-        if (!ids) {
-          return;
-        }
-        setObjectives((prev) => prev.filter((item) => !ids.includes(item.id)));
-      }
+      return [...prev, record];
     });
+  });
 
-    processedMessageIndexRef.current = messages.length;
-  }, [messages, campaign?.id, editingObjective]);
+  useWsEvent<{ objective?: unknown }>("objective-updated", (data) => {
+    if (!campaign?.id) return;
+    if (!data || !isObjectiveRecord(data.objective)) return;
+    const record = data.objective;
+    setObjectives((prev) => prev.map((item) => (item.id === record.id ? record : item)));
+    if (editingObjective && editingObjective.id === record.id) {
+      setEditingObjective(record);
+      setEditFormValues((prev) => (prev ? objectiveToFormValues(record) : prev));
+    }
+  });
+
+  useWsEvent<{ deletedObjectiveIds?: unknown }>("objective-deleted", (data) => {
+    if (!campaign?.id) return;
+    if (!data) return;
+    const ids = toStringArray(data.deletedObjectiveIds);
+    if (!ids) return;
+    setObjectives((prev) => prev.filter((item) => !ids.includes(item.id)));
+  });
 
   const toggleExpanded = useCallback((id: string) => {
     setExpanded((prev) => {

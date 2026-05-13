@@ -60,7 +60,7 @@ import { createSettlementTileSource } from './maps/settlement-tile-source';
 import { buildHoverTooltipInfo, getFeatureTypeFromProperties } from './maps/feature-tooltip';
 import { useGameSession } from "../contexts/GameSessionContext";
 import { useUser } from "../contexts/UserContext";
-import { useWebSocket } from "../hooks/useWebSocket";
+import { useWebSocket, useWsEvent } from "../contexts/WebSocketContext";
 import { useVisiblePlayers } from "../hooks/useVisiblePlayers";
 import { apiFetch, fetchJson, getApiBaseUrl, readErrorMessage, readJsonBody } from "../utils/api-client";
 import { toast } from "sonner";
@@ -318,12 +318,7 @@ export function OpenLayersMap() {
   const viewerIsDm = normalizedViewerRole
     ? viewerRoles.has('admin') || ['dm', 'co-dm'].includes(normalizedViewerRole)
     : activeCampaign ? activeCampaign.dmUserId === user?.id : false;
-  const {
-    connected: socketConnected,
-    messages: socketMessages,
-    clearMessages: clearSocketMessages,
-    getMessagesByType
-  } = useWebSocket(activeCampaignId ?? '');
+  const { connected: socketConnected } = useWebSocket();
 
   // Hook coexists with the inline loadVisiblePlayers below.
   // The hook owns a parallel fetch and exposes raw VisiblePlayer[] for downstream
@@ -2006,133 +2001,119 @@ export function OpenLayersMap() {
     ));
   }, [availableMoveModes, movementDialog]);
 
-  useEffect(() => {
-    if (!socketMessages.length || !activeCampaignId) {
-      return;
+  // ── Per-event handlers for player movement / spawns ────────────────────
+  useWsEvent<unknown>("player-moved", (rawEvent) => {
+    if (!activeCampaignId) return;
+
+    // The provider strips the outer { type, data } envelope and delivers the
+    // raw payload. Keep tolerating both shapes during migration.
+    const data = isPlainObject(rawEvent)
+      ? (isPlainObject((rawEvent as Record<string, unknown>).data)
+          ? ((rawEvent as Record<string, unknown>).data as Record<string, unknown>)
+          : (rawEvent as Record<string, unknown>))
+      : null;
+    if (!data) return;
+    const playerId = typeof data.playerId === 'string' ? data.playerId : null;
+    if (!playerId) return;
+
+    const path = isPlainObject(data.path) ? data.path : null;
+    const rawWaypoints = Array.isArray(path?.waypoints) ? (path!.waypoints as unknown[]) : null;
+    const waypoints: Waypoint[] | null =
+      rawWaypoints && rawWaypoints.length >= 2
+        ? (rawWaypoints.filter(
+            (w): w is Waypoint =>
+              isPlainObject(w) && typeof w.x === 'number' && typeof w.y === 'number',
+          ).length === rawWaypoints.length
+            ? (rawWaypoints as Waypoint[])
+            : null)
+        : null;
+
+    const travel = isPlainObject(data.travel) ? data.travel : null;
+    if (travel?.interrupted === true) {
+      const lastWp =
+        rawWaypoints && rawWaypoints.length > 0
+          ? (rawWaypoints[rawWaypoints.length - 1] as unknown)
+          : undefined;
+      const at =
+        isPlainObject(lastWp) && typeof lastWp.x === 'number' && typeof lastWp.y === 'number'
+          ? { x: lastWp.x, y: lastWp.y }
+          : undefined;
+      const daysElapsed = typeof travel.daysElapsed === 'number' ? travel.daysElapsed : 0;
+      setInterruptBadge({ playerId, day: daysElapsed, at });
+    } else {
+      setInterruptBadge((prev) => (prev?.playerId === playerId ? null : prev));
     }
 
-    const movementEvents = getMessagesByType('player-moved');
-    const teleportEvents = getMessagesByType('player-teleported');
-    const spawnEvents = getMessagesByType('spawn-updated');
-    const spawnDeleted = getMessagesByType('spawn-deleted');
+    const arrival = isPlainObject(data.arrival) ? data.arrival : null;
+    const arrivalGate = arrival && isPlainObject(arrival.gate) ? arrival.gate : null;
+    const arrivalGateId = typeof arrivalGate?.id === 'string' ? arrivalGate.id : null;
 
-    if (movementEvents.length || teleportEvents.length || spawnEvents.length || spawnDeleted.length) {
-      const affectedPlayerIds = new Set<string>();
-      [...movementEvents, ...teleportEvents].forEach((event) => {
-        const playerId = extractPlayerId(event);
-        if (playerId) {
-          affectedPlayerIds.add(playerId);
-        }
-      });
+    const pulseArrivalGate = () => {
+      if (!arrivalGateId) return;
+      if (typeof window !== 'undefined'
+          && window.matchMedia?.('(prefers-reduced-motion: reduce)').matches) return;
+      const feature = burgEntrancesLayerRef.current?.getSource()?.getFeatureById(arrivalGateId);
+      if (!feature) return;
+      const originalStyle = feature.getStyle();
+      feature.setStyle(new Style({
+        image: new Icon({
+          src: GATE_PULSE_ICON_DATA_URI,
+          scale: 1.4,
+          rotation: (Number(feature.get('bearingDeg') ?? 0) * Math.PI) / 180,
+          rotateWithView: false,
+        }),
+      }));
+      window.setTimeout(() => feature.setStyle(originalStyle ?? undefined), GATE_PULSE_DURATION_MS);
+    };
 
-      // For player-moved events, animate if waypoints are present; otherwise jump immediately.
-      const animationPromises: Promise<void>[] = [];
-      movementEvents.forEach((event) => {
-        if (!isPlainObject(event)) return;
-        const data = isPlainObject(event.data) ? event.data : null;
-        if (!data) return;
-        const playerId = typeof data.playerId === 'string' ? data.playerId : null;
-        if (!playerId) return;
-
-        const path = isPlainObject(data.path) ? data.path : null;
-        const rawWaypoints = Array.isArray(path?.waypoints) ? (path!.waypoints as unknown[]) : null;
-        const waypoints: Waypoint[] | null =
-          rawWaypoints && rawWaypoints.length >= 2
-            ? (rawWaypoints.filter(
-                (w): w is Waypoint =>
-                  isPlainObject(w) && typeof w.x === 'number' && typeof w.y === 'number',
-              ).length === rawWaypoints.length
-                ? (rawWaypoints as Waypoint[])
-                : null)
-            : null;
-
-        const travel = isPlainObject(data.travel) ? data.travel : null;
-
-        // Handle interrupt badge
-        if (travel?.interrupted === true) {
-          const lastWp =
-            rawWaypoints && rawWaypoints.length > 0
-              ? (rawWaypoints[rawWaypoints.length - 1] as unknown)
-              : undefined;
-          const at =
-            isPlainObject(lastWp) && typeof lastWp.x === 'number' && typeof lastWp.y === 'number'
-              ? { x: lastWp.x, y: lastWp.y }
-              : undefined;
-          const daysElapsed =
-            typeof travel.daysElapsed === 'number' ? travel.daysElapsed : 0;
-          setInterruptBadge({ playerId, day: daysElapsed, at });
-        } else {
-          setInterruptBadge((prev) => (prev?.playerId === playerId ? null : prev));
-        }
-
-        const arrival = isPlainObject(data.arrival) ? data.arrival : null;
-        const arrivalGate = arrival && isPlainObject(arrival.gate) ? arrival.gate : null;
-        const arrivalGateId = typeof arrivalGate?.id === 'string' ? arrivalGate.id : null;
-
-        const pulseArrivalGate = () => {
-          if (!arrivalGateId) return;
-          if (typeof window !== 'undefined'
-              && window.matchMedia?.('(prefers-reduced-motion: reduce)').matches) return;
-          const feature = burgEntrancesLayerRef.current?.getSource()?.getFeatureById(arrivalGateId);
-          if (!feature) return;
-          const originalStyle = feature.getStyle();
-          feature.setStyle(new Style({
-            image: new Icon({
-              src: GATE_PULSE_ICON_DATA_URI,
-              scale: 1.4,
-              rotation: (Number(feature.get('bearingDeg') ?? 0) * Math.PI) / 180,
-              rotateWithView: false,
-            }),
-          }));
-          window.setTimeout(() => feature.setStyle(originalStyle ?? undefined), GATE_PULSE_DURATION_MS);
-        };
-
-        if (waypoints && playerLayerRef.current) {
-          const source = playerLayerRef.current.getSource();
-          const feature = source
-            ?.getFeatures()
-            .find((f) => f.get('playerId') === playerId) ?? null;
-          if (feature) {
-            const p = animatorRef.current!.animate(
-              playerId,
-              feature,
-              waypoints,
-              ANIMATION_DURATION_MS,
-            ).then(() => {
-              pulseArrivalGate();
-              void loadVisiblePlayers(activeCampaignId);
-            });
-            animationPromises.push(p);
-            return; // don't fall through to immediate loadVisiblePlayers for this player
-          }
-        }
-
-        pulseArrivalGate();
-
-        // No waypoints or feature not found — fall through to immediate reload below
-      });
-
-      // If there were non-animated events (teleports, spawns, or moved without waypoints),
-      // load immediately. Animated moves trigger loadVisiblePlayers after their animation.
-      const hasNonAnimatedEvents =
-        teleportEvents.length > 0 ||
-        spawnEvents.length > 0 ||
-        spawnDeleted.length > 0 ||
-        animationPromises.length < movementEvents.length;
-
-      if (hasNonAnimatedEvents) {
-        void loadVisiblePlayers(activeCampaignId);
+    let animated = false;
+    if (waypoints && playerLayerRef.current) {
+      const source = playerLayerRef.current.getSource();
+      const feature = source
+        ?.getFeatures()
+        .find((f) => f.get('playerId') === playerId) ?? null;
+      if (feature) {
+        animated = true;
+        void animatorRef.current!.animate(
+          playerId,
+          feature,
+          waypoints,
+          ANIMATION_DURATION_MS,
+        ).then(() => {
+          pulseArrivalGate();
+          void loadVisiblePlayers(activeCampaignId);
+        });
       }
-
-      affectedPlayerIds.forEach((playerId) => {
-        if (trailSelections[playerId]) {
-          void refreshTrailForPlayer(playerId);
-        }
-      });
     }
 
-    clearSocketMessages();
-  }, [activeCampaignId, clearSocketMessages, getMessagesByType, loadVisiblePlayers, refreshTrailForPlayer, socketMessages, trailSelections]);
+    if (!animated) {
+      pulseArrivalGate();
+      void loadVisiblePlayers(activeCampaignId);
+    }
+
+    if (trailSelections[playerId]) {
+      void refreshTrailForPlayer(playerId);
+    }
+  });
+
+  useWsEvent<unknown>("player-teleported", (rawEvent) => {
+    if (!activeCampaignId) return;
+    void loadVisiblePlayers(activeCampaignId);
+    const playerId = extractPlayerId(rawEvent);
+    if (playerId && trailSelections[playerId]) {
+      void refreshTrailForPlayer(playerId);
+    }
+  });
+
+  useWsEvent("spawn-updated", () => {
+    if (!activeCampaignId) return;
+    void loadVisiblePlayers(activeCampaignId);
+  });
+
+  useWsEvent("spawn-deleted", () => {
+    if (!activeCampaignId) return;
+    void loadVisiblePlayers(activeCampaignId);
+  });
 
   useEffect(() => {
     const previous = wasSocketConnectedRef.current;

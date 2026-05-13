@@ -3,13 +3,11 @@ import {
   ReactNode,
   useCallback,
   useContext,
-  useEffect,
   useMemo,
-  useRef,
 } from "react";
 import { useGameSession } from "./GameSessionContext";
 import { useUser } from "./UserContext";
-import { useWebSocket } from "../hooks/useWebSocket";
+import { useWsEvent } from "./WebSocketContext";
 import { useAsync } from "../hooks/useAsync";
 import { apiFetch, readJsonBody, readErrorMessage } from "../utils/api-client";
 
@@ -68,9 +66,6 @@ const GameStateContext = createContext<GameStateContextValue | undefined>(undefi
 export function GameStateProvider({ children }: { children: ReactNode }) {
   const { user } = useUser();
   const { activeCampaignId } = useGameSession();
-  const { messages: wsMessages } = useWebSocket(activeCampaignId ?? "");
-
-  const lastWsMsgCountRef = useRef(0);
 
   // ── Fetch on mount / campaign change ────────────────────────────────
   const {
@@ -136,46 +131,45 @@ export function GameStateProvider({ children }: { children: ReactNode }) {
   const playerNames = playerNamesData ?? {};
 
   // ── Listen to WebSocket events ──────────────────────────────────────
-  useEffect(() => {
-    // Reset the cursor when useWebSocket clears its message buffer on reconnect.
-    // See ActionContext for the longer explanation.
-    if (wsMessages.length < lastWsMsgCountRef.current) {
-      lastWsMsgCountRef.current = 0;
-    }
-    if (wsMessages.length <= lastWsMsgCountRef.current) return;
+  const applyStateUpdate = useCallback(
+    (data: { gameState?: GameState; sessionId?: string } | undefined) => {
+      if (data?.gameState) setGameState(data.gameState);
+      if (data?.sessionId) setSessionId(data.sessionId);
+    },
+    [setGameState, setSessionId],
+  );
 
-    for (let i = lastWsMsgCountRef.current; i < wsMessages.length; i++) {
-      const envelope = wsMessages[i];
-      if (!envelope) continue;
-      const data = envelope.data as { gameState?: GameState; sessionId?: string } | undefined;
+  useWsEvent<{ gameState?: GameState; sessionId?: string }>(
+    "game-phase-changed",
+    applyStateUpdate,
+  );
+  useWsEvent<{ gameState?: GameState; sessionId?: string }>(
+    "turn-advanced",
+    applyStateUpdate,
+  );
+  useWsEvent<{ gameState?: GameState; sessionId?: string }>(
+    "world-turn-completed",
+    applyStateUpdate,
+  );
+  useWsEvent<{ gameState?: GameState; sessionId?: string }>(
+    "turn-order-changed",
+    applyStateUpdate,
+  );
+  useWsEvent<{ gameState?: GameState; sessionId?: string }>(
+    "combat-ended",
+    applyStateUpdate,
+  );
 
-      switch (envelope.type) {
-        case "game-phase-changed":
-        case "turn-advanced":
-        case "world-turn-completed":
-        case "turn-order-changed":
-        case "combat-ended":
-          if (data?.gameState) {
-            setGameState(data.gameState);
-          }
-          if (data?.sessionId) {
-            setSessionId(data.sessionId);
-          }
-          break;
-        case "combat-budget-changed": {
-          const budgetData = envelope.data as { combatTurnBudget?: CombatTurnBudget } | undefined;
-          if (budgetData?.combatTurnBudget) {
-            setGameState((prev) =>
-              prev ? { ...prev, combatTurnBudget: budgetData.combatTurnBudget! } : prev,
-            );
-          }
-          break;
-        }
+  useWsEvent<{ combatTurnBudget?: CombatTurnBudget }>(
+    "combat-budget-changed",
+    (data) => {
+      if (data?.combatTurnBudget) {
+        setGameState((prev) =>
+          prev ? { ...prev, combatTurnBudget: data.combatTurnBudget! } : prev,
+        );
       }
-    }
-
-    lastWsMsgCountRef.current = wsMessages.length;
-  }, [wsMessages]);
+    },
+  );
 
   // ── Derived state ───────────────────────────────────────────────────
   const isMyTurn = useMemo(() => {

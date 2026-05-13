@@ -3,12 +3,10 @@ import {
   ReactNode,
   useCallback,
   useContext,
-  useEffect,
-  useRef,
 } from "react";
 import { useGameSession } from "./GameSessionContext";
 import { useUser } from "./UserContext";
-import { useWebSocket } from "../hooks/useWebSocket";
+import { useWsEvent } from "./WebSocketContext";
 import { useAsync } from "../hooks/useAsync";
 import { apiFetch, readJsonBody, readErrorMessage } from "../utils/api-client";
 
@@ -71,9 +69,6 @@ const LiveStateContext = createContext<LiveStateContextValue | undefined>(undefi
 export function LiveStateProvider({ children }: { children: ReactNode }) {
   const { user } = useUser();
   const { activeCampaignId } = useGameSession();
-  const { messages: wsMessages } = useWebSocket(activeCampaignId ?? "");
-
-  const lastWsMsgCountRef = useRef(0);
 
   // ── Fetch live states on mount ────────────────────────────────────────
   const {
@@ -102,35 +97,18 @@ export function LiveStateProvider({ children }: { children: ReactNode }) {
   const setAllLiveStates = setAllLiveStatesData;
 
   // ── WebSocket listener ────────────────────────────────────────────────
-  useEffect(() => {
-    // Reset the cursor when useWebSocket clears its message buffer on reconnect.
-    // See ActionContext for the longer explanation.
-    if (wsMessages.length < lastWsMsgCountRef.current) {
-      lastWsMsgCountRef.current = 0;
-    }
-    if (wsMessages.length <= lastWsMsgCountRef.current) return;
-
-    for (let i = lastWsMsgCountRef.current; i < wsMessages.length; i++) {
-      const envelope = wsMessages[i];
-      if (!envelope) continue;
-
-      if (envelope.type === "live-state-changed") {
-        const data = envelope.data as {
-          liveStates?: LiveCharacterState[];
-        } | undefined;
-
-        if (Array.isArray(data?.liveStates)) {
-          const map: Record<string, LiveCharacterState> = {};
-          for (const s of data.liveStates) {
-            map[s.character_id] = s;
-          }
-          setAllLiveStates(map);
+  useWsEvent<{ liveStates?: LiveCharacterState[] }>(
+    "live-state-changed",
+    (data) => {
+      if (Array.isArray(data?.liveStates)) {
+        const map: Record<string, LiveCharacterState> = {};
+        for (const s of data.liveStates) {
+          map[s.character_id] = s;
         }
+        setAllLiveStates(map);
       }
-    }
-
-    lastWsMsgCountRef.current = wsMessages.length;
-  }, [wsMessages]);
+    },
+  );
 
   // ── Derived state ─────────────────────────────────────────────────────
   const myLiveState =
