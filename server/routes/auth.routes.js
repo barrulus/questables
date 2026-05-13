@@ -12,6 +12,11 @@ import {
   getEnrolmentTokenUser,
   consumeEnrolmentToken,
 } from '../services/auth/webauthn.js';
+import {
+  passkeyLimiter,
+  refreshLimiter,
+  enrolmentLimiter,
+} from '../utils/auth-rate-limit.js';
 
 const router = Router();
 
@@ -23,7 +28,7 @@ const PASSWORD_AUTH_DISABLED = {
 router.post('/login', (_req, res) => res.status(410).json(PASSWORD_AUTH_DISABLED));
 router.post('/register', (_req, res) => res.status(410).json(PASSWORD_AUTH_DISABLED));
 
-router.post('/passkey/authenticate/begin', async (_req, res) => {
+router.post('/passkey/authenticate/begin', passkeyLimiter, async (_req, res) => {
   try {
     const { options, challengeId } = await generateAuthenticationChallenge();
     res.json({ options, challengeId });
@@ -33,7 +38,7 @@ router.post('/passkey/authenticate/begin', async (_req, res) => {
   }
 });
 
-router.post('/passkey/authenticate/finish', async (req, res) => {
+router.post('/passkey/authenticate/finish', passkeyLimiter, async (req, res) => {
   const { challengeId, response } = req.body ?? {};
   if (typeof challengeId !== 'string' || !response) {
     return res.status(400).json({ error: 'bad_request', message: 'challengeId and response are required.' });
@@ -114,7 +119,7 @@ router.post('/passkey/register/finish', requireAuth, async (req, res) => {
 });
 
 // Enrolment flow — public, gated by a one-time token.
-router.get('/enrolment/:token', async (req, res) => {
+router.get('/enrolment/:token', enrolmentLimiter, async (req, res) => {
   try {
     const user = await getEnrolmentTokenUser(req.params.token);
     if (!user) {
@@ -133,7 +138,7 @@ router.get('/enrolment/:token', async (req, res) => {
   }
 });
 
-router.post('/enrolment/:token/register/begin', async (req, res) => {
+router.post('/enrolment/:token/register/begin', enrolmentLimiter, async (req, res) => {
   try {
     const user = await getEnrolmentTokenUser(req.params.token);
     if (!user) {
@@ -152,7 +157,7 @@ router.post('/enrolment/:token/register/begin', async (req, res) => {
   }
 });
 
-router.post('/enrolment/:token/register/finish', async (req, res) => {
+router.post('/enrolment/:token/register/finish', enrolmentLimiter, async (req, res) => {
   const { challengeId, response, deviceName } = req.body ?? {};
   if (typeof challengeId !== 'string' || !response) {
     return res.status(400).json({ error: 'bad_request', message: 'challengeId and response are required.' });
@@ -208,7 +213,7 @@ router.post('/enrolment/:token/register/finish', async (req, res) => {
   }
 });
 
-router.post('/refresh', async (req, res) => {
+router.post('/refresh', refreshLimiter, async (req, res) => {
   const { refreshToken } = req.body ?? {};
 
   if (typeof refreshToken !== 'string' || !refreshToken) {
