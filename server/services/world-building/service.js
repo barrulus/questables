@@ -57,13 +57,12 @@ RULES:
 - Conflict driver: ${pickRandom(CONFLICT_SOURCES, 1)[0]}`;
 
 const SECTION_PROMPTS = {
-  geopolitical: `Write a geopolitical overview of this world. Cover:
-- Major power blocs, their alliances and rivalries
-- Key political figures and agendas
-- Trade relationships along the route network
-- Border tensions and disputed territories
-- Who is ascendant, who is declining
-Ground every claim in the state/province map data.`,
+  geopolitical: `Write a concise geopolitical overview of this world in 400-600 words. Cover:
+- The top 3-4 power blocs (2-3 sentences each: alliances, rivalries, key figures)
+- One or two major trade relationships along the route network
+- One active border tension or disputed territory
+- A one-sentence verdict on who is ascendant and who is declining
+Ground every claim in the state/province map data. Do NOT write exhaustive profiles of every state — focus on the dynamics that matter for play.`,
 
   history: `Write a concise historical overview for this world in 300-500 words. Cover:
 - Name 3-5 major eras with evocative names and approximate date ranges
