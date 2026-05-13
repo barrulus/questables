@@ -242,6 +242,31 @@ export async function interceptChatAction({
       intent.isFreeAction = false;
     }
 
+    // Safety net for classifier over-eagerness with free_action.
+    // If the model picked free_action but the message looks like an in-character
+    // observation / spatial question / first-person action, force search instead
+    // so the DM responds. Better to over-generate than leave the player hanging.
+    if (intent.actionType === 'free_action' || intent.isFreeAction) {
+      const msg = (chatMessage ?? '').toLowerCase().trim();
+      const startsWithPronoun = /^(i|we)\b/.test(msg);
+      const spatialQuestion = /\b(where|what|who)\b.*\b(am|are|is|see|do i see|do we see|here|around|here\??$)/.test(msg)
+        || /\blook (around|at|for)\b/.test(msg)
+        || /\b(am i|are we)\b/.test(msg);
+      const oocMarker = /^(ooc[:\s]|\(\(|brb|afk|hi(\b| all| everyone)|hey(\b| all| everyone)|thanks)/.test(msg)
+        || /\b(what does|how does|what's my|how much hp)\b/.test(msg);
+
+      if ((startsWithPronoun || spatialQuestion) && !oocMarker) {
+        logInfo('Chat action: overriding free_action -> search (in-character heuristic)', {
+          campaignId,
+          characterName: character.name,
+          originalActionType: intent.actionType,
+          message: chatMessage,
+        });
+        intent.actionType = 'search';
+        intent.isFreeAction = false;
+      }
+    }
+
     // Resolve NPC target → npcId so the social action path uses the right NPC.
     // The intent parser only gives us a string `target`. We try to match it to
     // an existing NPC in the campaign by token overlap on the name.

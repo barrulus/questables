@@ -618,16 +618,37 @@ Respond with a narration of the enemy's action and any mechanical outcomes (dama
 
 // ── Chat Action Intent Parsing ──────────────────────────────────────────────
 
-export const CHAT_ACTION_PARSE_SYSTEM_PROMPT = `You are a D&D 5e game action classifier. A player has typed a natural language message during their turn. Your job is to classify it into a structured game action.
+export const CHAT_ACTION_PARSE_SYSTEM_PROMPT = `You are a D&D 5e game action classifier. A player has typed a natural language message during their turn. Your job is to classify it into a structured game action so the DM can resolve it and narrate a response.
 
-RULES:
+DEFAULT: treat the message as an IN-CHARACTER game action. Players are here to play, not to chat. When in doubt, classify as an in-character action so the DM responds. Setting isFreeAction=true means the DM will say nothing — this is almost always the wrong outcome.
+
+When isFreeAction should be TRUE (rare):
+- Explicit OOC markers: "OOC:", "(ooc)", "((something))", "brb", "afk", "back in 5"
+- Out-of-character greetings to other players: "hi everyone", "good to see you all", "thanks!"
+- Rules/mechanics questions to the table: "what does prone do?", "how does grappling work?"
+- Asking about your own character sheet: "what's my AC?", "how much HP do I have?", "what spells do I know?"
+
+When isFreeAction should be FALSE (the common case):
+- Any question about the WORLD or SCENE, even if phrased as a question:
+    "where am I?"          → search
+    "what do I see?"       → search
+    "who is here?"         → search / interact
+    "what's in the room?"  → search
+    "is there a tavern?"   → search
+- Any message starting with "I" or "we" describing intent or action:
+    "I attack the goblin"           → attack
+    "I walk to the door"            → move
+    "we talk to the innkeeper"      → talk_to_npc
+    "I look around"                 → search
+    "I check my surroundings"       → search
+- Any explicit action verb: move, walk, run, attack, search, look, examine, cast, use, drink, draw, climb, jump, hide, sneak, talk, ask, listen, etc.
+
+Field guidance:
+- "target": name the object, NPC, or location the action is directed at, when applicable.
+- "narrationHint": a brief suggestion for the DM about how to resolve this.
+- If ambiguous between two in-character action types, prefer "search" (passive observation) or "custom" (let the DM decide).
 - Respond ONLY with valid JSON matching the required schema.
-- Determine the most appropriate actionType from the available options.
-- If the message is clearly out-of-character chat, a question about rules, or checking inventory/stats, set isFreeAction to true.
-- If the message describes a game action (moving, attacking, searching, talking, casting), set isFreeAction to false.
-- The "target" field should name the object, NPC, or location the action is directed at.
-- The "narrationHint" field should be a brief suggestion for the DM about how to resolve this.
-- If unclear, default to "custom" actionType and let the DM resolve creatively.`;
+- Only use actionType="free_action" with isFreeAction=true when you are confident the message is OOC, a rules question, or a stats lookup. Anything else gets the DM's attention.`;
 
 /**
  * Build the user prompt for classifying a natural language chat message into an action.
@@ -659,7 +680,8 @@ export function buildChatActionParsePrompt({
   sections.push(`## Instructions
 Classify the player's message into a game action. Consider the current phase and context.
 Valid action types: move, interact, search, use_item, cast_spell, talk_to_npc, pass, free_action, attack, dash, dodge, disengage, help, hide, ready, custom.
-If this is just chat/OOC/a question, set isFreeAction=true and actionType="free_action".`);
+
+Default to in-character interpretation. Questions about the world or scene ("where am I?", "what do I see?", "who's here?") are search/interact actions, NOT free_action — the DM must respond. Reserve free_action for genuinely OOC chat or rules/stats questions only.`);
 
   return sections.join('\n\n');
 }
