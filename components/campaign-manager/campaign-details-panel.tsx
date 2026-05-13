@@ -9,6 +9,7 @@ import {
   hasCampaignDescription,
 } from "../campaign-shared";
 import { CampaignPrep } from "../campaign-prep";
+import { PendingApprovalsPanel } from "./pending-approvals-panel";
 import type { WorldMapSummary } from "../../utils/world-map-cache";
 
 export interface CampaignDetailsPanelProps {
@@ -17,6 +18,7 @@ export interface CampaignDetailsPanelProps {
   worldMaps: WorldMapSummary[];
   onEditClick: (campaign: Campaign) => void;
   onSettingsClick: (campaign: Campaign) => void;
+  onPlayersChanged?: () => Promise<void> | void;
 }
 
 export function CampaignDetailsPanel({
@@ -25,6 +27,7 @@ export function CampaignDetailsPanel({
   worldMaps,
   onEditClick,
   onSettingsClick,
+  onPlayersChanged,
 }: CampaignDetailsPanelProps) {
   const selectedLevelRange = coerceLevelRange(campaign.level_range ?? null);
   const selectedWorldMapName = useMemo(() => {
@@ -127,6 +130,15 @@ export function CampaignDetailsPanel({
             </div>
           </CardContent>
         </Card>
+
+        {campaign.dm_user_id === userId && (
+          <PendingApprovalsPanel
+            campaignId={campaign.id}
+            maxPlayers={Number(campaign.max_players) || 0}
+            currentPlayers={Number(campaign.current_players) || 0}
+            onChanged={onPlayersChanged}
+          />
+        )}
 
         <CampaignPrep campaign={campaign} />
       </div>

@@ -12,6 +12,7 @@ import { toast } from "sonner";
 import {
   AlertCircle,
   Calendar,
+  Clock,
   Edit,
   Loader2,
   LogOut,
@@ -24,6 +25,7 @@ import {
   User,
   UserPlus,
   Users,
+  X,
 } from "lucide-react";
 import { apiFetch, readErrorMessage, readJsonBody } from "../utils/api-client";
 import { CharacterManager, type CharacterManagerCommand } from "./character-manager";
@@ -147,7 +149,11 @@ type RawCampaign = {
   characterId?: string | null;
   character_name?: string | null;
   characterName?: string | null;
+  requested_at?: string | null;
+  requestedAt?: string | null;
 };
+
+type PendingCampaign = PlayerCampaign & { requestedAt: string | null };
 
 type RawPlayerToken = {
   player_id?: string;
@@ -357,7 +363,9 @@ const formatDate = (value?: string | null) => {
 export function PlayerDashboard({ user, onEnterGame, onLogout, onCreateCharacter, onOpenSettings }: PlayerDashboardProps) {
   const [characters, setCharacters] = useState<PlayerCharacter[]>([]);
   const [playerCampaigns, setPlayerCampaigns] = useState<PlayerCampaign[]>([]);
+  const [pendingCampaigns, setPendingCampaigns] = useState<PendingCampaign[]>([]);
   const [publicCampaigns, setPublicCampaigns] = useState<PlayerCampaign[]>([]);
+  const [cancellingCampaignId, setCancellingCampaignId] = useState<string | null>(null);
   const [activeTab, setActiveTab] = useState("characters");
   const [searchQuery, setSearchQuery] = useState("");
   const [loading, setLoading] = useState(true);
@@ -413,12 +421,23 @@ export function PlayerDashboard({ user, onEnterGame, onLogout, onCreateCharacter
               .map(mapCampaign))
           : [];
 
+      const mappedPendingCampaigns =
+        Array.isArray((campaignsJson as { pendingCampaigns?: unknown[] })?.pendingCampaigns)
+          ? ((campaignsJson as { pendingCampaigns: unknown[] }).pendingCampaigns
+              .filter(isRawCampaign)
+              .map((raw): PendingCampaign => ({
+                ...mapCampaign(raw),
+                requestedAt: raw.requested_at ?? raw.requestedAt ?? null,
+              })))
+          : [];
+
       const mappedPublicCampaigns = Array.isArray(publicJson)
         ? (publicJson as unknown[]).filter(isRawCampaign).map(mapCampaign)
         : [];
 
       setCharacters(mappedCharacters);
       setPlayerCampaigns(mappedPlayerCampaigns);
+      setPendingCampaigns(mappedPendingCampaigns);
       setPublicCampaigns(mappedPublicCampaigns);
     } catch (err) {
       const message = err instanceof Error ? err.message : "Failed to load dashboard data";
@@ -449,6 +468,7 @@ export function PlayerDashboard({ user, onEnterGame, onLogout, onCreateCharacter
   }, [playerCampaigns]);
 
   const joinedCampaignIds = useMemo(() => new Set(playerCampaigns.map((campaign) => campaign.id)), [playerCampaigns]);
+  const pendingCampaignIds = useMemo(() => new Set(pendingCampaigns.map((campaign) => campaign.id)), [pendingCampaigns]);
 
   const combinedCampaigns = useMemo(() => {
     const campaigns = new Map<string, PlayerCampaign>();
@@ -562,6 +582,11 @@ export function PlayerDashboard({ user, onEnterGame, onLogout, onCreateCharacter
       return;
     }
 
+    if (pendingCampaignIds.has(campaign.id)) {
+      toast.info("Your join request is still awaiting DM approval.");
+      return;
+    }
+
     setJoinState({ campaign, selectedCharacterId: characters[0].id, submitting: false });
   };
 
@@ -592,7 +617,12 @@ export function PlayerDashboard({ user, onEnterGame, onLogout, onCreateCharacter
         throw new Error(await readErrorMessage(response, "Failed to join campaign"));
       }
 
-      toast.success("Join request submitted successfully.");
+      const body = await readJsonBody<{ status?: string; message?: string }>(response);
+      if (body?.status === "pending") {
+        toast.success(body.message ?? "Join request submitted — awaiting DM approval.");
+      } else {
+        toast.success(body?.message ?? "You have joined the campaign.");
+      }
       handleCloseJoinDialog();
       await loadDashboardData();
     } catch (err) {
@@ -601,6 +631,27 @@ export function PlayerDashboard({ user, onEnterGame, onLogout, onCreateCharacter
       console.error("[PlayerDashboard] handleConfirmJoin error", err);
     } finally {
       setJoinState((current) => ({ ...current, submitting: false }));
+    }
+  };
+
+  const handleCancelPendingRequest = async (campaign: PendingCampaign) => {
+    if (cancellingCampaignId) return;
+    try {
+      setCancellingCampaignId(campaign.id);
+      const response = await apiFetch(`/api/campaigns/${campaign.id}/players/${userId}`, {
+        method: "DELETE",
+      });
+      if (!response.ok) {
+        throw new Error(await readErrorMessage(response, "Failed to cancel join request"));
+      }
+      toast.success("Join request cancelled.");
+      await loadDashboardData();
+    } catch (err) {
+      const message = err instanceof Error ? err.message : "Failed to cancel join request";
+      toast.error(message);
+      console.error("[PlayerDashboard] handleCancelPendingRequest error", err);
+    } finally {
+      setCancellingCampaignId(null);
     }
   };
 
@@ -767,6 +818,46 @@ export function PlayerDashboard({ user, onEnterGame, onLogout, onCreateCharacter
           </TabsContent>
 
           <TabsContent value="campaigns" className="space-y-6">
+            {pendingCampaigns.length > 0 && (
+              <div className="space-y-3">
+                <h2 className="text-xl font-semibold flex items-center gap-2">
+                  <Clock className="w-5 h-5 text-amber-500" />
+                  Awaiting DM Approval
+                </h2>
+                {pendingCampaigns.map((campaign) => (
+                  <Card key={`pending-${campaign.id}`} className="border-amber-500/40">
+                    <CardContent className="p-4 flex items-start justify-between gap-4">
+                      <div className="flex-1">
+                        <div className="flex items-center gap-2 mb-1">
+                          <h3 className="font-semibold">{campaign.name}</h3>
+                          <Badge variant="outline" className="text-amber-600 border-amber-600">
+                            Pending
+                          </Badge>
+                        </div>
+                        <p className="text-sm text-muted-foreground">
+                          DM: {campaign.dmUsername || "Unknown"}
+                          {campaign.requestedAt ? ` • Requested ${formatDate(campaign.requestedAt)}` : ""}
+                        </p>
+                      </div>
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        disabled={cancellingCampaignId === campaign.id}
+                        onClick={() => void handleCancelPendingRequest(campaign)}
+                      >
+                        {cancellingCampaignId === campaign.id ? (
+                          <Loader2 className="w-4 h-4 mr-1 animate-spin" />
+                        ) : (
+                          <X className="w-4 h-4 mr-1" />
+                        )}
+                        Cancel request
+                      </Button>
+                    </CardContent>
+                  </Card>
+                ))}
+              </div>
+            )}
+
             <div className="flex items-center justify-between">
               <h2 className="text-xl font-semibold">Your Campaigns</h2>
             </div>
@@ -776,8 +867,16 @@ export function PlayerDashboard({ user, onEnterGame, onLogout, onCreateCharacter
                 <CardContent className="py-10 text-center space-y-3">
                   <Info className="w-10 h-10 mx-auto text-muted-foreground" />
                   <div>
-                    <p className="font-medium">You have not joined any campaigns yet</p>
-                    <p className="text-sm text-muted-foreground">Browse public campaigns to find your next adventure.</p>
+                    <p className="font-medium">
+                      {pendingCampaigns.length > 0
+                        ? "No approved campaigns yet"
+                        : "You have not joined any campaigns yet"}
+                    </p>
+                    <p className="text-sm text-muted-foreground">
+                      {pendingCampaigns.length > 0
+                        ? "Your join requests will appear here once the DM approves them."
+                        : "Browse public campaigns to find your next adventure."}
+                    </p>
                   </div>
                   <Button onClick={() => setActiveTab("browse")}>
                     <Search className="w-4 h-4 mr-1" />
@@ -902,10 +1001,23 @@ export function PlayerDashboard({ user, onEnterGame, onLogout, onCreateCharacter
               <div className="space-y-4">
                 {filteredCampaigns.map((campaign) => {
                   const isJoined = joinedCampaignIds.has(campaign.id);
+                  const isPending = pendingCampaignIds.has(campaign.id);
                   const isRecruiting = campaign.status === "recruiting";
+                  const pendingRecord = isPending
+                    ? pendingCampaigns.find((entry) => entry.id === campaign.id) ?? null
+                    : null;
 
                   return (
-                    <Card key={campaign.id} className={isJoined ? "ring-2 ring-primary/20" : ""}>
+                    <Card
+                      key={campaign.id}
+                      className={
+                        isJoined
+                          ? "ring-2 ring-primary/20"
+                          : isPending
+                            ? "ring-2 ring-amber-500/30"
+                            : ""
+                      }
+                    >
                       <CardContent className="p-6">
                         <div className="flex items-start justify-between">
                           <div className="flex-1">
@@ -918,6 +1030,11 @@ export function PlayerDashboard({ user, onEnterGame, onLogout, onCreateCharacter
                               {isJoined && (
                                 <Badge variant="outline" className="text-green-600 border-green-600">
                                   Joined
+                                </Badge>
+                              )}
+                              {isPending && (
+                                <Badge variant="outline" className="text-amber-600 border-amber-600">
+                                  Awaiting approval
                                 </Badge>
                               )}
                             </div>
@@ -956,13 +1073,28 @@ export function PlayerDashboard({ user, onEnterGame, onLogout, onCreateCharacter
                           </div>
 
                           <div className="flex gap-2 ml-4">
-                            {!isJoined && isRecruiting && (
+                            {!isJoined && !isPending && isRecruiting && (
                               <Button
                                 size="sm"
                                 onClick={() => handleOpenJoinDialog(campaign)}
                               >
                                 <UserPlus className="w-4 h-4 mr-1" />
                                 Request to Join
+                              </Button>
+                            )}
+                            {isPending && pendingRecord && (
+                              <Button
+                                variant="outline"
+                                size="sm"
+                                disabled={cancellingCampaignId === campaign.id}
+                                onClick={() => void handleCancelPendingRequest(pendingRecord)}
+                              >
+                                {cancellingCampaignId === campaign.id ? (
+                                  <Loader2 className="w-4 h-4 mr-1 animate-spin" />
+                                ) : (
+                                  <X className="w-4 h-4 mr-1" />
+                                )}
+                                Cancel request
                               </Button>
                             )}
                             {isJoined && campaign.characterId && campaign.characterName && (

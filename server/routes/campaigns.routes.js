@@ -411,12 +411,25 @@ router.get('/api/users/:userId/campaigns', async (req, res) => {
       WHERE cp.user_id = $1 AND cp.status = 'active'
       ORDER BY c.created_at DESC
     `, [userId]);
-    
+
+    // Get campaigns where the user has a pending join request
+    const pendingCampaigns = await client.query(`
+      SELECT c.*, u.username as dm_username, cp.character_id, ch.name as character_name,
+             cp.joined_at AS requested_at
+      FROM campaigns c
+      JOIN campaign_players cp ON c.id = cp.campaign_id
+      JOIN user_profiles u ON c.dm_user_id = u.id
+      LEFT JOIN characters ch ON cp.character_id = ch.id
+      WHERE cp.user_id = $1 AND cp.status = 'pending'
+      ORDER BY cp.joined_at DESC
+    `, [userId]);
+
     client.release();
 
     res.json({
       dmCampaigns: dmCampaigns.rows,
       playerCampaigns: decryptUserFields(playerCampaigns.rows, ['dm_username']),
+      pendingCampaigns: decryptUserFields(pendingCampaigns.rows, ['dm_username']),
     });
   } catch (error) {
     logError('[Campaigns] Get user campaigns error:', error);
@@ -711,26 +724,129 @@ router.get('/api/campaigns/:campaignId/players/pending', requireAuth, requireCam
 // DM: approve a pending player
 router.patch('/api/campaigns/:campaignId/players/:userId/approve', requireAuth, requireCampaignOwnership, async (req, res) => {
   const { campaignId, userId } = req.params;
+  let client;
   try {
-    const result = await dbQuery(
+    client = await getClient();
+    await client.query('BEGIN');
+
+    const capacityCheck = await client.query(`
+      SELECT c.max_players,
+             c.world_map_id,
+             c.dm_user_id,
+             COUNT(cp.user_id) FILTER (WHERE cp.status = 'active') AS current_players
+        FROM campaigns c
+        LEFT JOIN campaign_players cp ON c.id = cp.campaign_id
+       WHERE c.id = $1
+       GROUP BY c.id, c.max_players, c.world_map_id, c.dm_user_id
+    `, [campaignId]);
+
+    if (capacityCheck.rows.length === 0) {
+      await client.query('ROLLBACK');
+      return res.status(404).json({ error: 'Campaign not found' });
+    }
+
+    const campaignMeta = capacityCheck.rows[0];
+    if (Number(campaignMeta.current_players) >= Number(campaignMeta.max_players)) {
+      await client.query('ROLLBACK');
+      return res.status(400).json({ error: 'Campaign is full' });
+    }
+
+    const update = await client.query(
       `UPDATE campaign_players SET status = 'active'
         WHERE campaign_id = $1 AND user_id = $2 AND status = 'pending'
        RETURNING id`,
       [campaignId, userId]
     );
-    if (result.rows.length === 0) {
+    if (update.rows.length === 0) {
+      await client.query('ROLLBACK');
       return res.status(404).json({ error: 'No pending join request found for this user' });
     }
+
+    const campaignPlayerId = update.rows[0].id;
+    let autoPlacement = null;
+
+    const spawnResult = await client.query(
+      `SELECT ST_X(world_position) AS x,
+              ST_Y(world_position) AS y
+         FROM public.campaign_spawns
+        WHERE campaign_id = $1
+        ORDER BY is_default DESC, updated_at DESC
+        LIMIT 1`,
+      [campaignId]
+    );
+
+    if (spawnResult.rowCount > 0) {
+      autoPlacement = {
+        x: Number(spawnResult.rows[0].x),
+        y: Number(spawnResult.rows[0].y),
+        reason: 'Auto-placement to default spawn (approved join)',
+      };
+    } else if (campaignMeta.world_map_id) {
+      const boundsResult = await client.query(
+        'SELECT bounds FROM public.maps_world WHERE id = $1',
+        [campaignMeta.world_map_id]
+      );
+      const parsed = parseBounds(boundsResult.rows[0]?.bounds);
+      if (parsed) {
+        autoPlacement = {
+          x: (parsed.west + parsed.east) / 2,
+          y: (parsed.south + parsed.north) / 2,
+          reason: 'Auto-placement to map center (approved join)',
+        };
+      }
+    }
+
+    if (autoPlacement) {
+      await client.query(
+        `UPDATE public.campaign_players
+            SET loc_current = ST_SetSRID(ST_MakePoint($1, $2), 0),
+                last_located_at = NOW()
+          WHERE id = $3`,
+        [autoPlacement.x, autoPlacement.y, campaignPlayerId]
+      );
+
+      await client.query(
+        `INSERT INTO public.player_movement_audit
+            (campaign_id, player_id, moved_by, mode, reason, previous_loc, new_loc)
+         VALUES
+            ($1, $2, $3, 'gm', $4, NULL, ST_SetSRID(ST_MakePoint($5, $6), 0))`,
+        [
+          campaignId,
+          campaignPlayerId,
+          campaignMeta.dm_user_id ?? null,
+          autoPlacement.reason,
+          autoPlacement.x,
+          autoPlacement.y,
+        ]
+      );
+    }
+
+    await client.query('COMMIT');
+
+    if (autoPlacement) {
+      try {
+        req.app?.locals?.llmService?.clearCacheForCampaign?.(campaignId);
+      } catch (cacheErr) {
+        logError('[Campaigns] Failed to clear LLM cache after approve auto-placement (non-fatal)', cacheErr);
+      }
+    }
+
     logInfo('[Campaigns] DM approved player join', {
       telemetryEvent: 'campaign.player.approved',
       campaignId,
       userId,
       approvedBy: req.user.id,
+      autoPlaced: Boolean(autoPlacement),
     });
-    res.json({ message: 'Player approved', playerId: result.rows[0].id });
+    res.json({ message: 'Player approved', playerId: campaignPlayerId, autoPlaced: Boolean(autoPlacement) });
   } catch (error) {
+    if (client) {
+      await client.query('ROLLBACK').catch(() => {});
+    }
     logError('[Campaigns] Approve player error:', error);
     res.status(500).json({ error: 'Failed to approve player' });
+  } finally {
+    client?.release();
   }
 });
 

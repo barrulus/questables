@@ -182,6 +182,7 @@ export function CampaignManager() {
           worldMaps={worldMaps}
           onEditClick={setEditTarget}
           onSettingsClick={setSettingsTarget}
+          onPlayersChanged={() => loadCampaignData({ mode: "refresh" })}
         />
       )}
 
