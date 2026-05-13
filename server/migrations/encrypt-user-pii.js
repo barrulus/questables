@@ -12,15 +12,12 @@ import { logInfo, logWarn } from '../utils/logger.js';
 //   4. For each row: encrypt email + username (if not already), populate _lookup
 //   5. NOT NULL the lookup columns once backfill is done
 //
-// Bail out (with a warning) if ENCRYPTION_KEY is not set — running without a key
-// would leave the database in an inconsistent state (plaintext rows + empty lookups).
+// This migration runs BEFORE schema.sql so the schema's CREATE UNIQUE INDEX
+// statements on the lookup columns succeed against an existing DB. The shape
+// changes (CITEXT->TEXT, drop UNIQUE, add lookup columns) run unconditionally;
+// only the encryption + lookup backfill is gated on ENCRYPTION_KEY being set.
 
 export async function migrateUserPii(client) {
-  if (!isEncryptionEnabled()) {
-    logWarn('[migrate-pii] ENCRYPTION_KEY not set — skipping PII encryption migration');
-    return { skipped: true };
-  }
-
   const existing = await client.query(
     `SELECT column_name, data_type, udt_name
        FROM information_schema.columns
@@ -29,7 +26,7 @@ export async function migrateUserPii(client) {
   const columnTypes = new Map(existing.rows.map((r) => [r.column_name, r.udt_name]));
 
   if (!columnTypes.has('email')) {
-    logInfo('[migrate-pii] user_profiles missing — nothing to migrate');
+    logInfo('[migrate-pii] user_profiles missing — fresh install, schema.sql will create it');
     return { skipped: true };
   }
 
@@ -52,6 +49,11 @@ export async function migrateUserPii(client) {
   if (!columnTypes.has('username_lookup')) {
     await client.query(`ALTER TABLE public.user_profiles ADD COLUMN username_lookup TEXT`);
     logInfo('[migrate-pii] added username_lookup column');
+  }
+
+  if (!isEncryptionEnabled()) {
+    logWarn('[migrate-pii] ENCRYPTION_KEY not set — columns added, but skipping row encryption + lookup backfill. Set ENCRYPTION_KEY and re-run.');
+    return { skipped: false, columnsOnly: true };
   }
 
   const { rows } = await client.query(

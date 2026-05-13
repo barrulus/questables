@@ -5,7 +5,7 @@ import { readFileSync, existsSync } from "fs";
 import { join, dirname } from "path";
 import { fileURLToPath } from "url";
 import dotenv from "dotenv";
-import { encryptField, hmacLookup, isEncryptionEnabled } from "./crypto.js";
+import { encryptField, hmacLookup } from "./crypto.js";
 import { migrateUserPii } from "./migrations/encrypt-user-pii.js";
 
 // Load env from server and repo root, preferring .env.local
@@ -46,6 +46,15 @@ async function setupDatabase() {
     await client.query("CREATE EXTENSION IF NOT EXISTS pgcrypto;");
     console.log("✓ PostGIS extension installed");
 
+    // Run the PII migration BEFORE schema.sql. On an existing DB this reshapes
+    // user_profiles (CITEXT->TEXT, drop UNIQUE, add lookup columns) so the
+    // schema's CREATE UNIQUE INDEX statements have something to bind to. On a
+    // fresh DB the migration is a no-op (no user_profiles yet) and schema.sql
+    // creates the table in its already-correct final shape.
+    console.log("Running PII migration (pre-schema)...");
+    await migrateUserPii(client);
+    console.log("✓ PII migration complete");
+
     // Read and execute schema file
     console.log("Creating database schema...");
     const schemaPath = join(__dirname, "..", "database", "schema.sql");
@@ -74,16 +83,6 @@ async function setupDatabase() {
         console.warn("Warning executing srd-schema.sql:", error.message);
         throw error;
       }
-    }
-
-    if (isEncryptionEnabled()) {
-      console.log("Running PII encryption migration...");
-      await migrateUserPii(client);
-      console.log("✓ PII encryption migration complete");
-    } else {
-      console.warn(
-        "⚠ ENCRYPTION_KEY not set — skipping PII migration. Set it before deploying."
-      );
     }
 
     // Ensure a default admin user exists so an operator has someone to issue an
