@@ -32,9 +32,16 @@ export const registerUploadRoutes = (app, { upload, uploadSvg }) => {
 
   // All upload endpoints require authentication. Pre-pentest, every upload
   // route was anonymous — anyone on the network could persist files to /uploads.
-  router.use(requireAuth);
+  //
+  // requireAuth is applied per-route rather than via `router.use` because
+  // this router is mounted at `/api`. A router-wide `router.use(requireAuth)`
+  // applies to every request that reaches the router, including `/api/*`
+  // paths that have no handler here — so any *later-registered* public
+  // route under `/api` (e.g. `/api/websocket/status`, `/api/srd/*`) would
+  // 401 instead of being served. Keep this list and the per-route guards
+  // in sync.
 
-  router.post('/upload/avatar', upload.single('avatar'), async (req, res) => {
+  router.post('/upload/avatar', requireAuth, upload.single('avatar'), async (req, res) => {
     if (!req.file) {
       return res.status(400).json({ error: 'No file uploaded' });
     }
@@ -50,7 +57,7 @@ export const registerUploadRoutes = (app, { upload, uploadSvg }) => {
     return res.json({ url: fileUrl, filename: req.file.filename });
   });
 
-  router.post('/upload/map', upload.single('mapFile'), async (req, res) => {
+  router.post('/upload/map', requireAuth, upload.single('mapFile'), async (req, res) => {
     if (!req.file) {
       return res.status(400).json({ error: 'No file uploaded' });
     }
@@ -105,6 +112,7 @@ export const registerUploadRoutes = (app, { upload, uploadSvg }) => {
 
   router.post(
     '/campaigns/:campaignId/assets',
+    requireAuth,
     requireCampaignOwnership,
     upload.single('asset'),
     async (req, res) => {
@@ -148,6 +156,7 @@ export const registerUploadRoutes = (app, { upload, uploadSvg }) => {
 
   router.get(
     '/campaigns/:campaignId/assets',
+    requireAuth,
     requireCampaignParticipation,
     async (req, res) => {
       const { campaignId } = req.params;
@@ -167,7 +176,7 @@ export const registerUploadRoutes = (app, { upload, uploadSvg }) => {
   // Uses scoped uploadSvg middleware. The SVG is parsed for dimensions and
   // then deleted, so it never appears under /uploads — neutralising the
   // stored-XSS vector for the only path that legitimately accepts SVG.
-  router.post('/upload/map/svg', uploadSvg.single('svgFile'), async (req, res) => {
+  router.post('/upload/map/svg', requireAuth, uploadSvg.single('svgFile'), async (req, res) => {
     if (!req.file) {
       return res.status(400).json({ error: 'No SVG file uploaded' });
     }
@@ -216,7 +225,7 @@ export const registerUploadRoutes = (app, { upload, uploadSvg }) => {
   });
 
   // --- Map Wizard: GeoJSON layer upload (Steps 1-5) ---
-  router.post('/upload/map/:worldId/layer', upload.single('geojsonFile'), async (req, res) => {
+  router.post('/upload/map/:worldId/layer', requireAuth, upload.single('geojsonFile'), async (req, res) => {
     const { worldId } = req.params;
 
     if (!req.file) {
