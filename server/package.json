@@ -8,12 +8,14 @@
     "start": "node database-server.js",
     "dev": "node node_modules/nodemon/bin/nodemon.js database-server.js",
     "setup": "node setup-database.js",
+    "enrol-admin": "node scripts/enrol-admin.js",
     "import-srd": "node scripts/import-srd-data.js",
     "import-srd:2014": "node scripts/import-srd-data.js --documents srd-2014",
     "import-srd:2024": "node scripts/import-srd-data.js --documents srd-2024"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.82.0",
+    "@simplewebauthn/server": "^13.3.0",
     "@types/multer": "^2.0.0",
     "cors": "^2.8.5",
     "dotenv": "^16.4.7",

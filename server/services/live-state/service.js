@@ -6,6 +6,7 @@
  */
 
 import { logInfo } from '../../utils/logger.js';
+import { decryptUserFields } from '../../utils/user-pii.js';
 
 /**
  * Get a single live state for a character in a session.
@@ -59,7 +60,7 @@ export const getAllLiveStates = async (client, { sessionId }) => {
       WHERE sls.session_id = $1`,
     [sessionId],
   );
-  return rows;
+  return decryptUserFields(rows, ['username']);
 };
 
 /**

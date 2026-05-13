@@ -21,6 +21,7 @@ import {
   MapPin,
   Play,
   Search,
+  Settings,
   Shield,
   Sword,
   Star,
@@ -124,6 +125,7 @@ interface DMDashboardProps {
   user: { id: string; username: string; email: string; roles: string[]; role?: string };
   onEnterGame: () => void;
   onLogout: () => void;
+  onOpenSettings?: () => void;
 }
 
 function isValidDate(value: unknown): value is string {
@@ -312,7 +314,7 @@ function getLocationIcon(type: string) {
   }
 }
 
-export function DMDashboard({ user, onEnterGame, onLogout }: DMDashboardProps) {
+export function DMDashboard({ user, onEnterGame, onLogout, onOpenSettings }: DMDashboardProps) {
   const [activeTab, setActiveTab] = useState("campaigns");
   const [campaigns, setCampaigns] = useState<DMCampaignSummary[]>([]);
   const [characters, setCharacters] = useState<CharacterProfile[]>([]);
@@ -530,6 +532,11 @@ export function DMDashboard({ user, onEnterGame, onLogout }: DMDashboardProps) {
               <Loader2 className="w-4 h-4 mr-1" />
               Refresh
             </Button>
+            {onOpenSettings && (
+              <Button variant="ghost" size="sm" onClick={onOpenSettings} title="Account settings">
+                <Settings className="w-4 h-4" />
+              </Button>
+            )}
             <Button variant="ghost" size="sm" onClick={onLogout}>
               <LogOut className="w-4 h-4" />
             </Button>

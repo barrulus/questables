@@ -27,10 +27,15 @@ END$$;
 -- =============================================================================
 -- USERS & AUTHENTICATION
 -- =============================================================================
+-- username / email hold AES-256-GCM ciphertext (see server/crypto.js).
+-- Uniqueness and login lookup go through the *_lookup HMAC columns instead of the CITEXT
+-- columns we used to rely on.
 CREATE TABLE IF NOT EXISTS public.user_profiles (
     id UUID DEFAULT uuid_generate_v4() PRIMARY KEY,
-    username CITEXT UNIQUE NOT NULL,
-    email CITEXT UNIQUE NOT NULL,
+    username TEXT NOT NULL,
+    username_lookup TEXT NOT NULL,
+    email TEXT NOT NULL,
+    email_lookup TEXT NOT NULL,
     password_hash TEXT,
     roles TEXT[] NOT NULL DEFAULT ARRAY['player']::TEXT[] CHECK (
         array_length(roles, 1) >= 1
@@ -43,9 +48,50 @@ CREATE TABLE IF NOT EXISTS public.user_profiles (
     updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW() NOT NULL,
     last_login TIMESTAMP WITH TIME ZONE
 );
-CREATE INDEX IF NOT EXISTS idx_user_profiles_username ON public.user_profiles(username);
-CREATE INDEX IF NOT EXISTS idx_user_profiles_email ON public.user_profiles(email);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_user_profiles_username_lookup ON public.user_profiles(username_lookup);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_user_profiles_email_lookup ON public.user_profiles(email_lookup);
 CREATE INDEX IF NOT EXISTS idx_user_profiles_roles ON public.user_profiles USING GIN (roles);
+
+CREATE TABLE IF NOT EXISTS public.webauthn_credentials (
+    id UUID DEFAULT uuid_generate_v4() PRIMARY KEY,
+    user_id UUID NOT NULL REFERENCES public.user_profiles(id) ON DELETE CASCADE,
+    credential_id TEXT NOT NULL UNIQUE,
+    public_key BYTEA NOT NULL,
+    counter BIGINT NOT NULL DEFAULT 0,
+    transports TEXT[],
+    device_name TEXT,
+    backup_eligible BOOLEAN NOT NULL DEFAULT false,
+    backup_state BOOLEAN NOT NULL DEFAULT false,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW() NOT NULL,
+    last_used_at TIMESTAMP WITH TIME ZONE
+);
+CREATE INDEX IF NOT EXISTS idx_webauthn_credentials_user_id ON public.webauthn_credentials(user_id);
+
+-- One-time tokens used to bind a freshly created (or re-enrolled) user to a new passkey.
+-- token_hash is sha256(plain_token); the plain token is only ever shown once via the admin UI.
+CREATE TABLE IF NOT EXISTS public.enrolment_tokens (
+    id UUID DEFAULT uuid_generate_v4() PRIMARY KEY,
+    user_id UUID NOT NULL REFERENCES public.user_profiles(id) ON DELETE CASCADE,
+    token_hash TEXT NOT NULL UNIQUE,
+    expires_at TIMESTAMP WITH TIME ZONE NOT NULL,
+    consumed_at TIMESTAMP WITH TIME ZONE,
+    created_by UUID REFERENCES public.user_profiles(id) ON DELETE SET NULL,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW() NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_enrolment_tokens_user_id ON public.enrolment_tokens(user_id);
+
+-- Transient challenge store for the in-flight registration / authentication ceremony.
+-- challenge_id is a random opaque value handed to the client; rows are short-lived (~5 min).
+CREATE TABLE IF NOT EXISTS public.webauthn_challenges (
+    id UUID DEFAULT uuid_generate_v4() PRIMARY KEY,
+    challenge_id TEXT NOT NULL UNIQUE,
+    user_id UUID REFERENCES public.user_profiles(id) ON DELETE CASCADE,
+    purpose TEXT NOT NULL CHECK (purpose IN ('registration', 'authentication')),
+    challenge TEXT NOT NULL,
+    expires_at TIMESTAMP WITH TIME ZONE NOT NULL,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW() NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_webauthn_challenges_expires_at ON public.webauthn_challenges(expires_at);
 DROP TRIGGER IF EXISTS _touch_user_profiles ON public.user_profiles;
 CREATE TRIGGER _touch_user_profiles
 BEFORE UPDATE ON public.user_profiles

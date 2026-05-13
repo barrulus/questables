@@ -18,6 +18,7 @@ import {
   AlertTriangle,
   ChevronLeft,
   ChevronRight,
+  Copy,
   KeyRound,
   MoreHorizontal,
   Pencil,
@@ -30,6 +31,7 @@ import {
   UserX,
 } from "lucide-react";
 import { Label } from "./ui/label";
+import { toast } from "sonner";
 import { apiFetch, readErrorMessage, readJsonBody } from "../utils/api-client";
 
 interface UserRecord {
@@ -45,6 +47,13 @@ interface UserRecord {
 interface ListUsersResponse {
   users: UserRecord[];
   total: number;
+}
+
+interface EnrolmentInfo {
+  url: string;
+  token: string;
+  expiresAt: string;
+  username: string;
 }
 
 const PAGE_SIZE = 25;
@@ -66,8 +75,8 @@ export function AdminUserManagement() {
   const [mutating, setMutating] = useState(false);
 
   const [createDialog, setCreateDialog] = useState<{
-    open: boolean; username: string; email: string; password: string; selectedRoles: string[];
-  }>({ open: false, username: "", email: "", password: "", selectedRoles: ["player"] });
+    open: boolean; username: string; email: string; selectedRoles: string[];
+  }>({ open: false, username: "", email: "", selectedRoles: ["player"] });
 
   const [editDialog, setEditDialog] = useState<{
     open: boolean; user: UserRecord | null; username: string; email: string; selectedRoles: string[];
@@ -77,9 +86,7 @@ export function AdminUserManagement() {
     open: boolean; user: UserRecord | null;
   }>({ open: false, user: null });
 
-  const [passwordDialog, setPasswordDialog] = useState<{
-    open: boolean; user: UserRecord | null; password: string;
-  }>({ open: false, user: null, password: "" });
+  const [enrolmentDialog, setEnrolmentDialog] = useState<EnrolmentInfo | null>(null);
 
   const loadUsers = useCallback(async () => {
     setLoading(true);
@@ -158,14 +165,20 @@ export function AdminUserManagement() {
         body: JSON.stringify({
           username: createDialog.username,
           email: createDialog.email,
-          password: createDialog.password,
           roles: createDialog.selectedRoles,
         }),
       });
       if (!response.ok) {
         throw new Error(await readErrorMessage(response, "Failed to create user"));
       }
-      setCreateDialog({ open: false, username: "", email: "", password: "", selectedRoles: ["player"] });
+      const created = await readJsonBody<UserRecord & { enrolment: { url: string; token: string; expiresAt: string } }>(response);
+      setEnrolmentDialog({
+        url: created.enrolment.url,
+        token: created.enrolment.token,
+        expiresAt: created.enrolment.expiresAt,
+        username: created.username,
+      });
+      setCreateDialog({ open: false, username: "", email: "", selectedRoles: ["player"] });
       await loadUsers();
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
@@ -218,23 +231,36 @@ export function AdminUserManagement() {
     }
   };
 
-  const handleResetPassword = async () => {
-    if (!passwordDialog.user) return;
+  const handleReenrol = async (user: UserRecord) => {
     setMutating(true);
     try {
-      const response = await apiFetch(`/api/admin/users/${passwordDialog.user.id}/reset-password`, {
+      const response = await apiFetch(`/api/admin/users/${user.id}/enrol`, {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ password: passwordDialog.password }),
       });
       if (!response.ok) {
-        throw new Error(await readErrorMessage(response, "Failed to reset password"));
+        throw new Error(await readErrorMessage(response, "Failed to issue enrolment link"));
       }
-      setPasswordDialog({ open: false, user: null, password: "" });
+      const data = await readJsonBody<{ url: string; token: string; expiresAt: string }>(response);
+      setEnrolmentDialog({
+        url: data.url,
+        token: data.token,
+        expiresAt: data.expiresAt,
+        username: user.username,
+      });
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
     } finally {
       setMutating(false);
+    }
+  };
+
+  const copyEnrolmentUrl = async () => {
+    if (!enrolmentDialog) return;
+    try {
+      await navigator.clipboard.writeText(enrolmentDialog.url);
+      toast.success("Enrolment URL copied");
+    } catch {
+      toast.error("Failed to copy — select the URL and copy it manually.");
     }
   };
 
@@ -263,7 +289,7 @@ export function AdminUserManagement() {
         <h2 className="text-xl font-semibold">User Management</h2>
         <div className="flex flex-wrap gap-2">
           <Button
-            onClick={() => setCreateDialog({ open: true, username: "", email: "", password: "", selectedRoles: ["player"] })}
+            onClick={() => setCreateDialog({ open: true, username: "", email: "", selectedRoles: ["player"] })}
           >
             <UserPlus className="w-4 h-4 mr-2" />
             Create User
@@ -381,11 +407,9 @@ export function AdminUserManagement() {
                               <Pencil className="w-4 h-4 mr-2" />
                               Edit user
                             </DropdownMenuItem>
-                            <DropdownMenuItem
-                              onClick={() => setPasswordDialog({ open: true, user: u, password: "" })}
-                            >
+                            <DropdownMenuItem onClick={() => handleReenrol(u)}>
                               <KeyRound className="w-4 h-4 mr-2" />
-                              Reset password
+                              Issue enrolment link
                             </DropdownMenuItem>
                             <DropdownMenuSeparator />
                             <DropdownMenuItem
@@ -452,12 +476,14 @@ export function AdminUserManagement() {
         </DialogContent>
       </Dialog>
 
-      {/* Create User Dialog */}
-      <Dialog open={createDialog.open} onOpenChange={(open) => { if (!open) setCreateDialog({ open: false, username: "", email: "", password: "", selectedRoles: ["player"] }); }}>
+      <Dialog open={createDialog.open} onOpenChange={(open) => { if (!open) setCreateDialog({ open: false, username: "", email: "", selectedRoles: ["player"] }); }}>
         <DialogContent>
           <DialogHeader>
             <DialogTitle>Create User</DialogTitle>
-            <DialogDescription>Create a new user account.</DialogDescription>
+            <DialogDescription>
+              Create a new account. You'll receive a one-time enrolment link to share with the user
+              so they can register a passkey.
+            </DialogDescription>
           </DialogHeader>
           <div className="space-y-4 py-4">
             <div className="space-y-2">
@@ -467,10 +493,6 @@ export function AdminUserManagement() {
             <div className="space-y-2">
               <Label htmlFor="create-email">Email</Label>
               <Input id="create-email" type="email" value={createDialog.email} onChange={(e) => setCreateDialog((prev) => ({ ...prev, email: e.target.value }))} />
-            </div>
-            <div className="space-y-2">
-              <Label htmlFor="create-password">Password</Label>
-              <Input id="create-password" type="password" value={createDialog.password} onChange={(e) => setCreateDialog((prev) => ({ ...prev, password: e.target.value }))} />
             </div>
             <div className="space-y-2">
               <Label>Roles</Label>
@@ -494,17 +516,16 @@ export function AdminUserManagement() {
             </div>
           </div>
           <DialogFooter>
-            <Button variant="outline" onClick={() => setCreateDialog({ open: false, username: "", email: "", password: "", selectedRoles: ["player"] })}>
+            <Button variant="outline" onClick={() => setCreateDialog({ open: false, username: "", email: "", selectedRoles: ["player"] })}>
               Cancel
             </Button>
-            <Button onClick={handleCreateUser} disabled={mutating || !createDialog.username.trim() || !createDialog.email.trim() || createDialog.password.length < 6}>
+            <Button onClick={handleCreateUser} disabled={mutating || !createDialog.username.trim() || !createDialog.email.trim()}>
               {mutating ? "Creating..." : "Create"}
             </Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>
 
-      {/* Edit User Dialog */}
       <Dialog open={editDialog.open} onOpenChange={(open) => { if (!open) setEditDialog({ open: false, user: null, username: "", email: "", selectedRoles: [] }); }}>
         <DialogContent>
           <DialogHeader>
@@ -552,7 +573,6 @@ export function AdminUserManagement() {
         </DialogContent>
       </Dialog>
 
-      {/* Delete Confirmation Dialog */}
       <Dialog open={deleteDialog.open} onOpenChange={(open) => { if (!open) setDeleteDialog({ open: false, user: null }); }}>
         <DialogContent>
           <DialogHeader>
@@ -572,24 +592,29 @@ export function AdminUserManagement() {
         </DialogContent>
       </Dialog>
 
-      {/* Password Reset Dialog */}
-      <Dialog open={passwordDialog.open} onOpenChange={(open) => { if (!open) setPasswordDialog({ open: false, user: null, password: "" }); }}>
+      <Dialog open={!!enrolmentDialog} onOpenChange={(open) => { if (!open) setEnrolmentDialog(null); }}>
         <DialogContent>
           <DialogHeader>
-            <DialogTitle>Reset password for {passwordDialog.user?.username}</DialogTitle>
-            <DialogDescription>Set a new password for this user.</DialogDescription>
+            <DialogTitle>Enrolment link for {enrolmentDialog?.username}</DialogTitle>
+            <DialogDescription>
+              Share this single-use link with the user. They'll open it to register a passkey and
+              sign in. The link expires {enrolmentDialog ? new Date(enrolmentDialog.expiresAt).toLocaleString() : ""}.
+            </DialogDescription>
           </DialogHeader>
-          <div className="space-y-2 py-4">
-            <Label htmlFor="reset-password">New password</Label>
-            <Input id="reset-password" type="password" value={passwordDialog.password} onChange={(e) => setPasswordDialog((prev) => ({ ...prev, password: e.target.value }))} />
+          <div className="space-y-3 py-2">
+            <Input
+              readOnly
+              value={enrolmentDialog?.url ?? ""}
+              onFocus={(e) => e.currentTarget.select()}
+              className="font-mono text-xs"
+            />
+            <Button onClick={copyEnrolmentUrl} className="w-full">
+              <Copy className="w-4 h-4 mr-2" />
+              Copy URL
+            </Button>
           </div>
           <DialogFooter>
-            <Button variant="outline" onClick={() => setPasswordDialog({ open: false, user: null, password: "" })}>
-              Cancel
-            </Button>
-            <Button onClick={handleResetPassword} disabled={mutating || passwordDialog.password.length < 6}>
-              {mutating ? "Resetting..." : "Reset password"}
-            </Button>
+            <Button onClick={() => setEnrolmentDialog(null)}>Done</Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>

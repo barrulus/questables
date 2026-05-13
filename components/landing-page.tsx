@@ -2,7 +2,6 @@ import { useState } from "react";
 import { Button } from "./ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "./ui/card";
 import { LoginModal } from "./login-modal";
-import { RegisterModal } from "./register-modal";
 import { Dice6, Shield, Users, Sword, Sparkles } from "lucide-react";
 
 interface LandingPageProps {
@@ -11,7 +10,6 @@ interface LandingPageProps {
 
 export function LandingPage({ onLogin }: LandingPageProps) {
   const [showLogin, setShowLogin] = useState(false);
-  const [showRegister, setShowRegister] = useState(false);
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-slate-900 via-purple-900 to-slate-900 relative overflow-hidden">
@@ -47,18 +45,11 @@ export function LandingPage({ onLogin }: LandingPageProps) {
               </div>
             </div>
             <div className="flex gap-3">
-              <Button 
-                variant="outline" 
+              <Button
                 onClick={() => setShowLogin(true)}
-                className="bg-white/10 border-white/20 text-white hover:bg-white/20"
-              >
-                Login
-              </Button>
-              <Button 
-                onClick={() => setShowRegister(true)}
                 className="bg-gradient-to-r from-purple-600 to-blue-600 hover:from-purple-700 hover:to-blue-700 text-white border-0"
               >
-                Get Started
+                Sign in with passkey
               </Button>
             </div>
           </div>
@@ -85,20 +76,12 @@ export function LandingPage({ onLogin }: LandingPageProps) {
               </p>
               
               <div className="flex flex-col sm:flex-row gap-4 justify-center">
-                <Button 
+                <Button
                   size="lg"
-                  onClick={() => setShowRegister(true)}
+                  onClick={() => setShowLogin(true)}
                   className="bg-gradient-to-r from-purple-600 to-blue-600 hover:from-purple-700 hover:to-blue-700 text-white border-0 px-8 py-3"
                 >
-                  Start Your Adventure
-                </Button>
-                <Button 
-                  size="lg"
-                  variant="outline"
-                  onClick={() => setShowLogin(true)}
-                  className="bg-white/10 border-white/20 text-white hover:bg-white/20 px-8 py-3"
-                >
-                  Continue Playing
+                  Sign in with passkey
                 </Button>
               </div>
             </div>
@@ -172,14 +155,14 @@ export function LandingPage({ onLogin }: LandingPageProps) {
             <div className="bg-gradient-to-r from-purple-600/20 to-blue-600/20 border border-purple-500/30 rounded-2xl p-8">
               <h3 className="text-2xl font-bold text-white mb-4">Ready to Begin Your Quest?</h3>
               <p className="text-gray-300 mb-6">
-                Join thousands of adventurers already using our platform to create unforgettable D&D experiences.
+                Sign in with the passkey registered on your device. New accounts are issued by an administrator.
               </p>
-              <Button 
+              <Button
                 size="lg"
-                onClick={() => setShowRegister(true)}
+                onClick={() => setShowLogin(true)}
                 className="bg-gradient-to-r from-purple-600 to-blue-600 hover:from-purple-700 hover:to-blue-700 text-white border-0 px-8 py-3"
               >
-                Create Your Account
+                Sign in with passkey
               </Button>
             </div>
           </div>
@@ -201,23 +184,10 @@ export function LandingPage({ onLogin }: LandingPageProps) {
       </div>
 
       {/* Modals */}
-      <LoginModal 
-        open={showLogin} 
+      <LoginModal
+        open={showLogin}
         onOpenChange={setShowLogin}
         onLogin={onLogin}
-        onSwitchToRegister={() => {
-          setShowLogin(false);
-          setShowRegister(true);
-        }}
-      />
-      <RegisterModal 
-        open={showRegister} 
-        onOpenChange={setShowRegister}
-        onRegister={onLogin}
-        onSwitchToLogin={() => {
-          setShowRegister(false);
-          setShowLogin(true);
-        }}
       />
     </div>
   );

@@ -1,19 +1,30 @@
 import { query } from '../../db/pool.js';
-import { hashPassword } from '../../auth-middleware.js';
+import { decryptField, encryptField, hmacLookup } from '../../crypto.js';
+import { createEnrolmentToken } from '../auth/webauthn.js';
+
+const decryptUserRow = (row) => {
+  if (!row) return row;
+  return {
+    ...row,
+    username: decryptField(row.username),
+    email: decryptField(row.email),
+  };
+};
+
+const matchesSearch = (row, term) => {
+  if (!term) return true;
+  const haystack = `${row.username ?? ''} ${row.email ?? ''}`.toLowerCase();
+  return haystack.includes(term);
+};
 
 /**
  * List users with optional search, status filter, and pagination.
+ * Search runs in Node (post-decrypt) since email/username are encrypted at rest.
  */
 export async function listUsers({ search, status, limit = 25, offset = 0 } = {}) {
   const conditions = [];
   const params = [];
   let paramIndex = 1;
-
-  if (search && typeof search === 'string' && search.trim()) {
-    conditions.push(`(username ILIKE $${paramIndex} OR email ILIKE $${paramIndex})`);
-    params.push(`%${search.trim()}%`);
-    paramIndex++;
-  }
 
   if (status && typeof status === 'string' && status.trim()) {
     conditions.push(`status = $${paramIndex}`);
@@ -23,23 +34,22 @@ export async function listUsers({ search, status, limit = 25, offset = 0 } = {})
 
   const whereClause = conditions.length > 0 ? `WHERE ${conditions.join(' AND ')}` : '';
 
-  const countResult = await query(
-    `SELECT COUNT(*)::int AS total FROM user_profiles ${whereClause}`,
-    params
-  );
-
-  const total = countResult.rows[0]?.total ?? 0;
-
   const dataResult = await query(
     `SELECT id, username, email, roles, status, created_at, last_login
        FROM user_profiles
        ${whereClause}
-      ORDER BY created_at DESC
-      LIMIT $${paramIndex} OFFSET $${paramIndex + 1}`,
-    [...params, limit, offset]
+      ORDER BY created_at DESC`,
+    params,
   );
 
-  return { users: dataResult.rows, total };
+  const decrypted = dataResult.rows.map(decryptUserRow);
+  const term = typeof search === 'string' ? search.trim().toLowerCase() : '';
+  const filtered = term ? decrypted.filter((row) => matchesSearch(row, term)) : decrypted;
+
+  const total = filtered.length;
+  const paged = filtered.slice(offset, offset + limit);
+
+  return { users: paged, total };
 }
 
 /**
@@ -50,30 +60,26 @@ export async function getUserDetail(userId) {
     `SELECT id, username, email, roles, status, avatar_url, timezone, created_at, updated_at, last_login
        FROM user_profiles
       WHERE id = $1`,
-    [userId]
+    [userId],
   );
 
   if (userResult.rows.length === 0) {
     return null;
   }
 
-  const user = userResult.rows[0];
+  const user = decryptUserRow(userResult.rows[0]);
 
-  const [campaignCount, characterCount] = await Promise.all([
-    query(
-      `SELECT COUNT(*)::int AS count FROM campaign_players WHERE user_id = $1`,
-      [userId]
-    ),
-    query(
-      `SELECT COUNT(*)::int AS count FROM characters WHERE user_id = $1`,
-      [userId]
-    ),
+  const [campaignCount, characterCount, passkeyCount] = await Promise.all([
+    query(`SELECT COUNT(*)::int AS count FROM campaign_players WHERE user_id = $1`, [userId]),
+    query(`SELECT COUNT(*)::int AS count FROM characters WHERE user_id = $1`, [userId]),
+    query(`SELECT COUNT(*)::int AS count FROM webauthn_credentials WHERE user_id = $1`, [userId]),
   ]);
 
   return {
     ...user,
     campaignCount: campaignCount.rows[0]?.count ?? 0,
     characterCount: characterCount.rows[0]?.count ?? 0,
+    passkeyCount: passkeyCount.rows[0]?.count ?? 0,
   };
 }
 
@@ -93,14 +99,14 @@ export async function updateUserStatus(userId, status, adminId) {
   const result = await query(
     `UPDATE user_profiles SET status = $1, updated_at = NOW() WHERE id = $2
      RETURNING id, username, email, roles, status`,
-    [status, userId]
+    [status, userId],
   );
 
   if (result.rows.length === 0) {
     throw Object.assign(new Error('User not found'), { status: 404 });
   }
 
-  return result.rows[0];
+  return decryptUserRow(result.rows[0]);
 }
 
 /**
@@ -124,28 +130,26 @@ export async function updateUserRoles(userId, roles, adminId) {
   const result = await query(
     `UPDATE user_profiles SET roles = $1, updated_at = NOW() WHERE id = $2
      RETURNING id, username, email, roles, status`,
-    [roles, userId]
+    [roles, userId],
   );
 
   if (result.rows.length === 0) {
     throw Object.assign(new Error('User not found'), { status: 404 });
   }
 
-  return result.rows[0];
+  return decryptUserRow(result.rows[0]);
 }
 
 /**
- * Create a new user.
+ * Create a new user. With passkey-only auth there is no password — we return an
+ * enrolment token URL fragment that the admin will hand to the new user.
  */
-export async function createUser({ username, email, password, roles }) {
+export async function createUser({ username, email, roles }, adminId) {
   if (!username || typeof username !== 'string' || !username.trim()) {
     throw Object.assign(new Error('Username is required'), { status: 400 });
   }
   if (!email || typeof email !== 'string' || !email.trim()) {
     throw Object.assign(new Error('Email is required'), { status: 400 });
-  }
-  if (!password || typeof password !== 'string' || password.length < 6) {
-    throw Object.assign(new Error('Password must be at least 6 characters'), { status: 400 });
   }
 
   const validRoles = ['player', 'dm', 'admin'];
@@ -154,24 +158,37 @@ export async function createUser({ username, email, password, roles }) {
     : ['player'];
   if (normalizedRoles.length === 0) normalizedRoles.push('player');
 
+  const trimmedUsername = username.trim();
+  const trimmedEmail = email.trim();
+  const usernameLookup = hmacLookup(trimmedUsername);
+  const emailLookup = hmacLookup(trimmedEmail);
+
   const existing = await query(
-    `SELECT id FROM user_profiles WHERE LOWER(email) = LOWER($1) OR LOWER(username) = LOWER($2)`,
-    [email.trim(), username.trim()]
+    `SELECT id FROM user_profiles WHERE email_lookup = $1 OR username_lookup = $2`,
+    [emailLookup, usernameLookup],
   );
   if (existing.rows.length > 0) {
     throw Object.assign(new Error('A user with that email or username already exists'), { status: 409 });
   }
 
-  const passwordHash = await hashPassword(password);
-
   const result = await query(
-    `INSERT INTO user_profiles (username, email, password_hash, roles, status, created_at, updated_at)
-     VALUES ($1, $2, $3, $4, 'active', NOW(), NOW())
+    `INSERT INTO user_profiles
+       (username, username_lookup, email, email_lookup, roles, status, created_at, updated_at)
+     VALUES ($1, $2, $3, $4, $5, 'active', NOW(), NOW())
      RETURNING id, username, email, roles, status, created_at, last_login`,
-    [username.trim(), email.trim(), passwordHash, normalizedRoles]
+    [
+      encryptField(trimmedUsername),
+      usernameLookup,
+      encryptField(trimmedEmail),
+      emailLookup,
+      normalizedRoles,
+    ],
   );
 
-  return result.rows[0];
+  const created = decryptUserRow(result.rows[0]);
+  const enrolment = await createEnrolmentToken({ userId: created.id, createdBy: adminId });
+
+  return { ...created, enrolment };
 }
 
 /**
@@ -183,12 +200,18 @@ export async function updateUser(userId, { username, email, roles }, adminId) {
   let paramIndex = 1;
 
   if (username !== undefined) {
+    const trimmed = username.trim();
     sets.push(`username = $${paramIndex++}`);
-    params.push(username.trim());
+    params.push(encryptField(trimmed));
+    sets.push(`username_lookup = $${paramIndex++}`);
+    params.push(hmacLookup(trimmed));
   }
   if (email !== undefined) {
+    const trimmed = email.trim();
     sets.push(`email = $${paramIndex++}`);
-    params.push(email.trim());
+    params.push(encryptField(trimmed));
+    sets.push(`email_lookup = $${paramIndex++}`);
+    params.push(hmacLookup(trimmed));
   }
   if (roles !== undefined) {
     const validRoles = ['player', 'dm', 'admin'];
@@ -213,14 +236,14 @@ export async function updateUser(userId, { username, email, roles }, adminId) {
   const result = await query(
     `UPDATE user_profiles SET ${sets.join(', ')} WHERE id = $${paramIndex}
      RETURNING id, username, email, roles, status, created_at, last_login`,
-    params
+    params,
   );
 
   if (result.rows.length === 0) {
     throw Object.assign(new Error('User not found'), { status: 404 });
   }
 
-  return result.rows[0];
+  return decryptUserRow(result.rows[0]);
 }
 
 /**
@@ -233,39 +256,24 @@ export async function deleteUser(userId, adminId) {
 
   const result = await query(
     `DELETE FROM user_profiles WHERE id = $1 RETURNING id, username`,
-    [userId]
+    [userId],
   );
 
   if (result.rows.length === 0) {
     throw Object.assign(new Error('User not found'), { status: 404 });
   }
 
-  return result.rows[0];
+  return { id: result.rows[0].id, username: decryptField(result.rows[0].username) };
 }
 
 /**
- * Reset a user's password (admin action).
+ * Issue a fresh enrolment token for a user. Use when a user has lost all their
+ * passkeys (or for the initial onboarding of an existing account).
  */
-export async function resetUserPassword(userId, newPassword, adminId) {
-  if (!newPassword || typeof newPassword !== 'string' || newPassword.length < 6) {
-    throw Object.assign(new Error('Password must be at least 6 characters'), { status: 400 });
-  }
-
-  if (userId === adminId) {
-    throw Object.assign(new Error('Use account settings to change your own password'), { status: 400 });
-  }
-
-  const passwordHash = await hashPassword(newPassword);
-
-  const result = await query(
-    `UPDATE user_profiles SET password_hash = $1, updated_at = NOW() WHERE id = $2
-     RETURNING id, username`,
-    [passwordHash, userId]
-  );
-
-  if (result.rows.length === 0) {
+export async function issueEnrolmentToken(userId, adminId) {
+  const exists = await query(`SELECT id FROM user_profiles WHERE id = $1`, [userId]);
+  if (exists.rows.length === 0) {
     throw Object.assign(new Error('User not found'), { status: 404 });
   }
-
-  return result.rows[0];
+  return createEnrolmentToken({ userId, createdBy: adminId });
 }

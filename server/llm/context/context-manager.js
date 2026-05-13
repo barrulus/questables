@@ -1,6 +1,7 @@
 import { LLMServiceError } from '../errors.js';
 import { buildGeographicContext } from './geographic-context-builder.js';
 import { cardinalGateName } from '../../services/movement/cardinal-names.js';
+import { decryptUserFields } from '../../utils/user-pii.js';
 
 const parseJson = (value, fallback) => {
   if (value === null || value === undefined) {
@@ -381,7 +382,7 @@ export class LLMContextManager {
         WHERE c.id = $1`,
       [campaignId]
     );
-    return mapCampaignRow(result.rows[0]);
+    return mapCampaignRow(decryptUserFields(result.rows[0], ['dm_username', 'dm_email']));
   }
 
   async #loadSession(client, { campaignId, sessionId }) {
@@ -450,7 +451,7 @@ export class LLMContextManager {
       [session.id]
     );
 
-    const participants = participantResult.rows.map((participantRow) => ({
+    const participants = decryptUserFields(participantResult.rows, ['username', 'email']).map((participantRow) => ({
       character: mapCharacterRow(participantRow),
       player: mapPlayerRow(participantRow),
       attendanceStatus: participantRow.attendance_status,
@@ -507,7 +508,7 @@ export class LLMContextManager {
       session?.participants?.map((participant) => participant.character.id) ?? []
     );
 
-    return result.rows.map((row) => ({
+    return decryptUserFields(result.rows, ['username', 'email']).map((row) => ({
       character: mapCharacterRow(row),
       player: mapPlayerRow(row),
       status: row.status,
@@ -727,7 +728,7 @@ export class LLMContextManager {
         LIMIT $${params.length}`,
       params,
     );
-    return rows.map(mapChatMessageRow);
+    return decryptUserFields(rows, ['username']).map(mapChatMessageRow);
   }
 
   async #loadWorldLore(client, campaignId, geographic) {

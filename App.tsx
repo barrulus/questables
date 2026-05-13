@@ -25,8 +25,10 @@ import { TurnBanner } from "./components/game-state/turn-banner";
 import { ActionPanel } from "./components/action-panel/action-panel";
 import { LiveStateBar } from "./components/live-state/live-state-bar";
 import { CharacterCreationWizard } from "./components/character-wizard/character-creation-wizard";
+import { EnrolPage } from "./components/enrol-page";
+import { UserSettingsPage } from "./components/user-settings-page";
 
-type AppState = "landing" | "dashboard" | "game" | "character-create";
+type AppState = "landing" | "dashboard" | "game" | "character-create" | "settings" | "enrol";
 type DashboardView = "player" | "dm" | "admin";
 
 interface DashboardNavItem {
@@ -47,7 +49,15 @@ function AppContent() {
     error: campaignError,
     refreshActiveCampaign,
   } = useGameSession();
-  const [appState, setAppState] = useState<AppState>("landing");
+  const initialPath = typeof window !== "undefined" ? window.location.pathname : "/";
+  const enrolMatch = initialPath.match(/^\/enrol\/([^/]+)$/);
+  const isSettingsPath = initialPath === "/settings";
+  const [enrolToken, setEnrolToken] = useState<string | null>(enrolMatch ? enrolMatch[1] : null);
+  const [appState, setAppState] = useState<AppState>(() => {
+    if (enrolMatch) return "enrol";
+    if (isSettingsPath) return "settings";
+    return "landing";
+  });
   const [activePanel, setActivePanel] = useState<string | null>(null);
   const [activeDashboard, setActiveDashboard] = useState<DashboardView>("player");
 
@@ -87,11 +97,16 @@ function AppContent() {
   const userId = user?.id;
 
   useEffect(() => {
+    if (appState === "enrol") {
+      // Stay on the enrolment page until the user explicitly continues.
+      return;
+    }
+
     if (user && appState === "landing") {
       setAppState("dashboard");
     }
 
-    if (!user && appState !== "landing") {
+    if (!user && appState !== "landing" && appState !== "settings") {
       setAppState("landing");
       setActivePanel(null);
       setActiveDashboard("player");
@@ -124,6 +139,31 @@ function AppContent() {
     setAppState("landing");
     setActivePanel(null);
     setActiveDashboard("player");
+    if (typeof window !== "undefined" && window.location.pathname !== "/") {
+      window.history.replaceState({}, "", "/");
+    }
+  };
+
+  const handleEnrolComplete = () => {
+    setEnrolToken(null);
+    setAppState("dashboard");
+    if (typeof window !== "undefined") {
+      window.history.replaceState({}, "", "/");
+    }
+  };
+
+  const handleOpenSettings = () => {
+    setAppState("settings");
+    if (typeof window !== "undefined") {
+      window.history.pushState({}, "", "/settings");
+    }
+  };
+
+  const handleCloseSettings = () => {
+    setAppState("dashboard");
+    if (typeof window !== "undefined") {
+      window.history.replaceState({}, "", "/");
+    }
   };
 
   const handleEnterGame = () => {
@@ -147,9 +187,18 @@ function AppContent() {
     );
   }
 
+  // Public enrolment page (deep link from admin) — bypasses login gate.
+  if (appState === "enrol" && enrolToken) {
+    return <EnrolPage token={enrolToken} onComplete={handleEnrolComplete} />;
+  }
+
   // Landing page (pre-login) or if no user
   if (appState === "landing" || !user) {
     return <LandingPage onLogin={handleLogin} />;
+  }
+
+  if (appState === "settings" && user) {
+    return <UserSettingsPage onBack={handleCloseSettings} />;
   }
 
   // Dashboard view (post-login, pre-game)
@@ -163,13 +212,14 @@ function AppContent() {
                 user={user}
                 onEnterGame={handleEnterGame}
                 onLogout={handleLogout}
+                onOpenSettings={handleOpenSettings}
               />
             );
           }
           break;
         case "admin":
           if (user.roles?.includes("admin")) {
-            return <AdminDashboard user={user} onLogout={handleLogout} />;
+            return <AdminDashboard user={user} onLogout={handleLogout} onOpenSettings={handleOpenSettings} />;
           }
           break;
         case "player":
@@ -183,6 +233,7 @@ function AppContent() {
           onEnterGame={handleEnterGame}
           onLogout={handleLogout}
           onCreateCharacter={() => setAppState("character-create")}
+          onOpenSettings={handleOpenSettings}
         />
       );
     };

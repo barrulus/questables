@@ -1,4 +1,5 @@
 import { query } from '../../db/pool.js';
+import { decryptField, encryptField, hmacLookup } from '../../crypto.js';
 import { logError } from '../../utils/logger.js';
 
 const sanitizeRoles = (roles) => {
@@ -28,8 +29,8 @@ const mapUserRow = (row) => {
 
   return {
     id: row.id,
-    username: row.username,
-    email: row.email,
+    username: decryptField(row.username),
+    email: decryptField(row.email),
     roles: sanitizeRoles(row.roles),
     status: row.status,
     avatar_url: row.avatar_url ?? null,
@@ -107,6 +108,14 @@ export const updateUserProfile = async (userId, updates) => {
 
     const value = coerceUpdateValue(pgColumn, normalizedUpdates[key]);
     if (value === undefined) {
+      continue;
+    }
+
+    if (pgColumn === 'username') {
+      assignments.push(`username = $${assignments.length + 1}`);
+      values.push(encryptField(value));
+      assignments.push(`username_lookup = $${assignments.length + 1}`);
+      values.push(hmacLookup(value));
       continue;
     }
 

@@ -2,6 +2,7 @@ import { Router } from 'express';
 import { requireAuth, requireRole } from '../auth-middleware.js';
 import { logError, logInfo } from '../utils/logger.js';
 import { query } from '../db/pool.js';
+import { decryptUserFields } from '../utils/user-pii.js';
 
 const router = Router();
 
@@ -82,7 +83,7 @@ router.get('/api/admin/moderation/reports', requireAuth, requireRole('admin'), a
     );
 
     res.json({
-      reports: rows,
+      reports: decryptUserFields(rows, ['reporter_username', 'reported_username', 'resolved_by_username']),
       total: countResult.rows[0]?.total ?? 0,
     });
   } catch (error) {

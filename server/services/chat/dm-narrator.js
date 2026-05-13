@@ -7,6 +7,7 @@
  */
 import { query } from '../../db/pool.js';
 import { logInfo, logError } from '../../utils/logger.js';
+import { decryptUserFields } from '../../utils/user-pii.js';
 import { extractAndPersistLore } from '../world-building/lore-extractor.js';
 import { extractAndPersistNpcs } from '../world-building/npc-extractor.js';
 
@@ -93,7 +94,7 @@ export async function postNarrationToChat({
       { label: 'dm-narrator.post' },
     );
 
-    const message = rows[0] ?? null;
+    const message = decryptUserFields(rows[0] ?? null, ['username']);
 
     if (message && wsServer) {
       // Broadcast to all campaign participants via the standard new-message event
@@ -215,7 +216,7 @@ export async function postPrivateNarration({
       { label: 'dm-narrator.post-private' },
     );
 
-    const message = rows[0] ?? null;
+    const message = decryptUserFields(rows[0] ?? null, ['username']);
 
     if (message && wsServer) {
       const messageData = {

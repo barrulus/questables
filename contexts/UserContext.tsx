@@ -1,7 +1,7 @@
 import { createContext, useContext, useState, useEffect, ReactNode, useCallback } from 'react';
 import { User } from '../utils/database/data-structures';
 import { fetchCurrentUser, updateCurrentUser } from '../utils/api/users';
-import { login as authenticate } from '../utils/api/auth';
+import { loginWithPasskey } from '../utils/api/passkey';
 import { AUTH_LOGOUT_EVENT } from '../utils/api-client';
 
 const USER_STORAGE_KEY = 'dnd-user';
@@ -58,7 +58,8 @@ const normalizeUser = (rawUser: RawUser): User => {
 interface UserContextType {
   user: User | null;
   authToken: string | null;
-  login: (_email: string, _password?: string) => Promise<User>;
+  login: () => Promise<User>;
+  loginWithSession: (user: User, token: string) => void;
   logout: () => void;
   loading: boolean;
   error: string | null;
@@ -131,27 +132,23 @@ export function UserProvider({ children }: UserProviderProps) {
     }
   };
 
-  const login = async (_email: string, _password?: string): Promise<User> => {
-    const email = _email;
-    const password = _password;
-    const credentials = { email, password };
+  const persistSession = useCallback((nextUser: User, token: string) => {
+    setUser(nextUser);
+    setAuthToken(token);
+    if (typeof window !== 'undefined') {
+      localStorage.setItem(USER_STORAGE_KEY, JSON.stringify(nextUser));
+      localStorage.setItem(TOKEN_STORAGE_KEY, token);
+    }
+  }, []);
+
+  const login = async (): Promise<User> => {
     try {
       setLoading(true);
       setError(null);
 
-      // Call authentication endpoint
-      const { user: authenticatedUser, token } = await authenticate(credentials);
-
+      const { user: authenticatedUser, token } = await loginWithPasskey();
       const loggedInUser = normalizeUser(authenticatedUser);
-      setUser(loggedInUser);
-      setAuthToken(token);
-      
-      // Store user in localStorage for session persistence
-      if (typeof window !== 'undefined') {
-        localStorage.setItem(USER_STORAGE_KEY, JSON.stringify(loggedInUser));
-        localStorage.setItem(TOKEN_STORAGE_KEY, token);
-      }
-      
+      persistSession(loggedInUser, token);
       return loggedInUser;
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : 'Login failed';
@@ -161,6 +158,11 @@ export function UserProvider({ children }: UserProviderProps) {
       setLoading(false);
     }
   };
+
+  const loginWithSession = useCallback((nextUser: User, token: string) => {
+    const normalized = normalizeUser(nextUser);
+    persistSession(normalized, token);
+  }, [persistSession]);
 
   const logout = useCallback(() => {
     setUser(null);
@@ -220,6 +222,7 @@ export function UserProvider({ children }: UserProviderProps) {
     user,
     authToken,
     login,
+    loginWithSession,
     logout,
     loading,
     error,

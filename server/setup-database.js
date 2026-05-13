@@ -5,7 +5,8 @@ import { readFileSync, existsSync } from "fs";
 import { join, dirname } from "path";
 import { fileURLToPath } from "url";
 import dotenv from "dotenv";
-import { hashPassword } from "./auth-middleware.js";
+import { encryptField, hmacLookup, isEncryptionEnabled } from "./crypto.js";
+import { migrateUserPii } from "./migrations/encrypt-user-pii.js";
 
 // Load env from server and repo root, preferring .env.local
 const __filename = fileURLToPath(import.meta.url);
@@ -75,34 +76,49 @@ async function setupDatabase() {
       }
     }
 
-    // Create or update default admin user using the same bcrypt helper
-    // as the HTTP auth layer so login works consistently.
-    console.log("Creating default admin user...");
+    if (isEncryptionEnabled()) {
+      console.log("Running PII encryption migration...");
+      await migrateUserPii(client);
+      console.log("✓ PII encryption migration complete");
+    } else {
+      console.warn(
+        "⚠ ENCRYPTION_KEY not set — skipping PII migration. Set it before deploying."
+      );
+    }
+
+    // Ensure a default admin user exists so an operator has someone to issue an
+    // enrolment link to. Passkey-only auth means we leave password_hash null;
+    // run `npm run enrol-admin <username>` to bind a passkey.
+    console.log("Ensuring default admin user...");
     const defaultAdminUsername = process.env.DEFAULT_ADMIN_USERNAME || "admin";
     const defaultAdminEmail =
       process.env.DEFAULT_ADMIN_EMAIL || "admin@localhost";
-    const defaultAdminPassword =
-      process.env.DEFAULT_ADMIN_PASSWORD || "admin123";
 
     try {
-      const passwordHash = await hashPassword(defaultAdminPassword);
-
-      const upsertResult = await client.query(
-        `INSERT INTO user_profiles (username, email, password_hash, roles, status)
-         VALUES ($1, $2, $3, ARRAY['admin','dm','player']::TEXT[], 'active')
-         ON CONFLICT (email) DO UPDATE
-           SET username = EXCLUDED.username,
-               password_hash = EXCLUDED.password_hash,
-               roles = EXCLUDED.roles,
-               status = 'active'
-         RETURNING id`,
-        [defaultAdminUsername, defaultAdminEmail, passwordHash]
+      const emailLookup = hmacLookup(defaultAdminEmail);
+      const existing = await client.query(
+        `SELECT id FROM user_profiles WHERE email_lookup = $1 LIMIT 1`,
+        [emailLookup]
       );
 
-      const action = upsertResult.command === "INSERT" ? "created" : "updated";
-      console.log(
-        `✓ Default admin user ${action} (${defaultAdminEmail} / ${defaultAdminPassword})`
-      );
+      if (existing.rows.length === 0) {
+        await client.query(
+          `INSERT INTO user_profiles (username, username_lookup, email, email_lookup, password_hash, roles, status)
+           VALUES ($1, $2, $3, $4, NULL, ARRAY['admin','dm','player']::TEXT[], 'active')`,
+          [
+            encryptField(defaultAdminUsername),
+            hmacLookup(defaultAdminUsername),
+            encryptField(defaultAdminEmail),
+            emailLookup,
+          ]
+        );
+        console.log(`✓ Default admin user created (${defaultAdminEmail})`);
+        console.log(
+          `  Run: npm run enrol-admin ${defaultAdminUsername}   # to issue an enrolment link`
+        );
+      } else {
+        console.log(`✓ Default admin user already exists (${defaultAdminEmail})`);
+      }
     } catch (error) {
       console.log(
         "ℹ Default admin user setup error:",

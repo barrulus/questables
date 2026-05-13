@@ -5,6 +5,7 @@
  */
 
 import { logInfo, logError, logWarn } from '../../utils/logger.js';
+import { decryptUserFields } from '../../utils/user-pii.js';
 import { NARRATIVE_TYPES } from '../../llm/narrative-types.js';
 import { DM_RESPONSE_SCHEMA } from '../../llm/schemas/dm-response-schema.js';
 import {
@@ -60,7 +61,7 @@ export const buildActionContext = async (client, {
   const campaign = campaignRows[0] ?? {};
 
   // Other player characters in the same campaign (active, with location)
-  const { rows: otherPlayers } = await client.query(
+  const { rows: otherPlayersRaw } = await client.query(
     `SELECT ch.name AS character_name, ch.class AS character_class, ch.level AS character_level,
             ch.race AS character_race, up.username,
             ST_X(cp.loc_current) AS loc_x, ST_Y(cp.loc_current) AS loc_y,
@@ -71,6 +72,7 @@ export const buildActionContext = async (client, {
       WHERE cp.campaign_id = $1 AND cp.status = 'active' AND cp.character_id != $2`,
     [campaignId, characterId],
   );
+  const otherPlayers = decryptUserFields(otherPlayersRaw, ['username']);
 
   // Resolve the acting player's geographic location AND current scene
   const { rows: playerLocRows } = await client.query(

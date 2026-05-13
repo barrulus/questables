@@ -19,6 +19,7 @@ import {
   Info,
   Play,
   Search,
+  Settings,
   Star,
   User,
   UserPlus,
@@ -30,6 +31,7 @@ import { hasCampaignDescription, parseJsonField, getStatusColor, getStatusBadgeV
 import { useGameSession } from "../contexts/GameSessionContext";
 
 interface PlayerDashboardProps {
+  onOpenSettings?: () => void;
   user: { id: string; username: string; email: string; roles: string[]; role?: string };
   onEnterGame: () => void;
   onLogout: () => void;
@@ -352,7 +354,7 @@ const formatDate = (value?: string | null) => {
 };
 
 
-export function PlayerDashboard({ user, onEnterGame, onLogout, onCreateCharacter }: PlayerDashboardProps) {
+export function PlayerDashboard({ user, onEnterGame, onLogout, onCreateCharacter, onOpenSettings }: PlayerDashboardProps) {
   const [characters, setCharacters] = useState<PlayerCharacter[]>([]);
   const [playerCampaigns, setPlayerCampaigns] = useState<PlayerCampaign[]>([]);
   const [publicCampaigns, setPublicCampaigns] = useState<PlayerCampaign[]>([]);
@@ -713,6 +715,11 @@ export function PlayerDashboard({ user, onEnterGame, onLogout, onCreateCharacter
               <Play className="w-4 h-4 mr-1" />
               Enter Game
             </Button>
+            {onOpenSettings && (
+              <Button variant="ghost" size="sm" onClick={onOpenSettings} title="Account settings">
+                <Settings className="w-4 h-4" />
+              </Button>
+            )}
             <Button variant="ghost" size="sm" onClick={onLogout}>
               <LogOut className="w-4 h-4" />
             </Button>

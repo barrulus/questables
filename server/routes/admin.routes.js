@@ -9,12 +9,17 @@ import {
   createUser,
   updateUser,
   deleteUser,
-  resetUserPassword,
+  issueEnrolmentToken,
 } from '../services/admin/users.js';
 
 const router = Router();
 
 router.use(requireAuth, requireRole('admin'));
+
+const buildEnrolmentUrl = (req, token) => {
+  const base = process.env.WEBAUTHN_ORIGIN?.split(',')[0]?.trim() || `${req.protocol}://${req.get('host')}`;
+  return `${base.replace(/\/$/, '')}/enrol/${token}`;
+};
 
 router.get('/users', async (req, res) => {
   try {
@@ -83,14 +88,21 @@ router.patch('/users/:userId/roles', async (req, res) => {
 
 router.post('/users', async (req, res) => {
   try {
-    const { username, email, password, roles } = req.body ?? {};
-    const user = await createUser({ username, email, password, roles });
+    const { username, email, roles } = req.body ?? {};
+    const user = await createUser({ username, email, roles }, req.user.id);
     logInfo('Admin created user', {
       telemetryEvent: 'admin.user.create',
       adminId: req.user.id,
       newUserId: user.id,
     });
-    res.status(201).json(user);
+    res.status(201).json({
+      ...user,
+      enrolment: {
+        token: user.enrolment.token,
+        expiresAt: user.enrolment.expiresAt,
+        url: buildEnrolmentUrl(req, user.enrolment.token),
+      },
+    });
   } catch (error) {
     const statusCode = error.status || 500;
     logError('Failed to create user', error);
@@ -142,20 +154,23 @@ router.delete('/users/:userId', async (req, res) => {
   }
 });
 
-router.post('/users/:userId/reset-password', async (req, res) => {
+router.post('/users/:userId/enrol', async (req, res) => {
   try {
-    const { password } = req.body ?? {};
-    const result = await resetUserPassword(req.params.userId, password, req.user.id);
-    logInfo('Admin reset user password', {
-      telemetryEvent: 'admin.user.password_reset',
+    const token = await issueEnrolmentToken(req.params.userId, req.user.id);
+    logInfo('Admin issued enrolment token', {
+      telemetryEvent: 'admin.user.enrolment_issued',
       adminId: req.user.id,
       targetUserId: req.params.userId,
     });
-    res.json({ success: true, ...result });
+    res.json({
+      token: token.token,
+      expiresAt: token.expiresAt,
+      url: buildEnrolmentUrl(req, token.token),
+    });
   } catch (error) {
     const statusCode = error.status || 500;
-    logError('Failed to reset user password', error);
-    res.status(statusCode).json({ error: error.message || 'Failed to reset password' });
+    logError('Failed to issue enrolment token', error);
+    res.status(statusCode).json({ error: error.message || 'Failed to issue enrolment token' });
   }
 });
 

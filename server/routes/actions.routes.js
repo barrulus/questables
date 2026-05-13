@@ -27,6 +27,7 @@ import { logError, logInfo } from '../utils/logger.js';
 import { postNarrationToChat, postPrivateNarration } from '../services/chat/dm-narrator.js';
 import { endTurn, getGameState } from '../services/game-state/service.js';
 import { fireWorldTurnIfPending } from '../services/narration/proactive-narrator.js';
+import { decryptUserFields } from '../utils/user-pii.js';
 
 const router = Router();
 
@@ -683,7 +684,7 @@ router.get(
         values,
       );
 
-      res.json(rows);
+      res.json(decryptUserFields(rows, ['username']));
     } catch (error) {
       logError('Action list failed', error, { campaignId });
       res.status(error.status || 500).json({
