@@ -1,4 +1,5 @@
 import { query } from '../../db/pool.js';
+import { decryptUserFields } from '../../utils/user-pii.js';
 
 const VALID_WORLD_TONES = ['balanced', 'dark', 'heroic', 'comedic', 'gritty', 'custom'];
 const VALID_NARRATIVE_VOICES = ['concise', 'verbose', 'poetic', 'terse'];
@@ -207,7 +208,7 @@ export const getPromptVersionHistory = async (campaignId, { limit = 50, offset =
     { label: 'prompt_versions.history' },
   );
 
-  return rows.map((row) => ({
+  return decryptUserFields(rows, ['changed_by_username']).map((row) => ({
     id: row.id,
     campaignId: row.campaign_id,
     fieldName: row.field_name,

@@ -1,53 +1,191 @@
 import { Router } from 'express';
-import { comparePassword, generateToken, generateRefreshToken, hashPassword, verifyToken } from '../auth-middleware.js';
+import { generateToken, generateRefreshToken, verifyToken, requireAuth } from '../auth-middleware.js';
+import { decryptField } from '../crypto.js';
 import { logError, logInfo } from '../utils/logger.js';
 import { query } from '../db/pool.js';
+import {
+  generateRegistrationChallenge,
+  verifyRegistration,
+  generateAuthenticationChallenge,
+  verifyAuthentication,
+  userExcludeCredentials,
+  getEnrolmentTokenUser,
+  consumeEnrolmentToken,
+} from '../services/auth/webauthn.js';
 
 const router = Router();
 
-router.post('/login', async (req, res) => {
-  const { email, password } = req.body ?? {};
+const PASSWORD_AUTH_DISABLED = {
+  error: 'password_auth_disabled',
+  message: 'Password authentication has been replaced with passkeys. Ask an admin for an enrolment link.',
+};
 
-  if (typeof email !== 'string' || !email.trim()) {
-    return res.status(400).json({ error: 'email_required', message: 'Email is required.' });
+router.post('/login', (_req, res) => res.status(410).json(PASSWORD_AUTH_DISABLED));
+router.post('/register', (_req, res) => res.status(410).json(PASSWORD_AUTH_DISABLED));
+
+router.post('/passkey/authenticate/begin', async (_req, res) => {
+  try {
+    const { options, challengeId } = await generateAuthenticationChallenge();
+    res.json({ options, challengeId });
+  } catch (error) {
+    logError('passkey authenticate/begin failed', error);
+    res.status(500).json({ error: 'passkey_auth_failed', message: 'Failed to start passkey sign-in.' });
+  }
+});
+
+router.post('/passkey/authenticate/finish', async (req, res) => {
+  const { challengeId, response } = req.body ?? {};
+  if (typeof challengeId !== 'string' || !response) {
+    return res.status(400).json({ error: 'bad_request', message: 'challengeId and response are required.' });
   }
 
   try {
-    const { rows } = await query(
-      `SELECT id, username, email, password_hash, roles, status
-         FROM user_profiles
-        WHERE lower(email) = lower($1)
-        LIMIT 1`,
-      [email.trim()]
+    const user = await verifyAuthentication({ challengeId, response });
+    const token = generateToken({ userId: user.userId });
+    const refreshToken = generateRefreshToken(user.userId);
+
+    await query(`UPDATE user_profiles SET last_login = NOW() WHERE id = $1`, [user.userId]);
+
+    logInfo('Passkey login', { telemetryEvent: 'auth.passkey.login', userId: user.userId });
+
+    res.json({
+      user: {
+        id: user.userId,
+        username: user.username,
+        email: user.email,
+        roles: user.roles,
+        status: user.status,
+      },
+      token,
+      refreshToken,
+    });
+  } catch (error) {
+    const status = error.status || 500;
+    if (status >= 500) {
+      logError('passkey authenticate/finish failed', error);
+    }
+    res.status(status).json({
+      error: 'passkey_auth_failed',
+      message: error.message || 'Sign-in failed.',
+    });
+  }
+});
+
+router.post('/passkey/register/begin', requireAuth, async (req, res) => {
+  try {
+    const userId = req.user.id;
+    const username = decryptField(req.user.username);
+    const exclude = await userExcludeCredentials(userId);
+    const { options, challengeId } = await generateRegistrationChallenge({
+      userId,
+      username,
+      excludeCredentialIds: exclude,
+    });
+    res.json({ options, challengeId });
+  } catch (error) {
+    logError('passkey register/begin failed', error);
+    res.status(500).json({ error: 'passkey_register_failed', message: 'Failed to start passkey registration.' });
+  }
+});
+
+router.post('/passkey/register/finish', requireAuth, async (req, res) => {
+  const { challengeId, response, deviceName } = req.body ?? {};
+  if (typeof challengeId !== 'string' || !response) {
+    return res.status(400).json({ error: 'bad_request', message: 'challengeId and response are required.' });
+  }
+  try {
+    await verifyRegistration({
+      userId: req.user.id,
+      challengeId,
+      response,
+      deviceName: typeof deviceName === 'string' ? deviceName.trim().slice(0, 80) : null,
+    });
+    res.json({ verified: true });
+  } catch (error) {
+    const status = error.status || 500;
+    if (status >= 500) {
+      logError('passkey register/finish failed', error);
+    }
+    res.status(status).json({
+      error: 'passkey_register_failed',
+      message: error.message || 'Registration failed.',
+    });
+  }
+});
+
+// Enrolment flow — public, gated by a one-time token.
+router.get('/enrolment/:token', async (req, res) => {
+  try {
+    const user = await getEnrolmentTokenUser(req.params.token);
+    if (!user) {
+      return res.status(404).json({ error: 'invalid_token', message: 'This enrolment link is invalid or has expired.' });
+    }
+    res.json({
+      user: {
+        id: user.id,
+        username: user.username,
+        email: user.email,
+      },
+    });
+  } catch (error) {
+    logError('enrolment lookup failed', error);
+    res.status(500).json({ error: 'enrolment_failed', message: 'Failed to load enrolment.' });
+  }
+});
+
+router.post('/enrolment/:token/register/begin', async (req, res) => {
+  try {
+    const user = await getEnrolmentTokenUser(req.params.token);
+    if (!user) {
+      return res.status(404).json({ error: 'invalid_token', message: 'This enrolment link is invalid or has expired.' });
+    }
+    const exclude = await userExcludeCredentials(user.id);
+    const { options, challengeId } = await generateRegistrationChallenge({
+      userId: user.id,
+      username: user.username,
+      excludeCredentialIds: exclude,
+    });
+    res.json({ options, challengeId });
+  } catch (error) {
+    logError('enrolment register/begin failed', error);
+    res.status(500).json({ error: 'enrolment_failed', message: 'Failed to start passkey registration.' });
+  }
+});
+
+router.post('/enrolment/:token/register/finish', async (req, res) => {
+  const { challengeId, response, deviceName } = req.body ?? {};
+  if (typeof challengeId !== 'string' || !response) {
+    return res.status(400).json({ error: 'bad_request', message: 'challengeId and response are required.' });
+  }
+  try {
+    const user = await getEnrolmentTokenUser(req.params.token);
+    if (!user) {
+      return res.status(404).json({ error: 'invalid_token', message: 'This enrolment link is invalid or has expired.' });
+    }
+
+    await verifyRegistration({
+      userId: user.id,
+      challengeId,
+      response,
+      deviceName: typeof deviceName === 'string' ? deviceName.trim().slice(0, 80) : null,
+    });
+
+    // Consume the token so it can't be reused. If consumption fails (token expired between
+    // the begin call and now) we still proceed — the credential is already saved.
+    await consumeEnrolmentToken(req.params.token).catch((error) =>
+      logError('enrolment token consume failed', error),
     );
-
-    if (rows.length === 0) {
-      return res.status(401).json({ error: 'invalid_credentials', message: 'Invalid email or password.' });
-    }
-
-    const user = rows[0];
-    const passwordMatches = password ? await comparePassword(password, user.password_hash) : false;
-
-    if (!passwordMatches) {
-      return res.status(401).json({ error: 'invalid_credentials', message: 'Invalid email or password.' });
-    }
-
-    if (user.status === 'banned' || user.status === 'suspended') {
-      return res.status(403).json({
-        error: 'account_suspended',
-        message: 'Your account has been suspended.'
-      });
-    }
 
     const token = generateToken({ userId: user.id });
     const refreshToken = generateRefreshToken(user.id);
+    await query(`UPDATE user_profiles SET last_login = NOW() WHERE id = $1`, [user.id]);
 
-    logInfo('User logged in', {
-      telemetryEvent: 'auth.login',
+    logInfo('Passkey enrolment completed', {
+      telemetryEvent: 'auth.passkey.enrolled',
       userId: user.id,
     });
 
-    return res.json({
+    res.json({
       user: {
         id: user.id,
         username: user.username,
@@ -59,60 +197,14 @@ router.post('/login', async (req, res) => {
       refreshToken,
     });
   } catch (error) {
-    logError('Authentication failed', error, { email });
-    return res.status(500).json({ error: 'auth_failed', message: 'Failed to sign in.' });
-  }
-});
-
-router.post('/register', async (req, res) => {
-  const { username, email, password } = req.body ?? {};
-  const roles = ['player'];
-
-  if (typeof username !== 'string' || !username.trim()) {
-    return res.status(400).json({ error: 'username_required', message: 'Username is required.' });
-  }
-
-  if (typeof email !== 'string' || !email.trim()) {
-    return res.status(400).json({ error: 'email_required', message: 'Email is required.' });
-  }
-
-  if (typeof password !== 'string' || password.length < 6) {
-    return res.status(400).json({ error: 'password_required', message: 'Password must be at least 6 characters.' });
-  }
-
-  try {
-    const normalizedEmail = email.trim().toLowerCase();
-    const existing = await query(
-      'SELECT id FROM user_profiles WHERE lower(email) = $1 LIMIT 1',
-      [normalizedEmail]
-    );
-
-    if (existing.rows.length > 0) {
-      return res.status(409).json({ error: 'email_in_use', message: 'Email address already registered.' });
+    const status = error.status || 500;
+    if (status >= 500) {
+      logError('enrolment register/finish failed', error);
     }
-
-    const passwordHash = await hashPassword(password);
-
-    const { rows } = await query(
-      `INSERT INTO user_profiles (username, email, password_hash, roles, status)
-       VALUES ($1, $2, $3, $4, 'active')
-       RETURNING id, username, email, roles, status`,
-      [username.trim(), normalizedEmail, passwordHash, roles]
-    );
-
-    const user = rows[0];
-    const token = generateToken({ userId: user.id });
-    const refreshToken = generateRefreshToken(user.id);
-
-    logInfo('User registered', {
-      telemetryEvent: 'auth.register',
-      userId: user.id,
+    res.status(status).json({
+      error: 'enrolment_failed',
+      message: error.message || 'Enrolment failed.',
     });
-
-    return res.status(201).json({ user, token, refreshToken });
-  } catch (error) {
-    logError('Registration failed', error, { email });
-    return res.status(500).json({ error: 'registration_failed', message: 'Failed to create account.' });
   }
 });
 
@@ -132,7 +224,7 @@ router.post('/refresh', async (req, res) => {
 
     const { rows } = await query(
       'SELECT id, username, email, roles, status FROM user_profiles WHERE id = $1 LIMIT 1',
-      [decoded.userId]
+      [decoded.userId],
     );
 
     if (rows.length === 0) {
@@ -144,7 +236,7 @@ router.post('/refresh', async (req, res) => {
     if (user.status === 'banned' || user.status === 'suspended') {
       return res.status(403).json({
         error: 'account_suspended',
-        message: 'Your account has been suspended.'
+        message: 'Your account has been suspended.',
       });
     }
 
@@ -154,8 +246,8 @@ router.post('/refresh', async (req, res) => {
     return res.json({
       user: {
         id: user.id,
-        username: user.username,
-        email: user.email,
+        username: decryptField(user.username),
+        email: decryptField(user.email),
         roles: user.roles,
         status: user.status,
       },

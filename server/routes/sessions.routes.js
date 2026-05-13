@@ -19,6 +19,7 @@ import { incrementCounter, recordEvent } from '../utils/telemetry.js';
 import { initializeGameState } from '../services/game-state/service.js';
 import { initializeLiveStates } from '../services/live-state/service.js';
 import { narrateSessionOpening } from '../services/narration/proactive-narrator.js';
+import { decryptUserFields } from '../utils/user-pii.js';
 
 const router = Router();
 
@@ -505,7 +506,7 @@ router.get('/sessions/:sessionId/participants', requireAuth, async (req, res) =>
       [sessionId],
     );
 
-    return res.json(rows);
+    return res.json(decryptUserFields(rows, ['username']));
   } catch (error) {
     logError('Session participant listing failed', error, { sessionId });
     return res.status(error.status || 500).json({

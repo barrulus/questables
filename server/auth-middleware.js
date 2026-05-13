@@ -2,6 +2,7 @@
 import jwt from 'jsonwebtoken';
 import bcrypt from 'bcrypt';
 import { logError } from './utils/logger.js';
+import { decryptField } from './crypto.js';
 
 // JWT secret key - must be set via environment variable
 const JWT_SECRET = process.env.JWT_SECRET;
@@ -133,6 +134,8 @@ export const requireAuth = async (req, res, next) => {
         : [allowedRoles.includes(userRow.roles) ? userRow.roles : 'player'];
       req.user = {
         ...userRow,
+        username: decryptField(userRow.username),
+        email: decryptField(userRow.email),
         roles,
         role: roles[0]
       };

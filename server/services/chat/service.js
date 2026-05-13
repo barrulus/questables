@@ -1,5 +1,6 @@
 import { query, withClient } from '../../db/pool.js';
 import { logWarn } from '../../utils/logger.js';
+import { decryptUserFields } from '../../utils/user-pii.js';
 
 const sanitizeLimit = (value, fallback) => {
   const parsed = Number(value);
@@ -70,7 +71,7 @@ export const createChatMessage = async ({
     { label: 'chat.messages.create' },
   );
 
-  return rows[0] ?? null;
+  return decryptUserFields(rows[0] ?? null, ['username']);
 };
 
 export const listChatMessages = async ({ campaignId, limit, offset, channelType, channelTargetUserId, userId }) => {
@@ -113,7 +114,7 @@ export const listChatMessages = async ({ campaignId, limit, offset, channelType,
     { label: 'chat.messages.list' },
   );
 
-  return rows;
+  return decryptUserFields(rows, ['username']);
 };
 
 export const listRecentChatMessages = async ({ campaignId, since, channelType, channelTargetUserId, userId }) => {
@@ -160,7 +161,7 @@ export const listRecentChatMessages = async ({ campaignId, since, channelType, c
   text += ' ORDER BY cm.created_at ASC';
 
   const { rows } = await query(text, params, { label: 'chat.messages.recent' });
-  return rows;
+  return decryptUserFields(rows, ['username']);
 };
 
 export const deleteChatMessage = async ({ campaignId, messageId, userId }) => {

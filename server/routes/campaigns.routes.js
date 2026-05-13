@@ -64,6 +64,7 @@ import { objectiveAssistValidators } from '../validation/narratives.js';
 import { logInfo, logError, logWarn } from '../utils/logger.js';
 import { incrementCounter, recordEvent } from '../utils/telemetry.js';
 import { translateWorldPixelToSettlementLocal } from '../services/settlemaker/coordinate-translator.js';
+import { decryptUserFields } from '../utils/user-pii.js';
 
 
 const createObjectiveAssistHandler = (fieldKey) => async (req, res) => {
@@ -411,9 +412,9 @@ router.get('/api/users/:userId/campaigns', async (req, res) => {
     
     client.release();
 
-    res.json({ 
-      dmCampaigns: dmCampaigns.rows, 
-      playerCampaigns: playerCampaigns.rows 
+    res.json({
+      dmCampaigns: dmCampaigns.rows,
+      playerCampaigns: decryptUserFields(playerCampaigns.rows, ['dm_username']),
     });
   } catch (error) {
     logError('[Campaigns] Get user campaigns error:', error);
@@ -436,7 +437,7 @@ router.get('/api/campaigns/public', async (req, res) => {
     `);
     client.release();
 
-    res.json(result.rows);
+    res.json(decryptUserFields(result.rows, ['dm_username']));
   } catch (error) {
     logError('[Campaigns] Get public campaigns error:', error);
     res.status(500).json({ error: 'Failed to fetch public campaigns' });
@@ -485,7 +486,7 @@ router.get('/api/campaigns/:id', requireAuth, async (req, res) => {
         return res.status(404).json({ error: 'Campaign not found' });
       }
 
-      const row = result.rows[0];
+      const row = decryptUserFields(result.rows[0], ['dm_username']);
       const isParticipant = Boolean(row.viewer_role) || isAdmin;
 
       if (!isParticipant && !row.is_public) {
@@ -698,7 +699,7 @@ router.get('/api/campaigns/:campaignId/players/pending', requireAuth, requireCam
         ORDER BY cp.joined_at ASC`,
       [campaignId]
     );
-    res.json({ pendingPlayers: rows });
+    res.json({ pendingPlayers: decryptUserFields(rows, ['username', 'email']) });
   } catch (error) {
     logError('[Campaigns] List pending players error:', error);
     res.status(500).json({ error: 'Failed to list pending players' });
@@ -826,7 +827,7 @@ router.get('/api/campaigns/:campaignId/characters', requireAuth, requireCampaign
     `, [campaignId]);
     client.release();
 
-    res.json(result.rows);
+    res.json(decryptUserFields(result.rows, ['username']));
   } catch (error) {
     logError('[Campaigns] Get characters error:', error);
     res.status(500).json({ error: error.message });
@@ -870,7 +871,7 @@ router.get(
         [campaignId]
       );
 
-      res.json(result.rows);
+      res.json(decryptUserFields(result.rows, ['username']));
     } catch (error) {
       logError('[Campaigns] Get players error:', error);
       res.status(error.status || 500).json({

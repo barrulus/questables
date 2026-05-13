@@ -6,7 +6,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "./ui/
 import { Alert, AlertDescription, AlertTitle } from "./ui/alert";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "./ui/tabs";
 import { Skeleton } from "./ui/skeleton";
-import { Activity, AlertTriangle, Clock, LogOut, RefreshCw, Server, TrendingUp } from "lucide-react";
+import { Activity, AlertTriangle, Clock, LogOut, RefreshCw, Server, Settings, TrendingUp } from "lucide-react";
 import { apiFetch, readErrorMessage, readJsonBody } from "../utils/api-client";
 import { AdminUserManagement } from "./admin-user-management";
 import { AdminModeration } from "./admin-moderation";
@@ -17,6 +17,7 @@ import { AdminLLMConfigTab } from "./admin-llm-config-tab";
 interface AdminDashboardProps {
   user: { id: string; username: string; email: string; roles: string[]; role?: string };
   onLogout: () => void;
+  onOpenSettings?: () => void;
 }
 
 interface HealthResponse {
@@ -37,7 +38,7 @@ type LoadState<T> =
   | { status: "loaded"; data: T; error?: undefined }
   | { status: "error"; data: T | null; error: string };
 
-export function AdminDashboard({ user, onLogout }: AdminDashboardProps) {
+export function AdminDashboard({ user, onLogout, onOpenSettings }: AdminDashboardProps) {
   const [activeTab, setActiveTab] = useState("overview");
   const [metricsState, setMetricsState] = useState<LoadState<AdminMetricsResponse>>({ status: "idle", data: null });
   const [healthState, setHealthState] = useState<LoadState<HealthResponse>>({ status: "idle", data: null });
@@ -204,6 +205,11 @@ export function AdminDashboard({ user, onLogout }: AdminDashboardProps) {
             <Button variant="ghost" size="sm" onClick={loadHealth} disabled={healthState.status === "loading"}>
               <Server className="w-4 h-4" />
             </Button>
+            {onOpenSettings && (
+              <Button variant="ghost" size="sm" onClick={onOpenSettings} title="Account settings">
+                <Settings className="w-4 h-4" />
+              </Button>
+            )}
             <Button variant="ghost" size="sm" onClick={onLogout}>
               <LogOut className="w-4 h-4" />
             </Button>

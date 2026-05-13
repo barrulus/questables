@@ -1,5 +1,6 @@
 import { query } from '../../db/pool.js';
 import { parseBounds } from '../campaigns/service.js';
+import { decryptUserFields } from '../../utils/user-pii.js';
 
 const UUID_REGEX = /^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-5][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$/;
 const REGION_CATEGORY_SET = new Set(['encounter', 'rumour', 'narrative', 'travel', 'custom']);
@@ -256,7 +257,7 @@ export const listWorldMaps = async () => {
     [],
     { label: 'maps.world.list' },
   );
-  return rows;
+  return decryptUserFields(rows, ['uploaded_by_username']);
 };
 
 export const getWorldMapById = async (id) => {
