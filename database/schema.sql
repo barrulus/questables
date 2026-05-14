@@ -3,6 +3,15 @@
 -- Coordinate policy: SRID 0 (unitless/pixel-space). No geography casts.
 -- Case-insensitive usernames/emails via CITEXT.
 -- Uniform updated_at trigger.
+--
+-- Drift policy: this file is the *final-state* schema applied by
+-- server/setup-database.js on every server start. It MUST stay in sync
+-- with database/migrations/*.sql — the migrations are authoritative for
+-- existing DBs being rolled forward, this file is authoritative for a
+-- fresh install. When a migration adds a table or column, fold the same
+-- shape into this file in its CREATE TABLE block. Every statement here
+-- must be idempotent (CREATE … IF NOT EXISTS, ALTER … ADD COLUMN
+-- IF NOT EXISTS, DROP CONSTRAINT IF EXISTS + ADD).
 
 -- =============================================================================
 -- EXTENSIONS
@@ -229,8 +238,11 @@ CREATE TABLE IF NOT EXISTS public.maps_burg_entrances (
     settlement_generation_version TEXT NOT NULL,
     settlemaker_version TEXT NOT NULL,
     ingested_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    arrival_local JSONB,
     UNIQUE (burg_id, gate_id)
 );
+-- Upgrade path for DBs created before migration 009 added arrival_local.
+ALTER TABLE public.maps_burg_entrances ADD COLUMN IF NOT EXISTS arrival_local JSONB;
 CREATE INDEX IF NOT EXISTS maps_burg_entrances_geom_gix
   ON public.maps_burg_entrances USING GIST (geom);
 CREATE INDEX IF NOT EXISTS maps_burg_entrances_burg_id_idx
@@ -238,6 +250,48 @@ CREATE INDEX IF NOT EXISTS maps_burg_entrances_burg_id_idx
 CREATE INDEX IF NOT EXISTS maps_burg_entrances_route_id_idx
   ON public.maps_burg_entrances (route_id)
   WHERE route_id IS NOT NULL;
+
+-- Per-burg settlement metadata (sidecar to maps_burgs, written by
+-- settlemaker). Added by migration 009; degraded_flags by 012;
+-- local_origin_shift by 013.
+CREATE TABLE IF NOT EXISTS public.maps_burg_settlements (
+    burg_id UUID PRIMARY KEY REFERENCES public.maps_burgs(id) ON DELETE CASCADE,
+    meters_per_unit NUMERIC NOT NULL,
+    diameter_meters NUMERIC NOT NULL,
+    diameter_local NUMERIC NOT NULL,
+    scale_source TEXT NOT NULL,
+    local_bounds JSONB NOT NULL,
+    max_zoom INTEGER NOT NULL,
+    tile_extent_px INTEGER NOT NULL,
+    svg_viewbox JSONB NOT NULL,
+    has_harbour BOOLEAN NOT NULL,
+    ocean_bearing_deg INTEGER,
+    settlement_generation_version TEXT NOT NULL,
+    settlemaker_version TEXT NOT NULL,
+    ingested_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    degraded_flags TEXT[],
+    local_origin_shift JSONB
+);
+-- Upgrade paths for DBs created before migrations 012 / 013.
+ALTER TABLE public.maps_burg_settlements ADD COLUMN IF NOT EXISTS degraded_flags TEXT[];
+ALTER TABLE public.maps_burg_settlements ADD COLUMN IF NOT EXISTS local_origin_shift JSONB;
+
+-- Multi-route gate join table (settlemaker 0.4.0+). Added by migration 011.
+-- A single gate can legitimately serve multiple route bearings sharing one
+-- wall vertex; maps_burg_entrances.route_id stays as the denormalised primary
+-- match, this table holds the full per-route detail.
+CREATE TABLE IF NOT EXISTS public.maps_burg_entrance_routes (
+    entrance_id UUID NOT NULL
+      REFERENCES public.maps_burg_entrances(id) ON DELETE CASCADE,
+    route_id UUID NOT NULL
+      REFERENCES public.maps_routes(id) ON DELETE CASCADE,
+    kind TEXT,
+    requested_bearing_deg DOUBLE PRECISION,
+    match_delta_deg DOUBLE PRECISION,
+    PRIMARY KEY (entrance_id, route_id)
+);
+CREATE INDEX IF NOT EXISTS maps_burg_entrance_routes_route_id_idx
+    ON public.maps_burg_entrance_routes (route_id);
 
 -- Rivers (MultiLineString, SRID 0)
 CREATE TABLE IF NOT EXISTS public.maps_rivers (
