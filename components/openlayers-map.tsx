@@ -622,7 +622,7 @@ export function OpenLayersMap() {
   >(null);
 
   const getFeatureType = useCallback((feature: Feature, data?: Record<string, unknown>) => {
-    const rawType = data?.type ?? feature.get('type');
+    const rawType = feature.get('type') ?? data?.type;
     return typeof rawType === 'string' ? rawType.toLowerCase() : '';
   }, []);
 
@@ -673,11 +673,20 @@ export function OpenLayersMap() {
         { label: 'Temperature', value: toText(data?.temperature) },
       ];
     } else if (featureType === 'marker') {
-      const markerName = data?.name ?? feature.get('name') ?? data?.type ?? 'Marker';
+      const markerSubtype = typeof data?.type === 'string' ? data.type : null;
+      const markerName = data?.name ?? feature.get('name') ?? markerSubtype ?? 'Marker';
       title = markerName;
       rows = [
         { label: 'Name', value: toText(markerName) },
         { label: 'Note', value: toText(data?.note) }
+      ];
+    } else if (featureType === 'route') {
+      const routeName = data?.name ?? feature.get('name') ?? 'Route';
+      title = String(routeName);
+      const routeSubtype = typeof data?.type === 'string' ? data.type : null;
+      rows = [
+        { label: 'Name', value: toText(routeName) },
+        { label: 'Type', value: toText(routeSubtype) },
       ];
     } else if (featureType === 'player') {
       const token = data as PlayerToken | undefined;
@@ -2365,12 +2374,6 @@ export function OpenLayersMap() {
                           </span>
                         </div>
                       ))}
-                    </div>
-                  ) : popupContent.data ? (
-                    <div>
-                      <pre className="whitespace-pre-wrap break-words">
-                        {JSON.stringify(popupContent.data, null, 2)}
-                      </pre>
                     </div>
                   ) : null}
                   {popupContent.featureType === 'burg' && mapMode === 'world' && (
