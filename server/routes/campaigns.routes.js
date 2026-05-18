@@ -50,6 +50,7 @@ import { respondWithNarrativeError } from '../llm/narrative-errors.js';
 import { checkRegionTriggers } from '../services/regions/trigger-service.js';
 import { narrateAreaEntry } from '../services/narration/proactive-narrator.js';
 import { getActiveSession } from '../services/sessions/service.js';
+import { ensurePlayerInActiveSessionTurnOrder } from '../services/game-state/service.js';
 import { LLMProviderError, LLMServiceError } from '../llm/index.js';
 import {
   OBJECTIVE_RETURNING_FIELDS,
@@ -667,6 +668,17 @@ router.post('/api/campaigns/:campaignId/players', requireAuth, async (req, res) 
           ]
         );
       }
+
+      try {
+        await ensurePlayerInActiveSessionTurnOrder(client, campaignId, userId, {
+          actorId: campaignMeta.dm_user_id ?? null,
+        });
+      } catch (turnOrderErr) {
+        logError('[Campaigns] Failed to extend turn order on auto-join (non-fatal)', turnOrderErr, {
+          campaignId,
+          userId,
+        });
+      }
     }
 
     await client.query('COMMIT');
@@ -819,6 +831,17 @@ router.patch('/api/campaigns/:campaignId/players/:userId/approve', requireAuth, 
           autoPlacement.y,
         ]
       );
+    }
+
+    try {
+      await ensurePlayerInActiveSessionTurnOrder(client, campaignId, userId, {
+        actorId: req.user.id,
+      });
+    } catch (turnOrderErr) {
+      logError('[Campaigns] Failed to extend turn order on approval (non-fatal)', turnOrderErr, {
+        campaignId,
+        userId,
+      });
     }
 
     await client.query('COMMIT');

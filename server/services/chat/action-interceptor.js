@@ -46,19 +46,19 @@ export async function shouldInterceptAsAction({
         LIMIT 1`,
       [campaignId],
     );
-    if (!sessionRows.length) return { shouldIntercept: false };
+    if (!sessionRows.length) return { shouldIntercept: false, reason: 'no_active_session' };
 
     const session = sessionRows[0];
     const gameState = typeof session.game_state === 'string'
       ? JSON.parse(session.game_state)
       : session.game_state;
 
-    if (!gameState) return { shouldIntercept: false };
+    if (!gameState) return { shouldIntercept: false, reason: 'no_game_state' };
 
     // Check phase allows actions (exploration, combat, social)
     const actionPhases = new Set(['exploration', 'combat', 'social']);
     if (!actionPhases.has(gameState.phase)) {
-      return { shouldIntercept: false };
+      return { shouldIntercept: false, reason: `phase_${gameState.phase ?? 'unknown'}_not_actionable` };
     }
 
     // In exploration/social, any player in the turn order can act freely.
@@ -66,10 +66,10 @@ export async function shouldInterceptAsAction({
     const isInTurnOrder = Array.isArray(gameState.turnOrder) && gameState.turnOrder.includes(userId);
     if (gameState.phase === 'combat') {
       if (gameState.activePlayerId !== userId) {
-        return { shouldIntercept: false };
+        return { shouldIntercept: false, reason: 'not_active_player_in_combat' };
       }
     } else if (!isInTurnOrder) {
-      return { shouldIntercept: false };
+      return { shouldIntercept: false, reason: 'user_not_in_turn_order' };
     }
 
     // Find the player's character in this campaign
@@ -79,7 +79,7 @@ export async function shouldInterceptAsAction({
       [campaignId, userId],
     );
     const characterId = charRows[0]?.character_id ?? null;
-    if (!characterId) return { shouldIntercept: false };
+    if (!characterId) return { shouldIntercept: false, reason: 'no_active_character' };
 
     return {
       shouldIntercept: true,

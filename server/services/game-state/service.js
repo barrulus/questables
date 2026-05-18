@@ -369,6 +369,64 @@ export const setTurnOrder = async (client, sessionId, { turnOrder, actorId }) =>
 };
 
 /**
+ * Append a newly-active player to the turn order of the campaign's active
+ * session (if one exists). Idempotent: a no-op if the player is already in
+ * the order. Preserves existing ordering so DM-set order isn't trampled.
+ *
+ * Returns the new game state, or null if no active session.
+ */
+export const ensurePlayerInActiveSessionTurnOrder = async (
+  client,
+  campaignId,
+  userId,
+  { actorId } = {},
+) => {
+  const { rows } = await client.query(
+    `SELECT id FROM public.sessions
+      WHERE campaign_id = $1 AND status = 'active'
+      LIMIT 1`,
+    [campaignId],
+  );
+  if (rows.length === 0) return null;
+
+  const sessionId = rows[0].id;
+  const row = await lockSession(client, sessionId);
+  if (!row) return null;
+
+  const prev = parseGameState(row.game_state);
+  if (Array.isArray(prev.turnOrder) && prev.turnOrder.includes(userId)) {
+    return prev;
+  }
+
+  const newTurnOrder = [...(prev.turnOrder ?? []), userId];
+  const newState = {
+    ...prev,
+    turnOrder: newTurnOrder,
+    activePlayerId: prev.activePlayerId ?? newTurnOrder[0],
+  };
+
+  await persistAndLog(client, {
+    sessionId,
+    campaignId: row.campaign_id,
+    eventType: 'turn_order_set',
+    actorId: actorId ?? null,
+    previousState: prev,
+    newState,
+    metadata: { reason: 'player_joined_active_session', addedUserId: userId },
+  });
+
+  logInfo('Turn order extended for joining player', {
+    telemetryEvent: 'game_state.turn_order_extended',
+    sessionId,
+    campaignId: row.campaign_id,
+    addedUserId: userId,
+    turnOrderLength: newTurnOrder.length,
+  });
+
+  return newState;
+};
+
+/**
  * DM skip a player's turn.
  */
 export const skipTurn = async (client, sessionId, { targetPlayerId, actorId }) => {

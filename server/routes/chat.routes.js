@@ -229,21 +229,37 @@ router.post('/api/campaigns/:campaignId/messages', requireAuth, requireCampaignP
       const wsServer = req.app?.locals?.wsServer;
       const llmService = req.app?.locals?.llmService ?? null;
 
-      if (contextualService) {
+      if (!contextualService) {
+        logInfo('Action interception skipped', {
+          telemetryEvent: 'chat.intercept_skipped',
+          campaignId,
+          userId: senderId,
+          reason: 'contextual_llm_service_unavailable',
+        });
+      } else {
         // Fire-and-forget — don't block the chat response
         shouldInterceptAsAction({ campaignId, userId: senderId })
-          .then(({ shouldIntercept, session, gameState, characterId: charId }) => {
-            if (!shouldIntercept) return;
+          .then(({ shouldIntercept, reason, session, gameState, characterId: charId }) => {
+            if (!shouldIntercept) {
+              logInfo('Action interception skipped', {
+                telemetryEvent: 'chat.intercept_skipped',
+                campaignId,
+                userId: senderId,
+                reason: reason ?? 'unknown',
+              });
+              return;
+            }
             // Charge the LLM call to the user who triggered it. If they're
             // over quota we drop the interception silently — the chat
             // message itself is already saved + broadcast.
             try {
               consumeLLMQuota(req);
             } catch (quotaErr) {
-              logError('Action interception skipped (quota)', {
+              logInfo('Action interception skipped', {
+                telemetryEvent: 'chat.intercept_skipped',
                 campaignId,
                 userId: senderId,
-                reason: quotaErr.type || quotaErr.message,
+                reason: `quota_${quotaErr.type || 'exceeded'}`,
               });
               return;
             }
