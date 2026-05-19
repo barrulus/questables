@@ -224,7 +224,8 @@ router.post('/api/campaigns/:campaignId/messages', requireAuth, requireCampaignP
     // If this is a party-channel text message, check if it should be
     // processed as a game action (active session, player's turn, etc.)
     const effectiveChannelType = channel_type ?? 'party';
-    if (effectiveChannelType === 'party' && (!type || type === 'text')) {
+    const isOOC = !character_id;
+    if (effectiveChannelType === 'party' && (!type || type === 'text') && !isOOC) {
       const contextualService = req.app?.locals?.contextualLLMService;
       const wsServer = req.app?.locals?.wsServer;
       const llmService = req.app?.locals?.llmService ?? null;
