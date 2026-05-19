@@ -23,6 +23,7 @@ export const REALTIME_EVENTS = {
   turnAdvanced: 'turn-advanced',
   worldTurnCompleted: 'world-turn-completed',
   turnOrderChanged: 'turn-order-changed',
+  gameStateSnapshot: 'game-state-snapshot',
   rollRequested: 'roll-requested',
   actionCompleted: 'action-completed',
   liveStateChanged: 'live-state-changed',
@@ -189,6 +190,40 @@ class WebSocketServer {
           userId: socket.user.id,
           role: access.role,
         });
+
+        // Send current game state to the joining socket so it doesn't need
+        // to remount the campaign to get fresh turn info after a reconnect.
+        try {
+          const client = await getClient({ label: 'ws.snapshot' });
+          try {
+            const { rows } = await client.query(
+              `SELECT s.id AS session_id, s.status AS session_status, s.game_state
+                 FROM public.sessions s
+                WHERE s.campaign_id = $1 AND s.status = 'active'
+                LIMIT 1`,
+              [access.campaignId],
+            );
+            const session = rows[0] ?? null;
+            const gameState = session
+              ? (typeof session.game_state === 'string'
+                  ? JSON.parse(session.game_state)
+                  : session.game_state)
+              : null;
+            socket.emit(REALTIME_EVENTS.gameStateSnapshot, {
+              sessionId: session?.session_id ?? null,
+              sessionStatus: session?.session_status ?? null,
+              gameState,
+              emittedAt: new Date().toISOString(),
+            });
+          } finally {
+            client.release();
+          }
+        } catch (err) {
+          logError('Failed to emit game-state-snapshot on join', {
+            campaignId: access.campaignId,
+            error: err.message,
+          });
+        }
 
         socket.to(`${CAMPAIGN_ROOM_PREFIX}${access.campaignId}`).emit('user-joined', {
           userId: socket.user.id,
