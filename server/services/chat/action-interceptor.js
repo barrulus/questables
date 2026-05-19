@@ -26,7 +26,7 @@ import { postNarrationToChat, postPrivateNarration } from './dm-narrator.js';
 import { applySceneTransition } from '../scene/scene-tracker.js';
 import { endTurn } from '../game-state/service.js';
 import { fireWorldTurnIfPending } from '../narration/proactive-narrator.js';
-import { computeActionability } from '../../../shared/actionability.js';
+import { computeActionability, ACTIONABILITY_REASONS } from '../../../shared/actionability.js';
 
 /**
  * Determine if a chat message should be intercepted as a game action.
@@ -53,6 +53,15 @@ export async function shouldInterceptAsAction({
           ? JSON.parse(session.game_state)
           : session.game_state)
       : null;
+
+    if (!gameState) {
+      return {
+        shouldIntercept: false,
+        reason: ACTIONABILITY_REASONS.NO_ACTIVE_SESSION,
+        phase: null,
+        activeUserId: null,
+      };
+    }
 
     const { rows: charRows } = await client.query(
       `SELECT character_id FROM public.campaign_players
