@@ -8,6 +8,9 @@ import { Switch } from "./ui/switch";
 import { toast } from "sonner";
 import { Send, Users, Crown, Dice6, Loader2, Trash2, AlertCircle, Wifi, WifiOff } from "lucide-react";
 import { useUser } from "../contexts/UserContext";
+import { useGameState } from "../contexts/GameStateContext";
+import { TurnStatusBar } from "./turn-status-bar";
+import { useActionability } from "../hooks/useActionability";
 import { useWebSocket, useWsEvent } from "../contexts/WebSocketContext";
 import { apiFetch, readErrorMessage, readJsonBody } from "../utils/api-client";
 import { handleAsyncError } from "../utils/error-handling";
@@ -158,6 +161,12 @@ export function ChatSystem({ campaignId, campaignName, campaignRole, dmUserId }:
 
   const isDm = campaignRole === "dm" || (user && dmUserId === user.id);
   const channelTabs = useMemo(() => buildDefaultTabs(isDm ?? false), [isDm]);
+
+  const { activePlayerName } = useGameState();
+  const actionability = useActionability(Boolean(campaignCharacter));
+  const wouldBeAction =
+    activeChannel.channelType === "party" && speakingInCharacter;
+  const blockedByTurn = wouldBeAction && !actionability.canAct;
 
   // ── Channel key for unread tracking ─────────────────────────────────
   const channelKey = useCallback(
@@ -632,6 +641,9 @@ export function ChatSystem({ campaignId, campaignName, campaignRole, dmUserId }:
 
   // Channel placeholder text
   const inputPlaceholder = useMemo(() => {
+    if (blockedByTurn) {
+      return "Wait for your turn — toggle OOC to chat freely";
+    }
     switch (activeChannel.channelType) {
       case "dm_broadcast":
         return isDm ? "Narrate to all players..." : "The DM narrates here — use Party chat to act";
@@ -644,10 +656,13 @@ export function ChatSystem({ campaignId, campaignName, campaignRole, dmUserId }:
       default:
         return "What do you do?";
     }
-  }, [activeChannel.channelType]);
+  }, [activeChannel.channelType, blockedByTurn, isDm]);
 
   // Disable input for dm_broadcast if not CD; director_whisper is CD-only (tab only shown to CD)
-  const inputDisabled = sending || (activeChannel.channelType === "dm_broadcast" && !isDm);
+  const inputDisabled =
+    sending ||
+    (activeChannel.channelType === "dm_broadcast" && !isDm) ||
+    blockedByTurn;
 
   if (!user) {
     return (
@@ -794,6 +809,13 @@ export function ChatSystem({ campaignId, campaignName, campaignRole, dmUserId }:
         </div>
       </ScrollArea>
 
+      {activeChannel.channelType === "party" && (
+        <TurnStatusBar
+          actionability={actionability}
+          activePlayerName={activePlayerName}
+        />
+      )}
+
       <div className="border-t px-4 py-4">
         <div className="flex gap-2">
           <Input
@@ -816,6 +838,7 @@ export function ChatSystem({ campaignId, campaignName, campaignRole, dmUserId }:
             onKeyDown={async (event) => {
               if (event.key === "Enter" && !event.shiftKey) {
                 event.preventDefault();
+                if (inputDisabled) return;
                 await handleTextSubmit();
               }
             }}
