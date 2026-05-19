@@ -35,11 +35,17 @@ export function TurnStatusBar({ actionability, activePlayerName }: TurnStatusBar
       text = "You're a spectator — join from the dashboard to act";
       tone = "info";
       break;
-    case "not_active_player_in_combat":
+    case "not_active_player_in_combat": {
       icon = <Hourglass className="w-4 h-4" />;
-      text = `Combat — ${activePlayerName ?? "another player"}'s turn`;
+      const isEnemyTurn = actionability.activeUserId?.startsWith("npc:") ?? false;
+      if (isEnemyTurn) {
+        text = "Combat — enemy is acting";
+      } else {
+        text = `Combat — ${activePlayerName ?? "another player"}'s turn`;
+      }
       tone = "warn";
       break;
+    }
     case "no_active_character":
       icon = <Info className="w-4 h-4" />;
       text = "No character enrolled — join with one to act";

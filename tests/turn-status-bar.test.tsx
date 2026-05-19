@@ -81,4 +81,18 @@ describe('<TurnStatusBar>', () => {
     );
     expect(screen.getByText(/no character enrolled/i)).toBeInTheDocument();
   });
+
+  it('shows "enemy is acting" when active participant is an NPC', () => {
+    render(
+      <TurnStatusBar
+        actionability={{
+          canAct: false,
+          reason: 'not_active_player_in_combat',
+          activeUserId: 'npc:goblin-1',
+        }}
+        activePlayerName={null}
+      />,
+    );
+    expect(screen.getByText(/enemy is acting/i)).toBeInTheDocument();
+  });
 });
