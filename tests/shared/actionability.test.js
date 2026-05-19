@@ -130,4 +130,32 @@ describe('computeActionability', () => {
     expect(result.canAct).toBe(false);
     expect(result.reason).toBe(ACTIONABILITY_REASONS.NO_ACTIVE_SESSION);
   });
+
+  it('returns no_active_session when turnOrder is empty even if activePlayerId is set', () => {
+    const result = computeActionability({
+      gameState: { phase: 'exploration', turnOrder: [], activePlayerId: userId },
+      userId,
+      hasActiveCharacter: true,
+    });
+    expect(result).toEqual({
+      canAct: false,
+      reason: ACTIONABILITY_REASONS.NO_ACTIVE_SESSION,
+    });
+  });
+
+  it('returns user_not_in_turn_order in combat when user is the activePlayerId but not in turnOrder', () => {
+    const result = computeActionability({
+      gameState: {
+        phase: 'combat',
+        turnOrder: [otherUserId],
+        activePlayerId: userId,
+      },
+      userId,
+      hasActiveCharacter: true,
+    });
+    expect(result).toEqual({
+      canAct: false,
+      reason: ACTIONABILITY_REASONS.USER_NOT_IN_TURN_ORDER,
+    });
+  });
 });

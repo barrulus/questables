@@ -40,8 +40,7 @@ export function computeActionability({ gameState, userId, hasActiveCharacter }) 
   }
 
   const turnOrder = Array.isArray(gameState.turnOrder) ? gameState.turnOrder : [];
-  const hasParticipants = turnOrder.length > 0 || gameState.activePlayerId !== null;
-  if (!hasParticipants) {
+  if (turnOrder.length === 0) {
     return { canAct: false, reason: ACTIONABILITY_REASONS.NO_ACTIVE_SESSION };
   }
 
@@ -54,6 +53,9 @@ export function computeActionability({ gameState, userId, hasActiveCharacter }) 
   }
 
   if (gameState.phase === 'combat') {
+    if (!turnOrder.includes(userId)) {
+      return { canAct: false, reason: ACTIONABILITY_REASONS.USER_NOT_IN_TURN_ORDER };
+    }
     if (gameState.activePlayerId !== userId) {
       return {
         canAct: false,
