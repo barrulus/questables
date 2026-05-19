@@ -160,6 +160,19 @@ export function GameStateProvider({ children }: { children: ReactNode }) {
     applyStateUpdate,
   );
 
+  useWsEvent<{
+    gameState?: GameState | null;
+    sessionId?: string | null;
+    sessionStatus?: string | null;
+  }>("game-state-snapshot", (data) => {
+    if (data && "gameState" in data) {
+      setGameStateData({
+        gameState: data.gameState ?? null,
+        sessionId: data.sessionId ?? null,
+      });
+    }
+  });
+
   useWsEvent<{ combatTurnBudget?: CombatTurnBudget }>(
     "combat-budget-changed",
     (data) => {
