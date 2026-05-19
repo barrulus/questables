@@ -26,6 +26,7 @@ import { postNarrationToChat, postPrivateNarration } from './dm-narrator.js';
 import { applySceneTransition } from '../scene/scene-tracker.js';
 import { endTurn } from '../game-state/service.js';
 import { fireWorldTurnIfPending } from '../narration/proactive-narrator.js';
+import { computeActionability } from '../../../shared/actionability.js';
 
 /**
  * Determine if a chat message should be intercepted as a game action.
@@ -38,7 +39,6 @@ export async function shouldInterceptAsAction({
 }) {
   const client = await getClient({ label: 'action-interceptor.check' });
   try {
-    // Find active session
     const { rows: sessionRows } = await client.query(
       `SELECT s.id, s.game_state
          FROM public.sessions s
@@ -46,40 +46,35 @@ export async function shouldInterceptAsAction({
         LIMIT 1`,
       [campaignId],
     );
-    if (!sessionRows.length) return { shouldIntercept: false, reason: 'no_active_session' };
 
-    const session = sessionRows[0];
-    const gameState = typeof session.game_state === 'string'
-      ? JSON.parse(session.game_state)
-      : session.game_state;
+    const session = sessionRows[0] ?? null;
+    const gameState = session
+      ? (typeof session.game_state === 'string'
+          ? JSON.parse(session.game_state)
+          : session.game_state)
+      : null;
 
-    if (!gameState) return { shouldIntercept: false, reason: 'no_game_state' };
-
-    // Check phase allows actions (exploration, combat, social)
-    const actionPhases = new Set(['exploration', 'combat', 'social']);
-    if (!actionPhases.has(gameState.phase)) {
-      return { shouldIntercept: false, reason: `phase_${gameState.phase ?? 'unknown'}_not_actionable` };
-    }
-
-    // In exploration/social, any player in the turn order can act freely.
-    // In combat, only the active player may act.
-    const isInTurnOrder = Array.isArray(gameState.turnOrder) && gameState.turnOrder.includes(userId);
-    if (gameState.phase === 'combat') {
-      if (gameState.activePlayerId !== userId) {
-        return { shouldIntercept: false, reason: 'not_active_player_in_combat' };
-      }
-    } else if (!isInTurnOrder) {
-      return { shouldIntercept: false, reason: 'user_not_in_turn_order' };
-    }
-
-    // Find the player's character in this campaign
     const { rows: charRows } = await client.query(
       `SELECT character_id FROM public.campaign_players
         WHERE campaign_id = $1 AND user_id = $2 AND status = 'active'`,
       [campaignId, userId],
     );
     const characterId = charRows[0]?.character_id ?? null;
-    if (!characterId) return { shouldIntercept: false, reason: 'no_active_character' };
+
+    const result = computeActionability({
+      gameState,
+      userId,
+      hasActiveCharacter: characterId !== null,
+    });
+
+    if (!result.canAct) {
+      return {
+        shouldIntercept: false,
+        reason: result.reason,
+        phase: result.phase ?? null,
+        activeUserId: result.activeUserId ?? null,
+      };
+    }
 
     return {
       shouldIntercept: true,
@@ -519,7 +514,7 @@ export async function interceptChatAction({
     });
   } catch (error) {
     if (!committed) {
-      try { await client.query('ROLLBACK'); } catch (rbErr) { /* ignore — connection likely broken */ }
+      try { await client.query('ROLLBACK'); } catch (_rbErr) { /* ignore — connection likely broken */ }
     }
     logError('Action interceptor failed', {
       campaignId,

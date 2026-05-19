@@ -239,13 +239,15 @@ router.post('/api/campaigns/:campaignId/messages', requireAuth, requireCampaignP
       } else {
         // Fire-and-forget — don't block the chat response
         shouldInterceptAsAction({ campaignId, userId: senderId })
-          .then(({ shouldIntercept, reason, session, gameState, characterId: charId }) => {
+          .then(({ shouldIntercept, reason, phase, activeUserId, session, gameState, characterId: charId }) => {
             if (!shouldIntercept) {
               logInfo('Action interception skipped', {
                 telemetryEvent: 'chat.intercept_skipped',
                 campaignId,
                 userId: senderId,
                 reason: reason ?? 'unknown',
+                ...(phase ? { phase } : {}),
+                ...(activeUserId ? { activeUserId } : {}),
               });
               return;
             }
