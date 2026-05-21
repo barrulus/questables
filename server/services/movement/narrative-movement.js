@@ -1,9 +1,10 @@
 import { resolveDestination } from './destination-resolver.js';
 import { planTravel } from './travel-planner.js';
 import { pickArrivalGate, retargetPlanToGate } from './gate-picker.js';
+import { snapCoordToNearbyBurg } from './burg-snap.js';
 import { performPlayerMovement } from '../campaigns/service.js';
 import { evaluateEncounterAtPoint } from '../encounters/proactive-generator.js';
-import { logWarn } from '../../utils/logger.js';
+import { logInfo, logWarn } from '../../utils/logger.js';
 
 async function loadCurrentPosition(client, campaignId, playerId) {
   const { rows } = await client.query(
@@ -81,9 +82,41 @@ export async function applyNarrativeMove(client, {
   via = 'roads',
   wsServer = null,
 }) {
-  const resolved = await resolveDestination(client, { campaignId, destination });
+  const initialResolved = await resolveDestination(client, { campaignId, destination });
   const current  = await loadCurrentPosition(client, campaignId, playerId);
   const worldId  = await loadWorldId(client, campaignId);
+
+  // Promote sloppy coordinate/poi destinations to burg destinations when the
+  // target is plausibly "approaching" a burg. Without this, the LLM emitting
+  // { kind: 'coordinate', ref: {x,y} } near a settlement skips gate-picking
+  // entirely and the player lands a few km short — so `inside_burg_id` stays
+  // NULL and the map never flips to the settlement view.
+  let resolved = initialResolved;
+  let effectiveDestinationKind = destination.kind;
+  if (resolved.burgId === null && destination.kind !== 'burg' && worldId) {
+    const snap = await snapCoordToNearbyBurg(client, {
+      worldId,
+      x: resolved.x,
+      y: resolved.y,
+    });
+    if (snap) {
+      logInfo('narrative-movement: snapped coordinate target to burg', {
+        campaignId,
+        originalKind: destination.kind,
+        snappedBurgId: snap.burgId,
+        snappedName: snap.resolvedName,
+        distance: snap.distance,
+      });
+      resolved = {
+        x: snap.x,
+        y: snap.y,
+        burgId: snap.burgId,
+        mapLevel: 'settlement',
+        resolvedName: snap.resolvedName,
+      };
+      effectiveDestinationKind = 'burg';
+    }
+  }
 
   const plan = worldId
     ? await planTravel(client, {
@@ -103,7 +136,7 @@ export async function applyNarrativeMove(client, {
 
   const arrivalGate = await pickArrivalGate(client, {
     plan: { ...plan, mode },
-    destination: { kind: destination.kind, burgId: resolved.burgId },
+    destination: { kind: effectiveDestinationKind, burgId: resolved.burgId },
   });
   const gatedPlan = arrivalGate ? retargetPlanToGate(plan, arrivalGate) : plan;
 
