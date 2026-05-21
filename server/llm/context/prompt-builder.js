@@ -1,5 +1,6 @@
 import { NARRATIVE_TYPES } from '../narrative-types.js';
 import { LLMServiceError } from '../errors.js';
+import { describeTerrainCell } from './terrain-naming.js';
 
 const typeInstruction = {
   [NARRATIVE_TYPES.DM_NARRATION]: 'Explain the immediate outcome of the party\'s recent actions and set up the next decision point. Keep the narration immersive, grounded in the supplied context, and avoid inventing NPCs or quests that do not exist.',
@@ -224,10 +225,8 @@ const summarizeGeography = (geo) => {
   // World level
   if (geo.terrain) {
     const t = geo.terrain;
-    const terrainParts = [];
-    if (t.type) terrainParts.push(t.type);
-    if (t.height) terrainParts.push(`${t.height}m elevation`);
-    if (terrainParts.length) lines.push(`Terrain: ${terrainParts.join(', ')}`);
+    const description = describeTerrainCell(t);
+    if (description) lines.push(`Terrain: ${description}`);
     if (t.state) lines.push(`State territory: ${t.state}`);
     if (t.culture) lines.push(`Culture: ${t.culture}`);
     if (t.religion) lines.push(`Religion: ${t.religion}`);

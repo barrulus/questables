@@ -153,6 +153,75 @@ describe('buildStructuredPrompt — scene-presence sections', () => {
   });
 });
 
+describe('buildStructuredPrompt — terrain rendering', () => {
+  const renderWith = (terrain) => {
+    const ctx = { ...makeContext(), geographic: { terrain } };
+    return buildStructuredPrompt({
+      type: NARRATIVE_TYPES.DM_NARRATION,
+      context: ctx,
+      providerConfig: { name: 'test', model: 'test-model' },
+      request: {},
+    }).prompt;
+  };
+
+  it('renders biome name from integer code instead of cell.type (which is FMG isLand)', () => {
+    // biome 8 = temperate rainforest. cell.type='island' here is FMG's
+    // stringified isLand boolean, NOT a landmass label — it must never leak.
+    const prompt = renderWith({ biome: 8, type: 'island', height: 72 });
+    expect(prompt).toContain('Terrain: temperate rainforest, 72m elevation');
+    expect(prompt).not.toMatch(/\bisland\b/i);
+  });
+
+  it('renders grassland with elevation', () => {
+    const prompt = renderWith({ biome: 4, type: 'island', height: 200 });
+    expect(prompt).toContain('Terrain: grassland, 200m elevation');
+  });
+
+  it('renders ocean cells distinctly from land', () => {
+    const prompt = renderWith({ biome: 0, type: 'ocean', height: 0 });
+    expect(prompt).toContain('Terrain: open ocean');
+    expect(prompt).not.toMatch(/\bisland\b/i);
+  });
+
+  it('renders lake cells distinctly from ocean', () => {
+    const prompt = renderWith({ biome: 0, type: 'lake', height: 0 });
+    expect(prompt).toContain('Terrain: lake water');
+    expect(prompt).not.toMatch(/\bisland\b/i);
+  });
+
+  it('renders only elevation when biome is missing — never the cell.type fallback', () => {
+    // Elevation alone is still useful grounding. What we MUST avoid is
+    // emitting the stale "island" string from cell.type as a noun.
+    const prompt = renderWith({ type: 'island', height: 50 });
+    expect(prompt).toContain('Terrain: 50m elevation');
+    expect(prompt).not.toMatch(/\bisland\b/i);
+  });
+
+  it('still renders state, culture, religion', () => {
+    const prompt = renderWith({
+      biome: 4,
+      type: 'island',
+      height: 100,
+      state: 'Eldoria',
+      culture: 'Highland',
+      religion: 'Order of Dawn',
+    });
+    expect(prompt).toContain('Terrain: grassland, 100m elevation');
+    expect(prompt).toContain('State territory: Eldoria');
+    expect(prompt).toContain('Culture: Highland');
+    expect(prompt).toContain('Religion: Order of Dawn');
+  });
+
+  it('falls back gracefully on unknown biome integers', () => {
+    // biome 99 is not a real FMG code — render only the elevation rather
+    // than emitting "biome 99" or the stale t.type fallback.
+    const prompt = renderWith({ biome: 99, type: 'island', height: 80 });
+    expect(prompt).toContain('Terrain: 80m elevation');
+    expect(prompt).not.toMatch(/\bisland\b/i);
+    expect(prompt).not.toMatch(/biome 99/);
+  });
+});
+
 describe('buildStructuredPrompt — section ordering', () => {
   it('renders geographic context before scene/roster sections and before recent chat', () => {
     const ctx = {

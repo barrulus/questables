@@ -10,6 +10,7 @@
 import { query, getClient } from '../../db/pool.js';
 import { logInfo, logError } from '../../utils/logger.js';
 import { NARRATIVE_TYPES } from '../../llm/narrative-types.js';
+import { describeTerrainCell } from '../../llm/context/terrain-naming.js';
 import { postNarrationToChat } from '../chat/dm-narrator.js';
 import { evaluateEncounterChance, generateEncounter } from '../encounters/proactive-generator.js';
 import { generateNpcsForBurg } from '../npcs/auto-generator.js';
@@ -111,7 +112,7 @@ export async function narrateSessionOpening({
     );
 
     const { rows: terrainCell } = await query(
-      `SELECT biome, type AS terrain_type, state, culture, religion
+      `SELECT biome, type, height, state, culture, religion
          FROM maps_cells WHERE world_id = $1
           AND ST_Contains(geom, ST_SetSRID(ST_MakePoint($2, $3), 0)) LIMIT 1`,
       [worldMapId, sx, sy],
@@ -132,11 +133,17 @@ export async function narrateSessionOpening({
       promptParts.push(`Session objective: ${objectives.map((o) => o.title).join('; ')}`);
     }
 
-    // Geographic context — real names only
+    // Geographic context — real names only. `maps_cells.type` is FMG's
+    // isLand boolean stringified (always "island" for land cells); never
+    // emit it as a noun — describeTerrainCell uses the biome integer.
     if (terrainCell.length) {
       const t = terrainCell[0];
-      const parts = [t.biome, t.terrain_type].filter(Boolean).join(', ');
-      promptParts.push(`Terrain: ${parts}${t.state ? ` (territory of ${t.state})` : ''}${t.culture ? `, ${t.culture} culture` : ''}`);
+      const description = describeTerrainCell(t);
+      if (description) {
+        promptParts.push(
+          `Terrain: ${description}${t.state ? ` (territory of ${t.state})` : ''}${t.culture ? `, ${t.culture} culture` : ''}`,
+        );
+      }
     }
     if (nearbyBurgs.length) {
       const burgList = nearbyBurgs.map((b) => `${b.name} (${b.statefull}, pop ${b.population})`).join('; ');
