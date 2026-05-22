@@ -732,15 +732,22 @@ export class LLMContextManager {
   }
 
   async #loadWorldLore(client, campaignId, geographic) {
-    // Prefer the acting player's burg state, then a neighbour's (in case the
-    // party is between settlements). maps_cells.state is an integer FK and is
-    // not used here — subsection matching is text-only.
+    // Match candidates from most specific (current burg) to least (global).
+    // maps_cells.state is an integer FK and is not used — subsection matching
+    // is text-only against the resolved entity names lore-extractor stores.
+    const currentBurgName = geographic?.currentBurg?.name ?? null;
+    const currentProvince = geographic?.currentBurg?.provincefull ?? null;
     const currentState =
       geographic?.currentBurg?.statefull ??
       // Fallback: neighbour's statefull may differ from the party's actual
       // state and pull cross-state lore. Acceptable when currentBurg is null.
       geographic?.nearbyBurgs?.[0]?.statefull ??
       null;
+    const currentRegionNames = new Set(
+      (geographic?.campaignRegions ?? [])
+        .map((r) => r?.name)
+        .filter(Boolean),
+    );
 
     const { rows } = await client.query(
       `SELECT section, subsection, content, updated_at
@@ -750,17 +757,22 @@ export class LLMContextManager {
     );
     if (rows.length === 0) return [];
 
-    // Weight: state-matched first, then global, then drop unrelated subsections.
-    // Recency is a tiebreaker. Hard cap at 6 to keep the prompt bounded.
+    // Tiered scoring: lower is better. Burg-specific lore outranks state lore
+    // so two different burgs in the same state stop bleeding into each other.
+    // Unscored rows are dropped entirely. Recency is the tiebreaker inside a
+    // tier. Hard cap at 6 to keep the prompt bounded.
+    const scoreRow = (subsection) => {
+      if (currentBurgName && subsection === currentBurgName) return 0;
+      if (currentProvince && subsection === currentProvince) return 1;
+      if (currentState && subsection === currentState) return 2;
+      if (subsection && currentRegionNames.has(subsection)) return 3;
+      if (subsection === null) return 4;
+      return null;
+    };
+
     const MAX_LORE_SECTIONS = 6;
     const scored = rows
-      .map((r) => {
-        let score;
-        if (currentState && r.subsection === currentState) score = 0;
-        else if (r.subsection === null) score = 1;
-        else score = null; // unrelated — drop entirely
-        return { row: r, score };
-      })
+      .map((r) => ({ row: r, score: scoreRow(r.subsection) }))
       .filter((entry) => entry.score !== null)
       .sort((a, b) => {
         if (a.score !== b.score) return a.score - b.score;

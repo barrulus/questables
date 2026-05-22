@@ -169,6 +169,7 @@ async function resolveScopeBurg(campaignId, locX, locY, insideBurgId) {
  * @param {number} [opts.locX]
  * @param {number} [opts.locY]
  * @param {string} [opts.insideBurgId]
+ * @param {string} [opts.sourceMessageId] - chat_messages.id this narration came from; FK ON DELETE CASCADE so deleting the narration removes the NPCs it spawned.
  * @returns {Promise<Array<{id: string, name: string}>>}
  */
 export async function extractAndPersistNpcs({
@@ -181,6 +182,7 @@ export async function extractAndPersistNpcs({
   locY = null,
   insideBurgId = null,
   currentScene = null,
+  sourceMessageId = null,
 }) {
   if (!narrationContent || narrationContent.length < 30) {
     return [];
@@ -366,16 +368,16 @@ ${narrationContent}`;
 
         const hasLoc = typeof locX === 'number' && typeof locY === 'number';
         const insertSql = hasLoc
-          ? `INSERT INTO public.npcs (campaign_id, name, race, occupation, appearance, personality, description, world_position, linked_burg_id, gender, age_group, scene_tag, auto_generated)
-             VALUES ($1, $2, $3, $4, $5, $6, $7, ST_SetSRID(ST_MakePoint($8, $9), 0), $10, $11, $12, $13, true)
+          ? `INSERT INTO public.npcs (campaign_id, name, race, occupation, appearance, personality, description, world_position, linked_burg_id, gender, age_group, scene_tag, source_message_id, auto_generated)
+             VALUES ($1, $2, $3, $4, $5, $6, $7, ST_SetSRID(ST_MakePoint($8, $9), 0), $10, $11, $12, $13, $14, true)
              RETURNING id, name`
-          : `INSERT INTO public.npcs (campaign_id, name, race, occupation, appearance, personality, description, linked_burg_id, gender, age_group, scene_tag, auto_generated)
-             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, true)
+          : `INSERT INTO public.npcs (campaign_id, name, race, occupation, appearance, personality, description, linked_burg_id, gender, age_group, scene_tag, source_message_id, auto_generated)
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, true)
              RETURNING id, name`;
 
         const insertParams = hasLoc
-          ? [campaignId, npc.name.trim(), npc.race.trim(), occupation, appearance, npc.personality.trim(), description, locX, locY, burg?.id ?? insideBurgId, gender, npc.age_group, currentScene]
-          : [campaignId, npc.name.trim(), npc.race.trim(), occupation, appearance, npc.personality.trim(), description, burg?.id ?? insideBurgId, gender, npc.age_group, currentScene];
+          ? [campaignId, npc.name.trim(), npc.race.trim(), occupation, appearance, npc.personality.trim(), description, locX, locY, burg?.id ?? insideBurgId, gender, npc.age_group, currentScene, sourceMessageId]
+          : [campaignId, npc.name.trim(), npc.race.trim(), occupation, appearance, npc.personality.trim(), description, burg?.id ?? insideBurgId, gender, npc.age_group, currentScene, sourceMessageId];
 
         const { rows } = await query(insertSql, insertParams);
         if (rows.length === 0) continue;

@@ -191,6 +191,7 @@ export async function postNarrationToChat({
         locY,
         insideBurgId,
         currentScene,
+        sourceMessageId: message?.id ?? null,
       }).catch((err) => {
         logError('NPC extraction failed (non-blocking)', { campaignId, error: err.message });
       });

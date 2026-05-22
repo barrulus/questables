@@ -924,6 +924,7 @@ CREATE TABLE IF NOT EXISTS public.npcs (
     gender TEXT,
     age_group TEXT CHECK (age_group IS NULL OR age_group IN ('child', 'teen', 'young_adult', 'adult', 'middle_aged', 'elder')),
     scene_tag TEXT,
+    source_message_id UUID REFERENCES public.chat_messages(id) ON DELETE CASCADE,
     created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW() NOT NULL,
     updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW() NOT NULL
 );
@@ -932,6 +933,7 @@ CREATE INDEX IF NOT EXISTS idx_npcs_location_id ON public.npcs(current_location_
 CREATE INDEX IF NOT EXISTS idx_npcs_world_position_gix
     ON public.npcs USING GIST (world_position) WHERE world_position IS NOT NULL;
 CREATE INDEX IF NOT EXISTS idx_npcs_linked_burg ON public.npcs(linked_burg_id) WHERE linked_burg_id IS NOT NULL;
+CREATE INDEX IF NOT EXISTS idx_npcs_source_message ON public.npcs(source_message_id) WHERE source_message_id IS NOT NULL;
 DROP TRIGGER IF EXISTS _touch_npcs ON public.npcs;
 CREATE TRIGGER _touch_npcs
 BEFORE UPDATE ON public.npcs
