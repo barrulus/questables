@@ -19,6 +19,44 @@ export function setLLMService(service) {
   _llmService = service;
 }
 
+// Prompt section labels the LLM occasionally echoes back as a leading markdown
+// heading. Mirrors typeLabel + section titles in llm/context/prompt-builder.js.
+const PROMPT_HEADER_LABELS = [
+  'Narrative Response',
+  'DM Narration',
+  'Scene Description',
+  'NPC Dialogue',
+  'Action Narrative',
+  'Quest Generation',
+  'Objective Description',
+  'Objective Treasure Hooks',
+  'Objective Combat Planning',
+  'Objective NPC Brief',
+  'Objective Rumours',
+  'Shop Auto-Stock',
+  'Narrative Type',
+  'Narrative Focus',
+  'Game Context Snapshot',
+];
+
+const escapeRegex = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+
+const PROMPT_HEADER_REGEX = new RegExp(
+  `^\\s*#{1,6}\\s+(?:${PROMPT_HEADER_LABELS.map(escapeRegex).join('|')})\\b[ \\t]*\\n?`,
+  'i',
+);
+
+export function stripPromptHeaders(content) {
+  if (typeof content !== 'string') return content;
+  let out = content;
+  let prev;
+  do {
+    prev = out;
+    out = out.replace(PROMPT_HEADER_REGEX, '');
+  } while (out !== prev && out.length > 0);
+  return out.trimStart();
+}
+
 /**
  * Post a narration from the LLM Dungeon Master into the Adventure (dm_broadcast) channel.
  *
@@ -47,6 +85,8 @@ export async function postNarrationToChat({
   currentScene = null,
 }) {
   try {
+    const cleanContent = stripPromptHeaders(content);
+
     // Look up the campaign DM to use as sender
     const { rows: campaignRows } = await query(
       `SELECT dm_user_id FROM campaigns WHERE id = $1`,
@@ -84,7 +124,7 @@ export async function postNarrationToChat({
       [
         campaignId,
         sessionId,
-        content,
+        cleanContent,
         messageType,
         dmUserId,
         locX,
@@ -128,10 +168,10 @@ export async function postNarrationToChat({
 
     // Fire-and-forget: extract lore facts and NPCs from the narration
     const svc = llmService || _llmService;
-    if (svc && content && messageType !== 'system_event' && messageType !== 'roll_request') {
+    if (svc && cleanContent && messageType !== 'system_event' && messageType !== 'roll_request') {
       extractAndPersistLore({
         campaignId,
-        narrationContent: content,
+        narrationContent: cleanContent,
         llmService: svc,
         locX,
         locY,
@@ -142,7 +182,7 @@ export async function postNarrationToChat({
 
       extractAndPersistNpcs({
         campaignId,
-        narrationContent: content,
+        narrationContent: cleanContent,
         llmService: svc,
         sessionId,
         actingCharacterId,
@@ -179,6 +219,8 @@ export async function postPrivateNarration({
   wsServer = null,
 }) {
   try {
+    const cleanContent = stripPromptHeaders(content);
+
     const { rows: campaignRows } = await query(
       `SELECT dm_user_id FROM campaigns WHERE id = $1`,
       [campaignId],
@@ -208,7 +250,7 @@ export async function postPrivateNarration({
       [
         campaignId,
         sessionId,
-        content,
+        cleanContent,
         messageType,
         dmUserId,
         targetUserId,
