@@ -142,9 +142,8 @@ async function parseActionIntent(contextualService, {
       try {
         return JSON.parse(result.content);
       } catch {
-        // If we can't parse, treat as a custom action
         return {
-          actionType: 'custom',
+          actionType: 'search',
           details: chatMessage,
           isFreeAction: false,
           narrationHint: 'Player typed something the parser could not classify',
@@ -153,16 +152,15 @@ async function parseActionIntent(contextualService, {
     }
 
     return {
-      actionType: 'custom',
+      actionType: 'search',
       details: chatMessage,
       isFreeAction: false,
       narrationHint: 'Intent parsing returned no result',
     };
   } catch (error) {
     logError('Action intent parsing failed', { error: error.message, campaignId });
-    // Fallback: treat as custom action and let the DM resolve it
     return {
-      actionType: 'custom',
+      actionType: 'search',
       details: chatMessage,
       isFreeAction: false,
       narrationHint: 'Intent parsing failed — resolve creatively',
@@ -240,7 +238,7 @@ export async function interceptChatAction({
     // Override: action types that are NEVER free, regardless of what the LLM says
     const NEVER_FREE = new Set([
       'move', 'interact', 'search', 'use_item', 'cast_spell', 'talk_to_npc',
-      'attack', 'dash', 'dodge', 'disengage', 'help', 'hide', 'ready', 'custom',
+      'attack', 'dash', 'dodge', 'disengage', 'help', 'hide', 'ready',
     ]);
     if (NEVER_FREE.has(intent.actionType)) {
       intent.isFreeAction = false;

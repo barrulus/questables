@@ -49,17 +49,6 @@ export const getClient = async ({ label } = {}) => {
   let released = false;
   const originalRelease = client.release.bind(client);
 
-  client.release = () => {
-    if (released) {
-      logWarn('[Database] Client released multiple times', { label });
-      return;
-    }
-    released = true;
-    originalRelease();
-    setGauge('database.pool.idle', pool.idleCount);
-    setGauge('database.pool.waiting', pool.waitingCount);
-  };
-
   const leakTimer = setTimeout(() => {
     if (!released) {
       logWarn('[Database] Client checkout exceeded watchdog threshold', { label });
@@ -69,9 +58,17 @@ export const getClient = async ({ label } = {}) => {
     leakTimer.unref();
   }
 
-  client.once('end', () => {
+  client.release = () => {
+    if (released) {
+      logWarn('[Database] Client released multiple times', { label });
+      return;
+    }
+    released = true;
     clearTimeout(leakTimer);
-  });
+    originalRelease();
+    setGauge('database.pool.idle', pool.idleCount);
+    setGauge('database.pool.waiting', pool.waitingCount);
+  };
 
   return client;
 };
