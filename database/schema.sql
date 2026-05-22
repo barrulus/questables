@@ -579,12 +579,16 @@ CREATE TABLE IF NOT EXISTS public.campaign_world_lore (
     content TEXT NOT NULL,
     cd_direction TEXT,             -- the CD's prompt/direction that generated this content
     generated_by TEXT NOT NULL DEFAULT 'manual' CHECK (generated_by IN ('llm', 'manual')),
+    source_message_id UUID REFERENCES public.chat_messages(id) ON DELETE CASCADE,
     version INT NOT NULL DEFAULT 1,
     created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW() NOT NULL,
     updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW() NOT NULL
 );
 CREATE INDEX IF NOT EXISTS idx_campaign_world_lore_campaign_id ON public.campaign_world_lore(campaign_id);
 CREATE INDEX IF NOT EXISTS idx_campaign_world_lore_section ON public.campaign_world_lore(campaign_id, section);
+CREATE INDEX IF NOT EXISTS idx_campaign_world_lore_source_message
+  ON public.campaign_world_lore (source_message_id)
+  WHERE source_message_id IS NOT NULL;
 DROP TRIGGER IF EXISTS _touch_campaign_world_lore ON public.campaign_world_lore;
 CREATE TRIGGER _touch_campaign_world_lore
 BEFORE UPDATE ON public.campaign_world_lore

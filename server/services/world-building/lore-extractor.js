@@ -62,6 +62,7 @@ const VALID_SECTIONS = new Set(['npc', 'location', 'event', 'custom', 'political
  * @param {number} [opts.locX] - X coordinate where narration occurred
  * @param {number} [opts.locY] - Y coordinate where narration occurred
  * @param {string} [opts.insideBurgId] - Burg ID if inside a settlement
+ * @param {string} [opts.sourceMessageId] - chat_messages.id this narration came from; FK ON DELETE CASCADE so deleting the narration removes its lore facts.
  */
 export async function extractAndPersistLore({
   campaignId,
@@ -70,6 +71,7 @@ export async function extractAndPersistLore({
   locX = null,
   locY = null,
   insideBurgId = null,
+  sourceMessageId = null,
 }) {
   if (!narrationContent || narrationContent.length < 50) {
     return []; // Too short to contain meaningful lore
@@ -161,11 +163,11 @@ ${narrationContent}`;
     for (const { fact } of resolvedFacts) {
       try {
         const { rows } = await query(
-          `INSERT INTO campaign_world_lore (campaign_id, section, subsection, content, generated_by)
-           VALUES ($1, $2, $3, $4, 'llm')
+          `INSERT INTO campaign_world_lore (campaign_id, section, subsection, content, generated_by, source_message_id)
+           VALUES ($1, $2, $3, $4, 'llm', $5)
            ON CONFLICT DO NOTHING
            RETURNING id`,
-          [campaignId, fact.section, fact.subsection.trim(), fact.content.trim()],
+          [campaignId, fact.section, fact.subsection.trim(), fact.content.trim(), sourceMessageId],
           { label: 'lore-extractor.persist' },
         );
         if (rows.length) {

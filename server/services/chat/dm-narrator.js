@@ -176,6 +176,7 @@ export async function postNarrationToChat({
         locX,
         locY,
         insideBurgId,
+        sourceMessageId: message?.id ?? null,
       }).catch((err) => {
         logError('Lore extraction failed (non-blocking)', { campaignId, error: err.message });
       });
