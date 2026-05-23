@@ -23,7 +23,9 @@ export function describeWithDb(name, fn) {
 }
 
 export async function openTxClient() {
-  const client = new Client();
+  const client = new Client({
+    database: process.env.PGDATABASE || process.env.DATABASE_NAME || 'questables',
+  });
   await client.connect();
   await client.query('BEGIN');
   return client;
@@ -37,9 +39,9 @@ export async function rollbackAndClose(client) {
 
 export async function seedWorld(client, { name = 'Tiny test world' } = {}) {
   const { rows } = await client.query(
-    `INSERT INTO public.maps_world (name, width_pixels, height_pixels)
-     VALUES ($1, 100, 100) RETURNING id`,
-    [name],
+    `INSERT INTO public.maps_world (name, width_pixels, height_pixels, bounds)
+     VALUES ($1, 100, 100, $2) RETURNING id`,
+    [name, JSON.stringify({ minX: 0, minY: 0, maxX: 100, maxY: 100 })],
   );
   return rows[0].id;
 }
