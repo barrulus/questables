@@ -21,3 +21,20 @@ export async function ingestCultures(client, worldId, parsed, log) {
   log(100, `${cultures.length} cultures`);
   return { rowCount: cultures.length };
 }
+
+export async function aggregateCultureGeometry(client, worldId, log) {
+  log(0, 'Culture geometry');
+  await client.query(
+    `UPDATE public.maps_cultures c
+        SET geom = sub.geom
+       FROM (
+         SELECT culture AS culture_id, ST_Multi(ST_Union(geom)) AS geom
+           FROM public.maps_cells
+          WHERE world_id = $1 AND culture IS NOT NULL
+          GROUP BY culture
+       ) sub
+      WHERE c.world_id = $1 AND c.culture_id = sub.culture_id`,
+    [worldId],
+  );
+  log(100, 'Culture geometry done');
+}
