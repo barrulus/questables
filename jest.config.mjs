@@ -41,6 +41,7 @@ export default {
     '<rootDir>/dist/',
   ],
   moduleDirectories: ['node_modules', '<rootDir>'],
+  modulePaths: ['<rootDir>/server/node_modules'],
   clearMocks: true,
   verbose: true,
 };
