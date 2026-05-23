@@ -1,0 +1,79 @@
+{
+  "info": {
+    "version": "1.122.3",
+    "exportedAt": "2026-05-23T00:00:00.000Z",
+    "mapName": "Tiny",
+    "width": 100,
+    "height": 100,
+    "seed": "42",
+    "mapId": 1
+  },
+  "settings": {"distanceUnit": "mi", "distanceScale": "5", "areaUnit": "square"},
+  "mapCoordinates": {"latT": 60, "latN": 30, "latS": -30, "lonT": 60, "lonW": -30, "lonE": 30},
+  "biomesData": {
+    "i": [0, 1],
+    "name": ["Marine", "Hot desert"],
+    "color": ["#466eab", "#fbe79f"],
+    "habitability": [0, 4],
+    "iconsDensity": [0, 10],
+    "icons": [[], ["dune"]],
+    "cost": [10, 200]
+  },
+  "pack": {
+    "vertices": [
+      {"i": 0, "p": [0, 0],   "v": [-1, -1, -1], "c": [0, -1, -1]},
+      {"i": 1, "p": [10, 0],  "v": [-1, -1, -1], "c": [0, 1, -1]},
+      {"i": 2, "p": [10, 10], "v": [-1, -1, -1], "c": [0, 1, 2]},
+      {"i": 3, "p": [0, 10],  "v": [-1, -1, -1], "c": [0, 2, -1]},
+      {"i": 4, "p": [20, 0],  "v": [-1, -1, -1], "c": [1, -1, -1]},
+      {"i": 5, "p": [20, 10], "v": [-1, -1, -1], "c": [1, 2, -1]}
+    ],
+    "cells": [
+      {"i": 0, "v": [0, 1, 2, 3], "c": [1], "p": [5, 5],   "g": 1, "h": 20, "area": 100, "f": 1, "t": 1, "haven": 0, "harbor": 0, "fl": 0, "r": 0, "conf": 0, "biome": 1, "s": 0, "pop": 1.0, "culture": 1, "burg": 1, "state": 1, "religion": 1, "province": 1},
+      {"i": 1, "v": [1, 4, 5, 2], "c": [0, 2], "p": [15, 5], "g": 1, "h": 18, "area": 100, "f": 1, "t": 1, "haven": 0, "harbor": 0, "fl": 0, "r": 0, "conf": 0, "biome": 1, "s": 0, "pop": 0.5, "culture": 1, "burg": 0, "state": 1, "religion": 1, "province": 1},
+      {"i": 2, "v": [2, 5, 3],    "c": [1],    "p": [10, 12], "g": 2, "h": 5, "area": 50, "f": 2, "t": -1, "haven": 0, "harbor": 0, "fl": 0, "r": 0, "conf": 0, "biome": 0, "s": 0, "pop": 0,   "culture": 0, "burg": 0, "state": 0, "religion": 0, "province": 0}
+    ],
+    "features": [
+      {"i": 0, "type": "ocean", "land": false, "border": true, "cells": 0, "firstCell": 0, "vertices": [], "area": 0, "shoreline": [], "height": 0},
+      {"i": 1, "type": "island", "land": true, "border": false, "cells": 2, "firstCell": 0, "vertices": [], "area": 200, "shoreline": [], "height": 19, "name": "Tinyland"},
+      {"i": 2, "type": "lake", "land": false, "group": "freshwater", "cells": 1, "firstCell": 2, "vertices": [], "area": 50, "shoreline": [], "height": 5, "flux": 1, "temp": 15, "evaporation": 1, "name": "Tinylake", "outlet": null}
+    ],
+    "cultures": [
+      {"name": "Wildlands", "i": 0, "base": 0, "shield": "fantasy2", "center": 0, "color": "#cccccc", "type": "Generic", "expansionism": 0, "code": "Wi"},
+      {"name": "Tinyfolk", "i": 1, "base": 1, "shield": "fantasy2", "center": 0, "color": "#aff05b", "type": "Generic", "expansionism": 1.1, "origins": [0], "code": "Ti"}
+    ],
+    "religions": [
+      {"name": "No religion", "i": 0, "type": "None", "form": "Non-theism", "culture": 0, "center": 0, "color": "#cccccc", "code": "No", "expansion": "culture", "expansionism": 0},
+      {"name": "Tinyfaith", "i": 1, "type": "Folk", "form": "Polytheism", "culture": 1, "center": 0, "deity": "Tinyx, The Small", "color": "#aff05b", "code": "Tf", "expansion": "state", "expansionism": 0, "origins": [0]}
+    ],
+    "burgs": [
+      {"i": 0},
+      {"i": 1, "cell": 0, "x": 5, "y": 5, "name": "Tinytown", "state": 1, "culture": 1, "feature": 1, "capital": 1, "population": 2.5, "basePopulation": 2.0, "type": "Generic", "settlementType": "capital", "group": "capital", "citadel": 1, "plaza": 1, "walls": 1, "shanty": 0, "temple": 0, "port": 0, "coa": {"t1": "or", "shield": "vesicaPiscis", "ordinaries": [], "charges": []}}
+    ],
+    "states": [
+      {"i": 0, "name": "Neutrals"},
+      {"i": 1, "name": "Tinystate", "fullName": "Republic of Tinystate", "form": "Republic", "formName": "Republic", "expansionism": 1.0, "capital": 1, "type": "Generic", "center": 0, "culture": 1, "religion": 1, "color": "#66c2a5", "pole": [5, 5], "neighbors": [], "urban": 2.5, "rural": 0.5, "area": 200, "coa": {"t1": "gules", "shield": "vesicaPiscis", "charges": []}, "campaigns": [{"name": "Tinywar", "start": 1500, "end": 1505}], "diplomacy": ["x", "x"], "military": [{"i": 0, "a": 100, "cell": 0, "x": 5, "y": 5, "bx": 5, "by": 5, "u": {"infantry": 50, "archers": 30, "cavalry": 15, "artillery": 5}, "n": 0, "name": "1st Tiny Regiment", "state": 1, "icon": "⚔️"}]}
+    ],
+    "provinces": [
+      0,
+      {"i": 1, "state": 1, "center": 0, "burg": 1, "name": "Tinyprov", "formName": "Province", "fullName": "Tinyprov Province", "color": "#6dc4c3", "pole": [5, 5], "coa": {"t1": "sable", "shield": "vesicaPiscis"}}
+    ],
+    "rivers": [
+      {"i": 1, "source": 2, "mouth": 0, "discharge": 10, "length": 5.0, "width": 0.5, "widthFactor": 1.0, "sourceWidth": 0.1, "parent": 1, "cells": [2, 1, 0], "basin": 1, "name": "Tinyriver", "type": "Stream"}
+    ],
+    "routes": [
+      {"i": 0, "group": "roads", "type": "trail", "feature": 1, "points": [[5, 5, 0], [15, 5, 1]]}
+    ],
+    "markers": [
+      {"i": 0, "icon": "🌋", "type": "volcanoes", "x": 12, "y": 5, "cell": 1, "dx": 50, "px": 13}
+    ],
+    "zones": [
+      {"i": 0, "name": "Tinyzone", "type": "Invasion", "cells": [0, 1], "color": "url(#hatch1)"}
+    ]
+  },
+  "notes": [
+    {"id": "burg1", "name": "Tinytown", "legend": "Founded in 1100."},
+    {"id": "regiment1-0", "name": "1st Tiny Regiment", "legend": "Composition: 50/30/15/5."}
+  ],
+  "nameBases": []
+}
