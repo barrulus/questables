@@ -25,3 +25,20 @@ export async function ingestFeatures(client, worldId, parsed, log) {
   log(100, `${features.length} features`);
   return { rowCount: features.length };
 }
+
+export async function aggregateFeatureGeometry(client, worldId, log) {
+  log(0, 'Feature geometry');
+  await client.query(
+    `UPDATE public.maps_features f
+        SET geom = sub.geom
+       FROM (
+         SELECT feature AS feature_id, ST_Multi(ST_Union(geom)) AS geom
+           FROM public.maps_cells
+          WHERE world_id = $1 AND feature IS NOT NULL
+          GROUP BY feature
+       ) sub
+      WHERE f.world_id = $1 AND f.feature_id = sub.feature_id`,
+    [worldId],
+  );
+  log(100, 'Feature geometry done');
+}
