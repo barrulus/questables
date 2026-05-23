@@ -28,6 +28,7 @@
     "stream-json": "^3.1.0"
   },
   "devDependencies": {
+    "@types/pg-copy-streams": "^1.2.5",
     "nodemon": "^3.1.10"
   }
 }

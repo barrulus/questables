@@ -77,7 +77,7 @@ server/services/maps/fmg-full-json/
 - All ingester functions take `(client, worldId, parsed, log)` where `client` is a `pg` client in an open transaction, `parsed` is the relevant entity array from the FMG file, and `log` is a stage-progress callback `(percent, message) => void`.
 - All SQL writes use parametrised queries; bulk inserts use `pg-copy-streams` for `maps_cells` (already a server dep — verify in T2) or `UNNEST` for medium-sized arrays.
 - Commit cadence: one commit per task unless a task explicitly says otherwise. Commit message style follows the existing repo convention (see `git log --oneline -20`): `feat(maps): ...`, `feat(db): ...`, `test(maps): ...`.
-- Tests use Jest. New tests live under `tests/maps/fmg-full-json/`. Run a single test file with `npx jest tests/maps/fmg-full-json/<file>.test.js`.
+- Tests use Jest. New tests live under `tests/maps/fmg-full-json/`. The project requires `--experimental-vm-modules` for ESM, so always run with `npm test -- tests/maps/fmg-full-json/<file>.test.js` (NOT `npx jest <path>` — that route fails with "Cannot use import statement outside a module").
 - Type-check with `npx tsc --noEmit` (per memory).
 
 ---
@@ -1028,7 +1028,17 @@ Test pattern for every ingester:
 4. SELECT from the new table, assert shape + count.
 5. ROLLBACK in `afterAll` to keep the DB clean.
 
-These tests require a live DB. They're under `tests/maps/fmg-full-json/ingesters/` and are skipped automatically if `process.env.DATABASE_URL` is unset (helper in Task 7).
+These tests require a live DB. They're under `tests/maps/fmg-full-json/ingesters/` and are skipped automatically if `process.env.PGUSER`/`DATABASE_URL` is unset (helper in Task 7).
+
+**Every ingester test file MUST start with the `@jest-environment node` docblock** — `pg` uses webcrypto APIs (`TextEncoder` etc.) that are absent in Jest's default `jsdom` environment, so tests without the docblock fail with `TextEncoder is not defined`:
+
+```js
+/** @jest-environment node */
+import { describeWithDb, ... } from '../db-harness.js';
+// rest of the test
+```
+
+Run the tests with `PGUSER=barrulus npm test -- <path>`.
 
 ---
 
