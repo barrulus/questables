@@ -1,5 +1,6 @@
 .env
 .env.local
+.envrc
 .direnv/
 node_modules/
 *.crt
@@ -19,3 +20,8 @@ server/tegola/cache/
 :TEMP/chrome-mcp/
 .worktrees/
 .superpowers/
+
+# Local-only artifacts (never tracked)
+repomix-output.xml
+# FMG full-JSON fixtures (large, kept locally for RUN_E2E=1 runs)
+/*Full *-*-*-*-*.json
