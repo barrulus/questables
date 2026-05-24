@@ -1,4 +1,5 @@
 import { withTransaction } from '../../../db/pool.js';
+import pg from 'pg';
 import { parseFmgFile } from './parser.js';
 import { validateParsedFmg } from './validators.js';
 import { ingestWorld } from './ingesters/world.js';
@@ -93,7 +94,26 @@ export async function ingestFullJson(worldId, filePath, options = {}) {
   if (externalClient) {
     report = await run(externalClient);
   } else {
-    report = await withTransaction(run, { label: 'fmg.full_json.ingest' });
+    // Production path: dedicated client with disabled query_timeout. The
+    // aggregate ST_Union steps over 60k+ cells routinely exceed the pool's
+    // 30s default. We also hold the connection out of the pool for the full
+    // ingest (~30-90s) so other server requests aren't blocked behind it.
+    const client = new pg.Client({
+      ...(await import('../../../db/config.js')).poolConfig,
+      query_timeout: 0,
+      statement_timeout: 0,
+    });
+    await client.connect();
+    try {
+      await client.query('BEGIN');
+      report = await run(client);
+      await client.query('COMMIT');
+    } catch (err) {
+      try { await client.query('ROLLBACK'); } catch {}
+      throw err;
+    } finally {
+      await client.end();
+    }
     if (!skipSettlemaker) {
       // Lazy import avoids pulling settlemaker (ESM-only) into Jest's module graph.
       const { ingestBurgEntrancesForWorldIfReady } = await import('../ingestion-service.js');
