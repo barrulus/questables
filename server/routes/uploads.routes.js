@@ -259,6 +259,19 @@ export const registerUploadRoutes = (app, { upload, uploadSvg }) => {
     }
   });
 
+  // --- FMG Full JSON import: poll job status ---
+  router.get('/upload/map/jobs/:jobId', requireAuth, async (req, res) => {
+    try {
+      const { getJobStatus } = await import('../services/maps/fmg-full-json/job-runner.js');
+      const status = await getJobStatus(req.params.jobId);
+      if (!status) return res.status(404).json({ error: 'job not found' });
+      return res.json(status);
+    } catch (err) {
+      logError('Job status fetch failed', err, { jobId: req.params.jobId });
+      return res.status(500).json({ error: err.message });
+    }
+  });
+
   // --- Map Wizard: GeoJSON layer upload (Steps 1-5) ---
   router.post('/upload/map/:worldId/layer', requireAuth, upload.single('geojsonFile'), async (req, res) => {
     const { worldId } = req.params;
