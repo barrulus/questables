@@ -28,7 +28,7 @@ export async function aggregateCultureGeometry(client, worldId, log) {
     `UPDATE public.maps_cultures c
         SET geom = sub.geom
        FROM (
-         SELECT culture AS culture_id, ST_Multi(ST_Union(geom)) AS geom
+         SELECT culture AS culture_id, ST_Multi(ST_Union(ST_Buffer(geom, 0))) AS geom
            FROM public.maps_cells
           WHERE world_id = $1 AND culture IS NOT NULL
           GROUP BY culture

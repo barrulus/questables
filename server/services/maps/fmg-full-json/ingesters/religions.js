@@ -32,7 +32,7 @@ export async function aggregateReligionGeometry(client, worldId, log) {
     `UPDATE public.maps_religions r
         SET geom = sub.geom
        FROM (
-         SELECT religion AS religion_id, ST_Multi(ST_Union(geom)) AS geom
+         SELECT religion AS religion_id, ST_Multi(ST_Union(ST_Buffer(geom, 0))) AS geom
            FROM public.maps_cells
           WHERE world_id = $1 AND religion IS NOT NULL
           GROUP BY religion

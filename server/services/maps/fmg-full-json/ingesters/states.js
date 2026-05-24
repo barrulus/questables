@@ -44,7 +44,7 @@ export async function aggregateStateGeometry(client, worldId, log) {
     `UPDATE public.maps_states st
         SET geom = sub.geom
        FROM (
-         SELECT state AS state_id, ST_Multi(ST_Union(geom)) AS geom
+         SELECT state AS state_id, ST_Multi(ST_Union(ST_Buffer(geom, 0))) AS geom
            FROM public.maps_cells
           WHERE world_id = $1 AND state IS NOT NULL AND state > 0
           GROUP BY state
