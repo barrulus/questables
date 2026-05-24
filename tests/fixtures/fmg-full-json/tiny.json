@@ -48,7 +48,7 @@
     ],
     "burgs": [
       {"i": 0},
-      {"i": 1, "cell": 0, "x": 5, "y": 5, "name": "Tinytown", "state": 1, "culture": 1, "feature": 1, "capital": 1, "population": 2.5, "basePopulation": 2.0, "type": "Generic", "settlementType": "capital", "group": "capital", "citadel": 1, "plaza": 1, "walls": 1, "shanty": 0, "temple": 0, "port": 0, "coa": {"t1": "or", "shield": "vesicaPiscis", "ordinaries": [], "charges": []}}
+      {"i": 1, "cell": 0, "x": 5, "y": 5, "name": "Tinytown", "state": 1, "province": 1, "culture": 1, "religion": 1, "feature": 1, "capital": 1, "population": 2.5, "basePopulation": 2.0, "type": "Generic", "settlementType": "capital", "group": "capital", "citadel": 1, "plaza": 1, "walls": 1, "shanty": 0, "temple": 0, "port": 0, "coa": {"t1": "or", "shield": "vesicaPiscis", "ordinaries": [], "charges": []}}
     ],
     "states": [
       {"i": 0, "name": "Neutrals"},

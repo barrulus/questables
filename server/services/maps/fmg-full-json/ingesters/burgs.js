@@ -1,0 +1,77 @@
+import { upsertCoa } from './coats.js';
+
+const PORT_THRESHOLD = 0.4;
+
+function nameById(arr, id) {
+  if (id == null) return null;
+  const entity = Array.isArray(arr) ? arr[id] : null;
+  if (!entity || typeof entity !== 'object') return null;
+  return entity.name ?? null;
+}
+
+function intOrNull(v) {
+  if (v == null || Number.isNaN(Number(v))) return null;
+  return Math.round(Number(v));
+}
+
+export async function ingestBurgs(client, worldId, parsed, log) {
+  log(0, 'Burgs');
+  const burgs = (parsed.pack?.burgs || []).filter((b, i) => b && typeof b === 'object' && i > 0);
+  if (burgs.length === 0) { log(100, 'No burgs'); return { rowCount: 0 }; }
+
+  const states = parsed.pack?.states || [];
+  const provinces = parsed.pack?.provinces || [];
+  const cultures = parsed.pack?.cultures || [];
+  const religions = parsed.pack?.religions || [];
+
+  for (let idx = 0; idx < burgs.length; idx++) {
+    const b = burgs[idx];
+    await client.query(
+      `INSERT INTO public.maps_burgs
+        (world_id, burg_id, name, state, province, culture, religion,
+         population, elevation, capital, port, citadel, walls, plaza,
+         temple, shanty, xpixel, ypixel, cell, type, is_large_port,
+         is_regional_center, settlement_type, base_population, "group", feature, geom)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26,
+               ST_SetSRID(ST_MakePoint($17, $18), 0))
+       ON CONFLICT (world_id, burg_id) DO UPDATE SET
+         name=EXCLUDED.name, state=EXCLUDED.state, province=EXCLUDED.province,
+         culture=EXCLUDED.culture, religion=EXCLUDED.religion,
+         population=EXCLUDED.population, elevation=EXCLUDED.elevation,
+         capital=EXCLUDED.capital, port=EXCLUDED.port, citadel=EXCLUDED.citadel,
+         walls=EXCLUDED.walls, plaza=EXCLUDED.plaza, temple=EXCLUDED.temple,
+         shanty=EXCLUDED.shanty, xpixel=EXCLUDED.xpixel, ypixel=EXCLUDED.ypixel,
+         cell=EXCLUDED.cell, type=EXCLUDED.type, is_large_port=EXCLUDED.is_large_port,
+         is_regional_center=EXCLUDED.is_regional_center,
+         settlement_type=EXCLUDED.settlement_type,
+         base_population=EXCLUDED.base_population, "group"=EXCLUDED."group",
+         feature=EXCLUDED.feature, geom=EXCLUDED.geom`,
+      [
+        worldId, b.i, b.name ?? null,
+        nameById(states, b.state),
+        nameById(provinces, b.province),
+        nameById(cultures, b.culture),
+        nameById(religions, b.religion),
+        intOrNull(b.population),
+        intOrNull(b.elevation),
+        Boolean(b.capital),
+        Boolean(b.port),
+        Boolean(b.citadel),
+        Boolean(b.walls),
+        Boolean(b.plaza),
+        Boolean(b.temple),
+        Boolean(b.shanty),
+        b.x ?? null, b.y ?? null,
+        b.cell ?? null, b.type ?? null,
+        b.port > PORT_THRESHOLD,
+        Boolean(b.capital),
+        b.settlementType ?? null, b.basePopulation ?? null,
+        b.group ?? null, b.feature ?? null,
+      ],
+    );
+    if (b.coa) await upsertCoa(client, worldId, 'burg', b.i, b.coa);
+    if (idx % 200 === 0) log(Math.floor((idx / burgs.length) * 100), `burgs ${idx}/${burgs.length}`);
+  }
+  log(100, `${burgs.length} burgs`);
+  return { rowCount: burgs.length };
+}
