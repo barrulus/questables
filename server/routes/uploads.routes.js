@@ -224,6 +224,41 @@ export const registerUploadRoutes = (app, { upload, uploadSvg }) => {
     }
   });
 
+  // --- FMG Full JSON import: accept whole FMG export, start async ingest ---
+  router.post('/upload/map/full-json', requireAuth, upload.single('jsonFile'), async (req, res) => {
+    if (!req.file) return res.status(400).json({ error: 'jsonFile is required' });
+    try {
+      const { peekFmgHeader } = await import('../services/maps/fmg-full-json/peek-header.js');
+      const { startImportJob } = await import('../services/maps/fmg-full-json/job-runner.js');
+
+      const info = await peekFmgHeader(req.file.path);
+      const worldName = (req.body?.worldName || info.mapName || 'Untitled FMG world').slice(0, 200);
+      const worldId = await createOrUpdateWorld({
+        name: worldName,
+        description: req.body?.description || null,
+        widthPixels: info.width,
+        heightPixels: info.height,
+        metersPerPixel: null,
+        uploadedBy: req.user?.id ?? null,
+      });
+      const { jobId } = await startImportJob({
+        worldId, filePath: req.file.path,
+        uploadedBy: req.user?.id ?? null,
+        fileSizeBytes: req.file.size,
+      });
+      logInfo('FMG full JSON import started', {
+        telemetryEvent: 'upload.map.full_json',
+        worldId,
+        jobId,
+        userId: req.user?.id,
+      });
+      return res.status(202).json({ worldId, jobId });
+    } catch (err) {
+      logError('FMG full JSON upload failed', err, { filename: req.file?.filename });
+      return res.status(500).json({ error: err.message });
+    }
+  });
+
   // --- Map Wizard: GeoJSON layer upload (Steps 1-5) ---
   router.post('/upload/map/:worldId/layer', requireAuth, upload.single('geojsonFile'), async (req, res) => {
     const { worldId } = req.params;
