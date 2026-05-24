@@ -374,7 +374,7 @@ export const ingestLayer = async (worldId, layerType, geojsonObj) => {
   return { layerType, rowCount };
 };
 
-async function ingestBurgEntrancesForWorldIfReady(worldId) {
+export async function ingestBurgEntrancesForWorldIfReady(worldId) {
   const status = await getWorldIngestionStatus(worldId);
   if (!(status.burgs > 0 && status.routes > 0)) return;
   let ingestedCount = 0;
