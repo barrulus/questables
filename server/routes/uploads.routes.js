@@ -259,6 +259,27 @@ export const registerUploadRoutes = (app, { upload, uploadSvg }) => {
     }
   });
 
+  // --- FMG Full JSON import: delete world (rollback partially-ingested world) ---
+  router.delete('/upload/map/:worldId', requireAuth, async (req, res) => {
+    try {
+      const { query } = await import('../db/pool.js');
+      const result = await query(
+        `DELETE FROM public.maps_world WHERE id = $1`,
+        [req.params.worldId],
+        { label: 'fmg.world.delete' },
+      );
+      logInfo('World deleted', {
+        telemetryEvent: 'upload.map.delete',
+        worldId: req.params.worldId,
+        userId: req.user?.id,
+      });
+      return res.json({ deleted: result.rowCount });
+    } catch (err) {
+      logError('World delete failed', err, { worldId: req.params.worldId });
+      return res.status(500).json({ error: err.message });
+    }
+  });
+
   // --- FMG Full JSON import: poll job status ---
   router.get('/upload/map/jobs/:jobId', requireAuth, async (req, res) => {
     try {
