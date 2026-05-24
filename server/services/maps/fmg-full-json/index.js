@@ -51,11 +51,12 @@ const AGGREGATIONS = [
 ];
 
 export async function ingestFullJson(worldId, filePath, options = {}) {
-  const { client: externalClient, onProgress = () => {} } = options;
+  const { client: externalClient, onProgress = () => {}, skipValidation = false, skipSettlemaker = false } = options;
   const parsed = await parseFmgFile(filePath);
   // Skip validation when an external client is provided (test/caller already owns the
   // transaction and may supply a synthetic fixture that does not meet production minimums).
-  if (!externalClient) {
+  // Also skip when skipValidation is explicitly set (e.g. job runner test with tiny fixture).
+  if (!externalClient && !skipValidation) {
     validateParsedFmg(parsed);
   }
 
@@ -93,9 +94,11 @@ export async function ingestFullJson(worldId, filePath, options = {}) {
     report = await run(externalClient);
   } else {
     report = await withTransaction(run, { label: 'fmg.full_json.ingest' });
-    // Lazy import avoids pulling settlemaker (ESM-only) into Jest's module graph.
-    const { ingestBurgEntrancesForWorldIfReady } = await import('../ingestion-service.js');
-    await ingestBurgEntrancesForWorldIfReady(worldId);
+    if (!skipSettlemaker) {
+      // Lazy import avoids pulling settlemaker (ESM-only) into Jest's module graph.
+      const { ingestBurgEntrancesForWorldIfReady } = await import('../ingestion-service.js');
+      await ingestBurgEntrancesForWorldIfReady(worldId);
+    }
   }
   onProgress({ stage: 'done', percent: 100, message: 'Ingest complete' });
   return report;
