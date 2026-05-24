@@ -293,6 +293,35 @@ export const registerUploadRoutes = (app, { upload, uploadSvg }) => {
     }
   });
 
+  // --- FMG Full JSON import: attach SVG to an existing world (Plan B deletes the old /svg creator) ---
+  router.post('/upload/map/:worldId/svg', requireAuth, uploadSvg.single('svgFile'), async (req, res) => {
+    if (!req.file) return res.status(400).json({ error: 'svgFile is required' });
+    try {
+      const { query } = await import('../db/pool.js');
+      // Store the SVG path on the world row. geojson_url is a legacy column name
+      // repurposed here; it will be renamed in a future migration.
+      await query(
+        `UPDATE public.maps_world
+            SET geojson_url = $2, updated_at = now()
+          WHERE id = $1`,
+        [req.params.worldId, req.file.path],
+        { label: 'fmg.svg.attach' },
+      );
+      logInfo('SVG attached to world', {
+        telemetryEvent: 'upload.map.svg_attach',
+        worldId: req.params.worldId,
+        userId: req.user?.id,
+      });
+      return res.json({ ok: true, worldId: req.params.worldId });
+    } catch (err) {
+      logError('SVG attach failed', err, { worldId: req.params.worldId, filename: req.file?.filename });
+      return res.status(500).json({ error: err.message });
+    } finally {
+      // SVG is only needed for dimension extraction; delete the staged file
+      if (req.file?.path) await fs.unlink(req.file.path).catch(() => {});
+    }
+  });
+
   // --- Map Wizard: GeoJSON layer upload (Steps 1-5) ---
   router.post('/upload/map/:worldId/layer', requireAuth, upload.single('geojsonFile'), async (req, res) => {
     const { worldId } = req.params;
