@@ -41,14 +41,21 @@ async function loadMetersPerPixel(client, worldId) {
   return rows[0]?.meters_per_pixel ? Number(rows[0].meters_per_pixel) : null;
 }
 
-function parsePolygonRing(geojsonStr) {
+function parsePolygonRings(geojsonStr) {
   const g = JSON.parse(geojsonStr);
-  if (g?.type !== 'Polygon') return null;
-  const ring = g.coordinates?.[0];
-  if (!Array.isArray(ring) || ring.length < 4) return null;
-  // GeoJSON closes the ring (last == first); settlemaker's contract is
-  // "Don't repeat the first vertex at the end" — strip it.
-  return ring.slice(0, -1);
+  if (g?.type !== 'Polygon') return [];
+  const rings = [];
+  // Emit the exterior ring AND every interior ring (island holes).
+  // Settlemaker classifies water by even-odd ring parity, so a centroid
+  // inside lake-outer + island-hole counts twice → land. Dropping holes
+  // here would flood islands.
+  for (const ring of g.coordinates ?? []) {
+    if (!Array.isArray(ring) || ring.length < 4) continue;
+    // GeoJSON closes the ring (last == first); settlemaker's contract is
+    // "Don't repeat the first vertex at the end" — strip it.
+    rings.push(ring.slice(0, -1));
+  }
+  return rings;
 }
 
 export async function loadCoastlineGeometry(client, burg, opts = {}) {
@@ -63,9 +70,14 @@ export async function loadCoastlineGeometry(client, burg, opts = {}) {
   const rLocal = Number.isFinite(opts.rLocal) ? opts.rLocal : DEFAULT_R_LOCAL;
   const rWorldGeom = rWorldPx / GEOM_TO_PIXEL; // pixel → geom units
 
+  // ST_Union merges adjacent water cells into contiguous water bodies before
+  // dumping. Without it every FMG Voronoi cell arrives as its own tiny ring
+  // and settlemaker's point-in-polygon classification produces scattered
+  // water patches instead of a coherent shoreline (e.g. burg 15953
+  // "Ertelenlik": 772 lake cells → water confetti around the town).
   const { rows } = await client.query(
     `WITH b AS (SELECT geom FROM public.maps_burgs WHERE id = $1)
-     SELECT ST_AsGeoJSON((ST_Dump(c.geom)).geom) AS poly
+     SELECT ST_AsGeoJSON((ST_Dump(ST_Union(c.geom))).geom) AS poly
        FROM public.maps_cells c, b
       WHERE c.world_id = $2
         AND c.type IN ('ocean','lake')
@@ -81,19 +93,19 @@ export async function loadCoastlineGeometry(client, burg, opts = {}) {
 
   const polygons = [];
   for (const r of rows) {
-    const ring = parsePolygonRing(r.poly);
-    if (!ring) continue;
-    const local = ring.map(([gx, gy]) => {
-      // geom → pixel (y un-flip from PostGIS y-up to pixel y-down)
-      const cellPxX = gx * GEOM_TO_PIXEL;
-      const cellPxY = -gy * GEOM_TO_PIXEL;
-      // burg-local pixel offset (y-down)
-      const dxPx = cellPxX - burgPxX;
-      const dyPx = cellPxY - burgPxY;
-      // settlement-local scale
-      return { x: dxPx * scale, y: dyPx * scale };
-    });
-    polygons.push(local);
+    for (const ring of parsePolygonRings(r.poly)) {
+      const local = ring.map(([gx, gy]) => {
+        // geom → pixel (y un-flip from PostGIS y-up to pixel y-down)
+        const cellPxX = gx * GEOM_TO_PIXEL;
+        const cellPxY = -gy * GEOM_TO_PIXEL;
+        // burg-local pixel offset (y-down)
+        const dxPx = cellPxX - burgPxX;
+        const dyPx = cellPxY - burgPxY;
+        // settlement-local scale
+        return { x: dxPx * scale, y: dyPx * scale };
+      });
+      polygons.push(local);
+    }
   }
   return polygons;
 }
