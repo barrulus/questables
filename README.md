@@ -110,7 +110,7 @@ npm run dev:local           # frontend + backend together
 - Backend API: <http://localhost:5101>
 - Health: <http://localhost:5101/api/health>
 
-![The Questables landing page, with a Sign in with passkey button and three cards describing features for players, dungeon masters, and gameplay](docs/images/landing.png)
+![The Questables landing page: a parchment broadside with the app icon framed on the left and the headline "No one has to run the game" on the right, above three numbered claims about the map, game state, and licence](docs/images/landing.png)
 
 Sign-in is WebAuthn passkeys — there are no demo accounts, so the first account comes from
 `npm run db:setup` seeding an admin.
