@@ -94,10 +94,28 @@ If a contribution carries third-party code, say so in the PR description and inc
 ## Before opening a pull request
 
 ```bash
-npx tsc --noEmit     # type check — Vite's dev server does not do this
-npm run lint         # zero warnings tolerated
-npm test             # Jest suite
+npx tsc --noEmit                    # type check — Vite's dev server does not do this
+npx eslint <the files you changed>  # see the caveat below
+npm test                            # Jest suite
 ```
+
+`npx tsc --noEmit` must be clean, with no new failures in `npm test`.
+
+**Lint caveat.** `npm run lint` runs ESLint across the whole repo with `--max-warnings 0`, and it
+**does not currently pass on a clean checkout** — there is a pre-existing backlog of 66 findings:
+
+| Count | Rule | What it is |
+|-------|------|-----------|
+| 39 | `react-hooks/exhaustive-deps` | warnings, mostly in the map components |
+| 20 | `no-undef` | `process`/`console` in `tests/*.js` — an ESLint config gap, not real defects |
+| 3 | `no-empty` | empty catch blocks |
+| 2 | `@typescript-eslint/no-unused-vars` | |
+| 2 | — | unused `eslint-disable` directives |
+
+So lint the files you touched and leave them clean, rather than running the repo-wide script and
+trying to interpret a red result you did not cause. Please don't fold unrelated fixes from that
+backlog into a feature PR; clearing it is worth doing as its own change, at which point this
+section goes back to simply saying `npm run lint`.
 
 Match the conventions already in the surrounding code: `snake_case` database columns and
 `camelCase` API responses, business logic in services rather than routes, OpenLayers layers built
