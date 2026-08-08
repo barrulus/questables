@@ -1,357 +1,349 @@
-# D&D 5e Campaign Manager
+# Questables
 
-A comprehensive web application for managing D&D 5e campaigns, characters, and gameplay sessions with integrated world mapping and PostgreSQL database support.
+A multiplayer D&D 5e platform where **the LLM runs the game**. Players declare actions, the
+model narrates outcomes and drives NPCs and enemies, and the human "Campaign Director" shapes
+the world rather than adjudicating every roll.
 
-## Features
+The world itself is real spatial data: maps imported from [Azgaar's Fantasy Map
+Generator](https://azgaar.github.io/Fantasy-Map-Generator/) are stored in PostGIS and rendered
+with OpenLayers, so burgs, routes, rivers, and biomes are queryable geometry rather than
+decoration.
 
-### Connected Dashboards
-- Player dashboard loads the signed-in user's characters and campaign membership from `/api/users/:id/*` and `/api/campaigns/public`, failing visibly if the backend is unreachable.
-- DM dashboard consumes the same live data sources for campaign administration.
-- Admin dashboard calls `/api/admin/metrics`; a valid admin session is required and the UI now reflects errors when metrics are unavailable.
+> **Status:** actively developed, single-operator project. There is no demo mode and no hosted
+> instance — a working PostgreSQL + PostGIS database is mandatory, and narrative features need a
+> reachable LLM provider.
 
-### Character & Campaign Management
-- Character sheets, spellbooks, and inventory panels read and write directly to the PostgreSQL backend via the shared database helpers.
-- Campaign join/leave actions call the live Express endpoints and refresh UI state from server responses.
-- Session manager uses `/api/campaigns/:id/sessions` for lifecycle operations and surfaces backend validation errors.
+---
 
-### Messaging & Real-Time Hooks
-- Chat components persist party messages and dice rolls through `/api/campaigns/:id/messages` and respect the configured WebSocket host.
-- Standalone dice and exploration utilities are intentionally disabled with `FeatureUnavailable` notices until backed services ship, preventing dummy data from reappearing.
+## What it does
 
-### Live Narrative Console
-- The in-game "Narratives" panel lets DMs and co-DMs call `/api/campaigns/:campaignId/narratives/*` endpoints for DM narration, scene descriptions, NPC dialogue, action outcomes, and quest outlines using the active campaign/session context.
-- Responses display verbatim with provider metadata, cache indicators, and surfaced backend errors—there is no local fallback or synthetic prose when the LLM service is unavailable.
+**Autonomous DM.** Player actions POST to the backend and return immediately; the LLM call runs
+async and its result is broadcast over WebSocket. Responses are constrained by a JSON schema
+(narration, mechanical outcome, required rolls, phase transitions), so the model's output feeds
+the game state machine directly instead of being free prose someone has to interpret.
 
-### LLM Monitoring & Cache Governance
-- `/api/admin/llm/metrics` streams live request counters, provider latency averages, token totals, and the latest 25 generation attempts; the admin dashboard now renders this data on the **LLM Workloads** tab.
-- `/api/admin/llm/cache` exposes cache entries (provider/model, TTL, timestamps) with destructive controls for clearing all entries or a specific key—no dummy cache rows are ever returned.
+**Server-authoritative game state.** Phase (exploration / combat / social / rest) and turn order
+live on the session row, mutated under `SELECT FOR UPDATE` and written to an audit table. Mutable
+per-session character state (HP, conditions, hit dice, death saves) shadows the character sheet in
+`session_live_states` so a session never corrupts the canonical character.
 
-### Mapping & Spatial Data
-- OpenLayers map viewer loads world metadata and spatial layers from `/api/maps/world` and related PostGIS-powered routes.
-- Campaign location overlays rely on live responses; failures present actionable error states instead of silent fallbacks.
+**Full 5e loop.** Character creation wizard, combat with LLM-controlled enemy turns, death saves,
+short/long rests, levelling with XP thresholds, NPC shops, and weighted loot tables — all backed by
+SRD data imported from Open5e (2014 and 2024 documents).
 
-### Operational Transparency
-- `/api/health` exposes basic pool statistics for the database server and is covered by automated smoke tests (`tests/live-api.integration.test.js`).
-- UI-level error boundaries and toasts communicate authentication issues, missing configuration, and backend outages without fabricating success states.
+**World mapping.** Pixel-space projection (SRID 0) preserving FMG coordinates, viewport-driven
+layer loading, burg entrance gates and settlement maps supplied by the external `settlemaker`
+generator, coastline-aware harbours, and narrative travel between locations with computed travel
+times.
 
-## Technology Stack
+**World building.** A cascading LLM pipeline where each step feeds the next, plus lore capture,
+scene-scoped context assembly, and hallucination guards that keep generated content anchored to
+what the database actually says.
 
-- **Frontend**: React + TypeScript + Tailwind CSS v4
-- **Backend**: Express.js + PostgreSQL 17 + PostGIS
-- **Database Architecture**: UUID primary keys, JSONB fields, field mapping utilities
-- **Real-time Features**: Polling-based updates, database health monitoring
-- **Error Handling**: Centralized error boundaries and standardized patterns
-- **Mapping**: OpenLayers with spatial data support
-- **UI Components**: ShadCN/UI component library
+**Operations.** JWT auth with bcrypt, WebAuthn passkeys, AES-256-GCM encryption of user PII,
+role-based access (`player` / `dm` / `admin`), rate limiting, moderation endpoints, and an admin
+dashboard surfacing LLM request metrics, provider health, and cache governance.
 
-## Phase 2 Architecture
+---
 
-The application now features a complete database integration with:
+## Tech stack
 
-### API Endpoints
-- **Health Monitoring**: `/api/health` - Database connection status and metrics
-- **Characters**: Full CRUD operations with validation and ownership checks
-- **Campaigns**: Campaign lifecycle management with player membership
-- **Chat Messages**: Real-time messaging with character-based communication
-- **User Management**: Profile management and authentication
+| Layer | Technology |
+|-------|------------|
+| Frontend | React 19, TypeScript, Vite 7, Tailwind CSS v4 |
+| UI | Radix UI primitives (ShadCN conventions) |
+| Mapping | OpenLayers 10 with a custom `QUESTABLES_PIXEL` projection |
+| Backend | Express 5 (Node.js, ESM) |
+| Database | PostgreSQL 17 + PostGIS + CITEXT |
+| Real-time | Socket.io |
+| LLM | Ollama by default, behind a provider registry |
+| Testing | Jest 30, React Testing Library, Supertest |
 
-### Database Features
-- **Field Mapping**: Automatic snake_case ↔ camelCase conversion
-- **JSONB Storage**: Flexible storage for D&D-specific data structures
-- **Connection Pooling**: Optimized database connections (max 20, timeout 2s)
-- **Health Monitoring**: Real-time connection status with retry logic
-- **Transaction Safety**: Proper error handling and rollback mechanisms
+---
 
-### Frontend Architecture
-- **Live Data Sync**: Character sheet updates automatically reflect inventory/spell changes
-- **Error Boundaries**: Application-wide error catching with user-friendly recovery
-- **Loading States**: Consistent loading indicators across all components
-- **Offline Mode**: Graceful degradation when database is unavailable
-- **Health Indicators**: Real-time database status in the UI
-
-## Quick Start
+## Quick start
 
 ### Prerequisites
 
-- Node.js 18+ 
-- PostgreSQL 17 with PostGIS extension
-- Git
+- Node.js 20+ (the Nix dev shell pins 24)
+- PostgreSQL 17 with the `postgis`, `citext`, and `uuid-ossp` extensions available
+- Ollama or another configured LLM provider (required for any narrative feature)
 
-### Fast Setup
+A `flake.nix` is provided: `nix develop` drops you into a shell with Node and the Postgres client.
 
-1. **Clone the repository**
-   ```bash
-   git clone <repository-url>
-   cd questables
-   ```
+### Setup
 
-2. **Install dependencies**
-   ```bash
-   npm install
-   ```
+```bash
+git clone <repository-url>
+cd questables
+npm install                 # postinstall also installs server/ dependencies
 
-3. **Database Setup**
-   
-   **📖 For detailed setup instructions, see [DATABASE_SETUP.md](./DATABASE_SETUP.md)**
-   
-   Quick setup:
-   ```bash
-   # Create database
-   createdb dnd_app
-   
-   # Import schema
-   psql -d dnd_app -f database/schema.sql
-   
-   # Create environment file
-   cp .env.example .env.local
-   # Edit .env.local with your database credentials
-   ```
+createdb dnd_app
+psql -d dnd_app -c "CREATE EXTENSION IF NOT EXISTS postgis;"
+psql -d dnd_app -c "CREATE EXTENSION IF NOT EXISTS citext;"
 
-4. **Start the application**
-   ```bash
-   # Start database server (backend)
-   npm run db:server
-   
-   # In another terminal, start frontend
-   npm run dev
-   ```
+cp .env.example .env
+$EDITOR .env                # database credentials, ENCRYPTION_KEY, LLM host
 
-The application will be available at:
-- Frontend: http://localhost:3000
-- Backend API: http://localhost:5101 
-- Health Check: http://localhost:5101/api/health 
-
-### ⚠️ Important Notes
-
-- **Database Required**: This application requires a properly configured PostgreSQL database
-- **No Demo Mode**: There are no fallback modes - database setup is mandatory
-- **Environment Variables**: Must be configured in `.env.local` (not tracked by git)
-- **Health Monitoring**: Check the database status indicator in the UI for connection health
-
-## Database Setup
-
-**IMPORTANT**: This application requires a properly configured database to function. There are no demo accounts or fallback modes - the application will fail if the database is not properly set up.
-
-1. **Create PostgreSQL Database**
-   ```bash
-   createdb dnd_app
-   ```
-
-2. **Install PostGIS Extension** (for spatial features)
-   ```bash
-   psql dnd_app -c "CREATE EXTENSION IF NOT EXISTS postgis;"
-   ```
-
-3. **Configure Environment Variables**
-   ```bash
-   cp .env.example .env
-   # Edit .env with your database configuration
-   ```
-
-The application will automatically create required tables on first startup.
-
-## Database Setup
-
-The application automatically creates basic database tables on first run. For full spatial mapping features, ensure PostGIS is installed:
-
-```sql
--- Connect to your database and run:
-CREATE EXTENSION IF NOT EXISTS postgis;
+npm run db:setup            # applies database/schema.sql, seeds the admin user
+npm run dev:local           # frontend + backend together
 ```
 
-## Environment Configuration
+- Frontend: <http://localhost:3000>
+- Backend API: <http://localhost:5101>
+- Health: <http://localhost:5101/api/health>
 
-**Required Environment Variables:**
+The Vite dev server proxies `/api` and `/socket.io` to the backend, so the frontend makes
+same-origin requests and needs no API URL of its own.
 
-Create a `.env` file in the project root (copy from `.env.example`):
+### Schema and migrations
+
+`database/schema.sql` is the **final-state** schema and is re-applied idempotently by
+`server/setup-database.js` on every server start — that is what a fresh install gets.
+`database/migrations/*.sql` roll an *existing* database forward and are applied manually:
+
+```bash
+psql -d dnd_app -f database/migrations/017_fmg_full_json_schema_indexes.sql
+```
+
+Each migration ships a matching `.rollback.sql`. When a migration adds a table or column, the same
+shape must be folded into `schema.sql` — the two are expected to stay in sync.
+
+### SRD data
+
+```bash
+cd server
+npm run import-srd          # both document sets
+npm run import-srd:2014     # or a single one
+npm run import-srd:2024
+```
+
+---
+
+## Configuration
+
+All configuration is environment-based; see `.env.example` for the annotated list. The essentials:
 
 ```env
-# REQUIRED: Database Server URL (frontend to backend communication)
-VITE_DATABASE_SERVER_URL=http://localhost:5101
-
-# PostgreSQL Connection (backend)
+# Database
 DATABASE_HOST=localhost
 DATABASE_PORT=5432
 DATABASE_NAME=dnd_app
-DATABASE_USER=postgres
+DATABASE_USER=your_username
 DATABASE_PASSWORD=your_password
 DATABASE_SSL=false
+# or a single DATABASE_URL=postgresql://...
 
-# Server Configuration  
+# PII encryption (AES-256-GCM) — 32 hex-encoded random bytes: openssl rand -hex 32
+# Rotating or losing this key invalidates every encrypted field.
+ENCRYPTION_KEY=
+
+# WebAuthn / passkeys — RP_ID is a bare registrable domain, ORIGIN must match the browser exactly
+WEBAUTHN_RP_NAME=Questables
+WEBAUTHN_RP_ID=localhost
+WEBAUTHN_ORIGIN=http://localhost:3000
+
+# Server
 DATABASE_SERVER_PORT=5101
 FRONTEND_URL=http://localhost:3000
 
-# Optional HTTPS configuration
-# DATABASE_SERVER_USE_TLS=true
-# DATABASE_SERVER_TLS_CERT=
-# DATABASE_SERVER_TLS_KEY=
-# DATABASE_SERVER_PUBLIC_HOST=
-# VITE_DATABASE_SERVER_URL=
-# When enabling HTTPS for the frontend dev server, update FRONTEND_URL and set:
-# FRONTEND_URL=
-# DEV_SERVER_USE_TLS=
-# DEV_SERVER_TLS_CERT=
-# DEV_SERVER_TLS_KEY=
-
-### LLM Provider Configuration
-
-The Enhanced LLM Service runs via a provider abstraction layer. Production and development environments currently target the on-prem Ollama instance at `http://192.168.1.34` using the `qwen3:8b` model. Configure the following variables in `.env.local`:
-
-```env
+# LLM provider
 LLM_PROVIDER=ollama
-LLM_OLLAMA_HOST=http://<your-ollama-host>:11434
+LLM_OLLAMA_HOST=http://localhost:11434
 LLM_OLLAMA_MODEL=qwen3:8b
-# Optional overrides
-# LLM_OLLAMA_API_KEY= # set only if the Ollama host requires bearer auth
-# LLM_OLLAMA_TIMEOUT_MS=60000
-# LLM_OLLAMA_TEMPERATURE=0.7
-# LLM_OLLAMA_TOP_P=0.9
 ```
 
-The backend refuses to serve narrative requests when the provider bootstrap fails. Use the health helper below to verify connectivity before running integration tests:
+Optional TLS (`DATABASE_SERVER_USE_TLS`, `DEV_SERVER_USE_TLS` and their cert/key paths), debug
+logging, and health-check tuning are documented inline in `.env.example`.
 
-```bash
-LLM_OLLAMA_MODEL=qwen3:8b node --input-type=module <<'NODE'
-import { initializeLLMServiceFromEnv } from './server/llm/index.js';
+Providers can also be registered in the `llm_providers` table so they are selectable at runtime;
+`GET /api/admin/llm/providers` reports each one's health. The backend refuses to serve narrative
+requests when provider bootstrap fails — there is no fallback prose.
 
-const { registry } = initializeLLMServiceFromEnv(process.env);
-const health = await registry.get('ollama').checkHealth();
-console.log(health);
-NODE
+---
+
+## Repository layout
+
+```
+├── App.tsx, main.tsx        # Frontend entry
+├── components/
+│   ├── ui/                  # Radix/ShadCN primitives — no business logic
+│   ├── layers/              # OpenLayers layer factories
+│   ├── maps/                # Style factories, tooltips, tile sources
+│   ├── character-wizard/    # 7-step creation flow
+│   ├── action-panel/        # Player action declaration, rolls, rests, death saves
+│   ├── game-state/          # Phase indicator, turn banner
+│   ├── compendium/          # SRD browser, shops, loot tables
+│   └── live-state/          # Session-scoped HP/conditions UI
+├── contexts/                # User, GameSession, GameState, Action, LiveState
+├── hooks/, utils/, shared/  # Client helpers, API client, SRD types
+├── server/
+│   ├── database-server.js   # Express entry point
+│   ├── websocket-server.js  # Socket.io
+│   ├── routes/              # 22 domain route modules
+│   ├── services/            # Business logic (game-state, combat, dm-action, …)
+│   ├── llm/                 # Provider registry, schemas, context builders
+│   ├── db/, validation/     # Pool, input validation
+│   └── scripts/             # SRD import, admin enrolment, backfills, smoke tests
+├── database/
+│   ├── schema.sql           # Final-state schema (idempotent)
+│   └── migrations/          # Forward + rollback pairs
+├── tests/                   # Jest suites, grouped by domain
+└── docs/                    # Architecture and subsystem guides
 ```
 
-If the host is unreachable, the script surfaces the error instead of silently returning demo content—resolve connectivity before depending on narrative flows.
+---
 
-##### Provider Registry Table
+## Commands
 
-Provider definitions can now be stored in `public.llm_providers`. Insert a row for each adapter/model you want available at runtime:
+| Command | Description |
+|---------|-------------|
+| `npm run dev` | Vite dev server only (port 3000) |
+| `npm run db:server` | Express backend only (port 5101) |
+| `npm run db:dev` | Backend with nodemon reload |
+| `npm run dev:local` | Both, concurrently |
+| `npm run db:setup` | Install server deps, apply schema, seed admin |
+| `npm run build` | `tsc` type check + Vite production build |
+| `npm run lint` | ESLint, zero warnings tolerated |
+| `npm test` | Jest suite |
+| `npm run test:watch` / `test:coverage` / `test:ci` | Jest variants |
+| `npx tsc --noEmit` | Type check without building |
 
-```sql
-INSERT INTO public.llm_providers (name, adapter, host, model, default_provider)
-VALUES ('ollama', 'ollama', 'http://localhost:11434', 'qwen3:8b', true)
-ON CONFLICT (name) DO UPDATE
-SET host = EXCLUDED.host,
-    model = EXCLUDED.model,
-    default_provider = EXCLUDED.default_provider,
-    updated_at = NOW();
-```
-
-`default_provider` marks the provider used when callers omit overrides. Multiple providers can be registered; the admin-only endpoint `GET /api/admin/llm/providers` returns their health status so the UI can surface outages without guessing.
-
-#### Narrative API Endpoints
-
-With the provider layer online, the backend now exposes authenticated endpoints that stream narrative requests to the Enhanced LLM Service:
-
-| Method | Path | Description | Access |
-|--------|------|-------------|--------|
-| POST | `/api/campaigns/:campaignId/narratives/dm` | Generate DM narration summarising the latest events. | DM / co-DM / admin |
-| POST | `/api/campaigns/:campaignId/narratives/scene` | Produce environmental descriptions for the active location. | DM / co-DM / admin |
-| POST | `/api/campaigns/:campaignId/narratives/npc` | Return NPC dialogue and log the interaction in `npc_memories`. | DM / co-DM / admin |
-| POST | `/api/campaigns/:campaignId/narratives/action` | Narrate the outcome of a specific action. | Any authenticated participant |
-| POST | `/api/campaigns/:campaignId/narratives/quest` | Draft a quest outline using live campaign data. | DM / co-DM / admin |
-
-Each call persists a row in `llm_narratives` (prompt, response, metrics, cache state). NPC dialogue requests also append to `npc_memories` and adjust `npc_relationships` atomically. Provider failures surface as `502`/`503` responses—no fallback copy is returned.
-
-NPC dialogue requests derive a memory summary from the generated prose when the caller does not supply one, estimate sentiment via keyword heuristics, and clamp trust adjustments between -10 and 10. Optional `interaction` payloads let DMs override the summary, sentiment, trust delta, tags, and relationship deltas explicitly.
-
-**The application will fail to start if `VITE_DATABASE_SERVER_URL` is not set.** Player and DM dashboards now surface an explicit configuration error rather than falling back to dummy data when this variable is missing.
-
-## Development Scripts
-
-```bash
-# Start frontend only
-npm run dev
-
-# Start backend only  
-npm run db:server
-
-# Start both frontend and backend
-npm run dev:local
-
-# Set up database server dependencies
-npm run db:setup
-
-# Build for production
-npm run build
-```
+---
 
 ## Testing
 
-- Run the live smoke suite once the backend is accessible:
+Tests live in `tests/`, grouped by domain (`llm/`, `maps/`, `movement/`, `security/`,
+`settlemaker/`, `world-building/`, `plan3b/`, `shared/`, with fixtures in `fixtures/`).
 
-  ```bash
-  LIVE_API_BASE_URL= \
-  LIVE_API_ADMIN_EMAIL="${DEFAULT_ADMIN_EMAIL:-admin@questables.example}" \
-  LIVE_API_ADMIN_PASSWORD="${DEFAULT_ADMIN_PASSWORD:-changeme}" \
-  npm test -- --runTestsByPath tests/live-api.integration.test.js
-  ```
-
-- If you seed different admin credentials, set `LIVE_API_ADMIN_EMAIL` and `LIVE_API_ADMIN_PASSWORD` to match (the suite also respects the `DEFAULT_ADMIN_*` values produced by `npm run db:setup`).
-
-## Project Structure
-
-```
-├── components/          # React components
-│   ├── ui/             # ShadCN UI components
-│   ├── openlayers-map.tsx
-│   ├── player-dashboard.tsx
-│   └── ...
-├── utils/
-│   └── database/       # PostgreSQL client and helpers
-├── server/             # Express.js backend
-│   ├── database-server.js
-│   └── setup-database.js
-├── styles/
-│   └── globals.css     # Tailwind v4 configuration
-└── database/
-    └── schema.sql      # Full database schema
+```bash
+npm test
+npm test -- --runTestsByPath tests/movement/travel-planner.test.js
+npm test -- tests/maps                       # a whole domain
 ```
 
-## Mapping Features
+Database-backed suites (the FMG full-JSON ingesters, movement gate integration) skip themselves
+unless connection details are present, then run inside a transaction that is rolled back:
 
-The application supports:
+```bash
+PGUSER=$USER PGDATABASE=dnd_app npm test -- tests/maps/fmg-full-json
+```
 
-- **World Maps**: Import from Azgaar's Fantasy Map Generator
-- **Spatial Queries**: PostGIS-powered location searches
-- **Interactive Layers**: Cities, roads, rivers, terrain, markers
-- **Campaign Integration**: Link campaign locations to world positions
+Some suites additionally take `TEST_CAMPAIGN_ID`, `TEST_SESSION_ID`, `TEST_BURG_ID`, and
+`TEST_ACTING_CHAR_ID` to target real rows in a seeded database.
 
-## Authentication
+Run `npx tsc --noEmit` before committing — Vite's dev server does not type check.
 
-- **Database Auth**: Accounts are created through the live API and stored in PostgreSQL.
-- **No Demo Accounts**: The app does not provide fallback users; resolve backend issues instead of fabricating access.
-- **Role-based Access**: Player, DM, and Admin permission levels
+---
 
-## Contributing
+## Deployment
 
-1. Fork the repository
-2. Create a feature branch (`git checkout -b feature/amazing-feature`)
-3. Commit changes (`git commit -m 'Add amazing feature'`)
-4. Push to branch (`git push origin feature/amazing-feature`)
-5. Open a Pull Request
+Production runs on the NixOS host `rucio`, configured in the separate `quixote` repo
+(`modules/services/questables.nix`, `hosts/rucio/`) and deployed with **deploy-rs**. Secrets are
+managed with agenix. There is no CI deploy pipeline.
+
+```bash
+# from the quixote checkout
+nix flake update settlemaker-src   # settlemaker first — the server links it
+nix flake update questables-src
+deploy .#rucio
+```
+
+The NixOS module builds frontend and server as separate derivations and symlinks the
+independently-built settlemaker store path into the server's `node_modules`, so the
+`file:../settlemaker` path dependency used in development plays no part in a deployed build.
+
+The build-time `VITE_SOURCE_URL` / `VITE_SOURCE_REVISION` values described under
+[License](#license) must be supplied by that module, since Vite freezes them into the bundle
+during `npm run build` and they cannot be changed at runtime.
+
+---
+
+## Documentation
+
+Subsystem guides live in [`docs/`](./docs/README.md):
+
+| Document | Covers |
+|----------|--------|
+| [Architecture](./docs/architecture.md) | System overview, request pipeline, key decisions |
+| [Database Schema](./docs/database-schema.md) | Tables, relationships, indexes |
+| [Frontend Guide](./docs/frontend-guide.md) | Components, contexts, UI patterns |
+| [Mapping System](./docs/mapping-system.md) | OpenLayers, projections, PostGIS layers |
+| [Character Wizard](./docs/character-wizard.md) | Creation flow and state machine |
+| [LLM Integration](./docs/llm-integration.md) | Providers, prompting, caching |
+| [WebSocket Events](./docs/websocket-events.md) | Socket.io event reference |
+| [User Journeys](./docs/user-journeys.md) | UI inventory and navigation |
+| [Development Guide](./docs/development-guide.md) | Setup, conventions, troubleshooting |
+
+Design specs and implementation plans are archived under `docs/superpowers/`.
+
+---
 
 ## Troubleshooting
 
-**Database Connection Issues:**
-- Ensure PostgreSQL is running
-- Check database credentials in `.env`
-- Verify database exists: `createdb dnd_app`
+```bash
+pg_isready                                              # Postgres up?
+psql -d dnd_app -c "SELECT PostGIS_version();"          # PostGIS installed?
+curl http://localhost:5101/api/health                   # backend + pool stats
+curl http://localhost:11434/api/tags                    # Ollama reachable?
+rm -rf node_modules/.vite                               # clear stale Vite cache
+```
 
-**PostGIS Not Available:**
-- Spatial features will be limited but app will still work
-- Install PostGIS: `apt-get install postgresql-postgis` (Ubuntu)
+- **Blank map** — check the `tile_sets` table and the configured tile source.
+- **Layers silently empty** — `MapDataLoader` methods rely on `this`; pass them as arrow wrappers,
+  not bare references.
+- **Stale map tooltips** — event handlers must be stable refs, not inline closures.
 
-**Environment Variables:**
-- Ensure `.env` file exists and contains required variables
-- Restart server after changing environment variables
+---
 
 ## License
 
-This project is licensed under the MIT License - see the LICENSE file for details.
+Questables is licensed under the **GNU Affero General Public License version 3**, and only that
+version (`AGPL-3.0-only`). See [LICENSE](./LICENSE) for the full text and [NOTICE](./NOTICE) for
+the provenance chain.
+
+The AGPL is chosen deliberately. Questables is a network application, and §13 requires that anyone
+who runs a **modified** version as a service — publicly or otherwise — offers its users the
+corresponding source. Forks are welcome; forks that stay closed are not.
+
+**If you deploy a modified Questables,** set `VITE_SOURCE_URL` to your own repository at build
+time (and ideally `VITE_SOURCE_REVISION` to the commit). The app renders a permanent "Source" link
+from this; pointing it at upstream does not satisfy §13, because upstream is not the code your
+users are running.
+
+**Why "only" and not "or later":** Questables links `settlemaker` into the server at runtime, and
+settlemaker is `GPL-3.0-only` — because *its* upstream, watabou's TownGeneratorOS, publishes no
+"or later" grant. GPLv3 §13 permits combining a GPLv3 work with **version 3** of the AGPL
+specifically; a later AGPL version carries no such permission. Offering Questables under "AGPL-3.0
+or later" would therefore promise something the combined work cannot deliver. The restriction
+propagates from watabou down, and Questables matches it rather than overreaching.
+
+## Contributing
+
+See [CONTRIBUTING.md](./CONTRIBUTING.md). In short: there is no CLA, you keep copyright in your own
+work, and every commit must be signed off under the Developer Certificate of Origin —
+`git commit -s`.
+
+## Attribution
+
+This work includes material taken from the System Reference Document 5.1 ("SRD 5.1") by Wizards of
+the Coast LLC and available at
+<https://dnd.wizards.com/resources/systems-reference-document>. The SRD 5.1 is licensed under the
+Creative Commons Attribution 4.0 International License, available at
+<https://creativecommons.org/licenses/by/4.0/legalcode>.
+
+This work includes material taken from the System Reference Document 5.2 ("SRD 5.2") by Wizards of
+the Coast LLC and available at <https://www.dndbeyond.com/srd>. The SRD 5.2 is licensed under the
+Creative Commons Attribution 4.0 International License, available at
+<https://creativecommons.org/licenses/by/4.0/legalcode>.
+
+Questables is not affiliated with, endorsed by, or sponsored by Wizards of the Coast. Only openly
+licensed SRD material is included — no content from published rulebooks.
 
 ## Acknowledgments
 
-- ShadCN/UI for the component library
-- OpenLayers for mapping capabilities  
-- Azgaar's Fantasy Map Generator for world map support
-- D&D 5e SRD for game mechanics reference
+- [Azgaar's Fantasy Map Generator](https://azgaar.github.io/Fantasy-Map-Generator/) — world map source
+- [settlemaker](https://github.com/barrulus/settlemaker) — settlement maps, a TypeScript port of
+  [watabou's Medieval Fantasy City Generator](https://watabou.itch.io/medieval-fantasy-city-generator)
+- [Open5e](https://open5e.com/) — SRD data API
+- [OpenLayers](https://openlayers.org/), [Radix UI](https://www.radix-ui.com/), [Ollama](https://ollama.com/)

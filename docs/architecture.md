@@ -225,7 +225,6 @@ components/
 
 ## Related Documentation
 
-- [API Reference](./api-reference.md) — Full endpoint documentation
 - [Database Schema](./database-schema.md) — Tables, indexes, and relationships
 - [Frontend Guide](./frontend-guide.md) — Component patterns and state management
 - [Mapping System](./mapping-system.md) — OpenLayers integration details

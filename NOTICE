@@ -1,0 +1,111 @@
+Questables
+Copyright (C) 2025-2026 Barry Gill <b@rry.im>
+
+This program is free software: you can redistribute it and/or modify it
+under the terms of the GNU Affero General Public License version 3 as
+published by the Free Software Foundation.
+
+This program is distributed in the hope that it will be useful, but
+WITHOUT ANY WARRANTY; without even the implied warranty of
+MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
+Affero General Public License for more details.
+
+You should have received a copy of the GNU Affero General Public License
+along with this program.  If not, see <https://www.gnu.org/licenses/>.
+
+SPDX-License-Identifier: AGPL-3.0-only
+
+
+WHY AGPL, AND WHY "ONLY"
+------------------------
+
+Questables is a network application.  AGPL section 13 requires that
+anyone who runs a MODIFIED version as a service offers its users the
+corresponding source, closing the gap the plain GPL leaves open for
+hosted software.
+
+The version is pinned to 3 with no "or later" grant.  Questables links
+settlemaker into the server process, and settlemaker is GPL-3.0-only
+because its own upstream -- watabou's TownGeneratorOS -- publishes no
+"or later" grant.  GPLv3 section 13 permits combining a GPLv3 covered
+work with version 3 of the AGPL specifically; it grants no permission
+for later AGPL versions.  Offering Questables as "AGPL-3.0-or-later"
+would promise a freedom the combined work cannot actually deliver, so
+the upstream restriction is carried through honestly instead.
+
+
+COMBINED WORK
+-------------
+
+settlemaker
+    https://github.com/barrulus/settlemaker
+    GPL-3.0-only, Copyright (C) 2025-2026 Barry Gill
+
+settlemaker is imported as an ES module directly into the backend:
+
+    server/services/settlemaker/ingestor.js
+    server/services/maps/settlement-service.js
+
+This is a combined work, not arm's-length interoperation.  Questables
+consumes only the generation, GeoJSON, and tiling exports from
+settlemaker's dist/ build -- geometry and data, no artwork.
+
+settlemaker's SVG symbol library (CC-BY-4.0 with a Rendered Output
+Exception) lives in that project's web/ application and is not
+redistributed by Questables.  No attribution obligation arises here.
+
+
+INTERFACING WORKS (not part of this program)
+--------------------------------------------
+
+Azgaar's Fantasy Map Generator
+    https://github.com/Azgaar/Fantasy-Map-Generator
+    MIT License, Copyright 2017-2024 Max Haniyeu (Azgaar)
+
+Questables imports world data exported from FMG as JSON.  Exchanging
+data files is not a combined work; no license reaches into the other.
+Map data files supplied by an operator remain that operator's own.
+
+Open5e
+    https://open5e.com/
+    Data API used at build/import time to populate SRD tables.
+
+
+GAME CONTENT
+------------
+
+This work includes material taken from the System Reference Document
+5.1 ("SRD 5.1") by Wizards of the Coast LLC and available at
+<https://dnd.wizards.com/resources/systems-reference-document>.  The
+SRD 5.1 is licensed under the Creative Commons Attribution 4.0
+International License, available at
+<https://creativecommons.org/licenses/by/4.0/legalcode>.
+
+This work includes material taken from the System Reference Document
+5.2 ("SRD 5.2") by Wizards of the Coast LLC and available at
+<https://www.dndbeyond.com/srd>.  The SRD 5.2 is licensed under the
+Creative Commons Attribution 4.0 International License, available at
+<https://creativecommons.org/licenses/by/4.0/legalcode>.
+
+Only openly licensed SRD material is included.  No text, statblocks, or
+lore from published Wizards of the Coast rulebooks appears in this
+repository, and none may be contributed to it.
+
+Questables is not affiliated with, endorsed by, or sponsored by Wizards
+of the Coast.
+
+
+BUNDLED DEPENDENCIES
+--------------------
+
+Remaining runtime dependencies are permissively licensed (MIT, ISC,
+BSD-2-Clause, BSD-3-Clause, Apache-2.0, MPL-2.0) and flow into the AGPL
+without conflict.  Their license texts ship with the packages under
+node_modules/.  Notable components:
+
+    React            MIT      https://react.dev/
+    OpenLayers       BSD-2    https://openlayers.org/
+    Radix UI         MIT      https://www.radix-ui.com/
+    Express          MIT      https://expressjs.com/
+    Socket.io        MIT      https://socket.io/
+    node-postgres    MIT      https://node-postgres.com/

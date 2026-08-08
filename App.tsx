@@ -28,6 +28,7 @@ import { LiveStateBar } from "./components/live-state/live-state-bar";
 import { CharacterCreationWizard } from "./components/character-wizard/character-creation-wizard";
 import { EnrolPage } from "./components/enrol-page";
 import { UserSettingsPage } from "./components/user-settings-page";
+import { SourceNotice } from "./components/source-notice";
 
 type AppState = "landing" | "dashboard" | "game" | "character-create" | "settings" | "enrol";
 type DashboardView = "player" | "dm" | "admin";
@@ -476,22 +477,30 @@ function AppContent() {
 // Main App component with UserProvider
 export default function App() {
   return (
-    <ErrorBoundary>
-      <DatabaseProvider>
-        <UserProvider>
-          <GameSessionProvider>
-            <WebSocketProvider>
-              <GameStateProvider>
-                <ActionProvider>
-                  <LiveStateProvider>
-                    <AppContent />
-                  </LiveStateProvider>
-                </ActionProvider>
-              </GameStateProvider>
-            </WebSocketProvider>
-          </GameSessionProvider>
-        </UserProvider>
-      </DatabaseProvider>
-    </ErrorBoundary>
+    <>
+      {/*
+        AGPL-3.0 §13 source offer. Mounted at the very root — outside AppContent so it survives
+        every top-level state change, and outside ErrorBoundary so it survives a render crash too.
+        It reads no context. Do not move it inside a branch or a provider.
+      */}
+      <SourceNotice />
+      <ErrorBoundary>
+        <DatabaseProvider>
+          <UserProvider>
+            <GameSessionProvider>
+              <WebSocketProvider>
+                <GameStateProvider>
+                  <ActionProvider>
+                    <LiveStateProvider>
+                      <AppContent />
+                    </LiveStateProvider>
+                  </ActionProvider>
+                </GameStateProvider>
+              </WebSocketProvider>
+            </GameSessionProvider>
+          </UserProvider>
+        </DatabaseProvider>
+      </ErrorBoundary>
+    </>
   );
 }

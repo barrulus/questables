@@ -109,19 +109,45 @@ Uses `useReducer` for complex multi-step form state. See [Character Wizard docs]
 
 ## API Client
 
-`utils/api-client.ts` wraps `fetch` with:
+`utils/api-client.ts` exports a set of functions rather than a client object.
 
-- Base URL from `VITE_DATABASE_SERVER_URL`
-- Automatic `Authorization: Bearer <token>` header
-- JSON serialization/deserialization
-- Error response parsing
+**Core primitives:**
+
+| Export | Purpose |
+|--------|---------|
+| `getApiBaseUrl()` | Returns `""` — requests are same-origin; the Vite dev server proxies `/api` |
+| `buildApiUrl(path)` | Prefixes the base URL; throws unless `path` starts with `/` |
+| `apiFetch(path, init)` | `fetch` plus `Accept`, bearer token, and `credentials: "include"` |
+| `fetchJson<T>(path, init)` | `apiFetch` + JSON parse; throws `HttpError` on non-2xx |
+| `readJsonBody<T>` / `readErrorMessage` | Response body helpers |
+| `HttpError` | Error carrying `status` and the parsed server message |
+
+The bearer token is read from `localStorage["dnd-auth-token"]` and only applied when the caller
+has not already set an `Authorization` header. `fetchJson<T>` returns `T | undefined` — a `204`
+or empty body yields `undefined`, so handle that at the call site.
 
 ```typescript
-import { apiClient } from '@/utils/api-client';
+import { fetchJson, apiFetch } from '@/utils/api-client';
 
-const campaigns = await apiClient.get('/campaigns/public');
-await apiClient.post('/characters', characterData);
+const campaigns = await fetchJson<CampaignRecord[]>('/api/campaigns/public');
+const response = await apiFetch('/api/characters', {
+  method: 'POST',
+  headers: { 'Content-Type': 'application/json' },
+  body: JSON.stringify(characterData),
+});
 ```
+
+Note that paths include the `/api` prefix — `buildApiUrl` does not add it.
+
+**Typed domain wrappers.** Most callers should use the purpose-built functions in the same file
+instead of raw `fetchJson`: `getCampaign`, `createCampaign`, `updateCampaign`,
+`listCampaignRegions`, `listCampaignObjectives`, `createObjective`, `searchWorldBurgs`,
+`teleportPlayer`, `getCampaignLLMSettings`, `listAdminLLMProviders`, and others. Each ships its
+own request/response interfaces, so add a wrapper here when you add an endpoint.
+
+When `fetchJson` sees a 401 it dispatches `AUTH_LOGOUT_EVENT` (`questables:auth:logout`) before
+throwing, which the user context listens for to clear session state. Callers that use bare
+`apiFetch` and inspect `response.status` themselves do not get this and must handle 401 directly.
 
 ## UI Components
 
