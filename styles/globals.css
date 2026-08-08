@@ -10,6 +10,45 @@
 
 @custom-variant dark (&:is(.dark *));
 
+/* Self-hosted display faces for the landing page (SIL Open Font License).
+   The app has no external font dependency and must not gain one — these are
+   served from public/fonts/, not from Google Fonts. */
+@font-face {
+  font-family: "IM Fell English";
+  font-style: normal;
+  font-weight: 400;
+  font-display: swap;
+  src: url("/fonts/im-fell-english-400.woff2") format("woff2");
+}
+@font-face {
+  font-family: "IM Fell English";
+  font-style: italic;
+  font-weight: 400;
+  font-display: swap;
+  src: url("/fonts/im-fell-english-400-italic.woff2") format("woff2");
+}
+@font-face {
+  font-family: "Alegreya Sans";
+  font-style: normal;
+  font-weight: 400;
+  font-display: swap;
+  src: url("/fonts/alegreya-sans-400.woff2") format("woff2");
+}
+@font-face {
+  font-family: "Alegreya Sans";
+  font-style: normal;
+  font-weight: 500;
+  font-display: swap;
+  src: url("/fonts/alegreya-sans-500.woff2") format("woff2");
+}
+@font-face {
+  font-family: "Alegreya Sans";
+  font-style: normal;
+  font-weight: 700;
+  font-display: swap;
+  src: url("/fonts/alegreya-sans-700.woff2") format("woff2");
+}
+
 :root {
   --font-size: 16px;
   --background: #ffffff;
@@ -89,6 +128,10 @@
 }
 
 @theme inline {
+  /* Landing-page display faces. Additive — nothing else in the app uses these. */
+  --font-fell: "IM Fell English", Georgia, serif;
+  --font-alegreya: "Alegreya Sans", ui-sans-serif, system-ui, sans-serif;
+
   --color-background: var(--background);
   --color-foreground: var(--foreground);
   --color-card: var(--card);
