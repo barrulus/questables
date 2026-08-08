@@ -52,10 +52,13 @@ DialogOverlay.displayName = DialogPrimitive.Overlay.displayName;
 
 const DialogContent = React.forwardRef<
   React.ElementRef<typeof DialogPrimitive.Content>,
-  React.ComponentPropsWithoutRef<typeof DialogPrimitive.Content>
->(({ className, children, ...props }, ref) => (
+  React.ComponentPropsWithoutRef<typeof DialogPrimitive.Content> & {
+    /** Restyle the scrim. Defaults to the shared `bg-black/50`. */
+    overlayClassName?: string;
+  }
+>(({ className, overlayClassName, children, ...props }, ref) => (
   <DialogPortal data-slot="dialog-portal">
-    <DialogOverlay />
+    <DialogOverlay className={overlayClassName} />
     <DialogPrimitive.Content
       ref={ref}
       data-slot="dialog-content"

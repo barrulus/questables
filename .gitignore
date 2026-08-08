@@ -16,6 +16,8 @@ public/*
 !public/questables-icon.webp
 !public/apple-touch-icon.png
 !public/favicon-32.png
+!public/fonts/
+!public/fonts/*.woff2
 server/tegola/tegola.toml
 server/tegola/cache/
 :TEMP/chrome-mcp/
