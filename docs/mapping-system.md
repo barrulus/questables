@@ -222,6 +222,10 @@ All spatial indexes use GIST for sub-millisecond query performance on large data
 
 ## Related Documentation
 
-- [Campaign Prep Map Layers](./campaign-prep-map-layers.md) — Layer helper details
-- [Campaign Prep Layer Loading](./campaign-prep-layer-loading.md) — Debounced loading
-- [Campaign Prep Viewport](./campaign-prep-viewport.md) — Viewport cache lifecycle
+- [Architecture](./architecture.md) — Where the map fits in the wider system
+- [Database Schema](./database-schema.md) — `maps_*` tables and spatial indexes
+- [Frontend Guide](./frontend-guide.md) — Component and context patterns
+
+Campaign-prep map internals (layer helper modules, debounced viewport loading, viewport cache
+lifecycle) are documented in the source: `components/layers/`, `components/maps/`, and
+`components/campaign-prep-map.tsx`.
