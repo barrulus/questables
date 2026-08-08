@@ -2,7 +2,7 @@ import { useState } from "react";
 import { Button } from "./ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "./ui/card";
 import { LoginModal } from "./login-modal";
-import { Dice6, Shield, Users, Sword, Sparkles } from "lucide-react";
+import { Shield, Users, Sword, Sparkles } from "lucide-react";
 
 interface LandingPageProps {
   onLogin: () => void;
@@ -36,11 +36,16 @@ export function LandingPage({ onLogin }: LandingPageProps) {
         <div className="p-6">
           <div className="flex items-center justify-between max-w-7xl mx-auto">
             <div className="flex items-center gap-3">
-              <div className="w-10 h-10 bg-gradient-to-br from-amber-400 to-orange-600 rounded-lg flex items-center justify-center">
-                <Dice6 className="w-6 h-6 text-white" />
-              </div>
+              <img
+                src="/questables-icon.png"
+                alt=""
+                aria-hidden="true"
+                width={40}
+                height={40}
+                className="w-10 h-10 rounded-lg object-cover"
+              />
               <div>
-                <h1 className="text-xl font-bold text-white">D&D Campaign Manager</h1>
+                <h1 className="text-xl font-bold text-white">Questables</h1>
                 <p className="text-sm text-gray-300">Epic adventures await</p>
               </div>
             </div>
@@ -172,7 +177,7 @@ export function LandingPage({ onLogin }: LandingPageProps) {
         <div className="p-6 border-t border-white/10">
           <div className="max-w-7xl mx-auto flex items-center justify-between">
             <div className="text-sm text-gray-400">
-              © 2024 D&D Campaign Manager. Built for adventurers by adventurers.
+              © 2026 Questables. Built for adventurers by adventurers.
             </div>
             <div className="flex gap-6 text-sm text-gray-400">
               <a href="#" className="hover:text-white transition-colors">Privacy</a>

@@ -1,7 +1,7 @@
 {
-  "name": "dnd-app-database-server",
+  "name": "questables-server",
   "version": "1.0.0",
-  "description": "Local PostgreSQL database server for D&D web app",
+  "description": "Questables backend — Express API, WebSocket server, and LLM services",
   "license": "AGPL-3.0-only",
   "main": "database-server.js",
   "type": "module",
