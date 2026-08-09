@@ -10,6 +10,11 @@ interface WorldSummary {
   height_pixels: number;
 }
 
+interface StatusResponse {
+  worldId: string;
+  layers: Record<string, number>;
+}
+
 interface ReviewStepProps {
   worldId: string;
   onDone: () => void;
@@ -25,11 +30,17 @@ export function ReviewStep({ worldId, onDone }: ReviewStepProps) {
     void (async () => {
       try {
         const [w, c] = await Promise.all([
-          fetch(`/api/maps/world/${worldId}`).then((r) => r.json()),
-          fetch(`/api/maps/world/${worldId}/status`).then((r) => r.json()),
+          fetch(`/api/maps/world/${worldId}`).then((r) => {
+            if (!r.ok) throw new Error(`world fetch failed: ${r.status}`);
+            return r.json();
+          }),
+          fetch(`/api/maps/world/${worldId}/status`).then((r) => {
+            if (!r.ok) throw new Error(`status fetch failed: ${r.status}`);
+            return r.json() as Promise<StatusResponse>;
+          }),
         ]);
         setWorld(w);
-        setCounts(c);
+        setCounts(c.layers ?? {});
       } catch (e) {
         setError((e as Error).message);
       }
