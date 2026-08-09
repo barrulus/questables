@@ -86,6 +86,31 @@ router.get('/world/:id', async (req, res) => {
   }
 });
 
+router.patch('/world/:id', requireAuth, async (req, res) => {
+  try {
+    const { query } = await import('../db/pool.js');
+    const updates = [];
+    const params = [req.params.id];
+    let p = 2;
+    for (const key of ['name', 'description', 'is_active']) {
+      if (req.body[key] !== undefined) {
+        updates.push(`${key} = $${p++}`);
+        params.push(req.body[key]);
+      }
+    }
+    if (updates.length === 0) return res.json({ updated: 0 });
+    const result = await query(
+      `UPDATE public.maps_world SET ${updates.join(', ')}, updated_at = now()
+        WHERE id = $1`,
+      params,
+      { label: 'maps.world.patch' },
+    );
+    res.json({ updated: result.rowCount });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 router.get('/world/:worldId/status', async (req, res) => {
   const { worldId } = req.params;
 
