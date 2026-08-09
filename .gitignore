@@ -28,3 +28,4 @@ server/tegola/cache/
 repomix-output.xml
 # FMG full-JSON fixtures (large, kept locally for RUN_E2E=1 runs)
 /*Full *-*-*-*-*.json
+CLAUDE.local.md
