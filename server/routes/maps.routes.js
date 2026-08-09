@@ -286,6 +286,102 @@ router.get('/:worldId/cells', async (req, res) => {
   }
 });
 
+function geojsonRow(geomColumn, propsColumns, table, idColumn) {
+  return `
+    SELECT json_build_object(
+      'type', 'FeatureCollection',
+      'features', COALESCE(json_agg(
+        json_build_object(
+          'type', 'Feature',
+          'id', ${idColumn},
+          'geometry', ST_AsGeoJSON(${geomColumn})::json,
+          'properties', json_build_object(${propsColumns})
+        )
+      ), '[]'::json)
+    ) AS fc
+    FROM public.${table}
+    WHERE world_id = $1 AND ${geomColumn} IS NOT NULL
+  `;
+}
+
+router.get('/:worldId/states', async (req, res) => {
+  try {
+    const { query } = await import('../db/pool.js');
+    const sql = geojsonRow('geom', `
+      'state_id', state_id, 'name', name, 'full_name', full_name,
+      'form', form, 'color', color, 'type', type,
+      'culture', culture, 'religion', religion,
+      'capital_burg_id', capital_burg_id, 'area', area,
+      'pole_x', pole_x, 'pole_y', pole_y
+    `, 'maps_states', 'state_id');
+    const { rows } = await query(sql, [req.params.worldId], { label: 'maps.states.list' });
+    res.json(rows[0].fc);
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+router.get('/:worldId/provinces', async (req, res) => {
+  try {
+    const { query } = await import('../db/pool.js');
+    const sql = geojsonRow('geom', `
+      'province_id', province_id, 'name', name, 'full_name', full_name,
+      'form_name', form_name, 'color', color,
+      'state_id', state_id, 'burg_id', burg_id
+    `, 'maps_provinces', 'province_id');
+    const { rows } = await query(sql, [req.params.worldId], { label: 'maps.provinces.list' });
+    res.json(rows[0].fc);
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+router.get('/:worldId/cultures', async (req, res) => {
+  try {
+    const { query } = await import('../db/pool.js');
+    const sql = geojsonRow('geom', `
+      'culture_id', culture_id, 'name', name, 'code', code,
+      'color', color, 'type', type, 'expansionism', expansionism
+    `, 'maps_cultures', 'culture_id');
+    const { rows } = await query(sql, [req.params.worldId], { label: 'maps.cultures.list' });
+    res.json(rows[0].fc);
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+router.get('/:worldId/religions', async (req, res) => {
+  try {
+    const { query } = await import('../db/pool.js');
+    const sql = geojsonRow('geom', `
+      'religion_id', religion_id, 'name', name, 'code', code,
+      'color', color, 'type', type, 'form', form,
+      'deity', deity, 'culture', culture
+    `, 'maps_religions', 'religion_id');
+    const { rows } = await query(sql, [req.params.worldId], { label: 'maps.religions.list' });
+    res.json(rows[0].fc);
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+router.get('/:worldId/zones', async (req, res) => {
+  try {
+    const { query } = await import('../db/pool.js');
+    const sql = geojsonRow('geom', `
+      'zone_id', zone_id, 'name', name, 'type', type, 'color', color
+    `, 'maps_zones', 'zone_id');
+    const { rows } = await query(sql, [req.params.worldId], { label: 'maps.zones.list' });
+    res.json(rows[0].fc);
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+router.get('/:worldId/regiments', async (req, res) => {
+  try {
+    const { query } = await import('../db/pool.js');
+    const sql = geojsonRow('geom', `
+      'regiment_id', regiment_id, 'state_id', state_id, 'name', name,
+      'icon', icon, 'total_men', total_men,
+      'u_infantry', u_infantry, 'u_archers', u_archers,
+      'u_cavalry', u_cavalry, 'u_artillery', u_artillery, 'u_fleet', u_fleet
+    `, 'maps_regiments', 'regiment_id');
+    const { rows } = await query(sql, [req.params.worldId], { label: 'maps.regiments.list' });
+    res.json(rows[0].fc);
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
 router.get('/settlements/:burgId/info', async (req, res) => {
   const { burgId } = req.params;
 
