@@ -16,7 +16,7 @@ describeWithDb('ingestRegiments', () => {
     expect(rowCount).toBe(1);
     const { rows } = await client.query(
       `SELECT regiment_id, state_id, name, total_men, u_infantry, u_archers, u_cavalry,
-              ST_AsText(geom) AS wkt
+              x_px, y_px, ST_AsText(geom) AS wkt
          FROM public.maps_regiments WHERE world_id = $1`,
       [worldId],
     );
@@ -24,6 +24,8 @@ describeWithDb('ingestRegiments', () => {
       regiment_id: 0, state_id: 1, name: '1st Tiny Regiment',
       u_infantry: 50, u_archers: 30, u_cavalry: 15,
     });
-    expect(rows[0].wkt).toBe('POINT(5 5)');
+    // x_px/y_px stay raw FMG pixels; the generated geom flips Y (migration 018).
+    expect(Number(rows[0].y_px)).toBe(5);
+    expect(rows[0].wkt).toBe('POINT(5 -5)');
   });
 });

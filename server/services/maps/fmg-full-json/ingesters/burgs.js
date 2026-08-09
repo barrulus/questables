@@ -1,4 +1,5 @@
 import { upsertCoa } from './coats.js';
+import { negateY } from '../geometry-builder.js';
 
 const PORT_THRESHOLD = 0.4;
 
@@ -33,7 +34,7 @@ export async function ingestBurgs(client, worldId, parsed, log) {
          temple, shanty, xpixel, ypixel, cell, type, is_large_port,
          is_regional_center, settlement_type, base_population, "group", feature, geom)
        VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26,
-               ST_SetSRID(ST_MakePoint($17, $18), 0))
+               ST_SetSRID(ST_MakePoint($17, $27), 0))
        ON CONFLICT (world_id, burg_id) DO UPDATE SET
          name=EXCLUDED.name, state=EXCLUDED.state, province=EXCLUDED.province,
          culture=EXCLUDED.culture, religion=EXCLUDED.religion,
@@ -67,6 +68,10 @@ export async function ingestBurgs(client, worldId, parsed, log) {
         Boolean(b.capital),
         b.settlementType ?? null, b.basePopulation ?? null,
         b.group ?? null, b.feature ?? null,
+        // $27: geom Y only. xpixel/ypixel ($17/$18) stay raw FMG pixels — the
+        // settlemaker/entrance stack reads those; geom is Y-up per
+        // QUESTABLES_PIXEL.
+        negateY(b.y ?? null),
       ],
     );
     if (b.coa) await upsertCoa(client, worldId, 'burg', b.i, b.coa);

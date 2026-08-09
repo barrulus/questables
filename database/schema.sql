@@ -544,7 +544,9 @@ CREATE TABLE IF NOT EXISTS public.maps_regiments (
     u_cavalry INTEGER,
     u_artillery INTEGER,
     u_fleet INTEGER,
-    geom geometry(Point, 0) GENERATED ALWAYS AS (ST_SetSRID(ST_MakePoint(x_px, y_px), 0)) STORED,
+    -- x_px/y_px are raw FMG pixels (Y-down); geom is QUESTABLES_PIXEL
+    -- (Y-up), hence the negation. See migration 018.
+    geom geometry(Point, 0) GENERATED ALWAYS AS (ST_SetSRID(ST_MakePoint(x_px, -y_px), 0)) STORED,
     UNIQUE (world_id, state_id, regiment_id)
 );
 CREATE INDEX IF NOT EXISTS maps_regiments_geom_gix ON public.maps_regiments USING GIST (geom);

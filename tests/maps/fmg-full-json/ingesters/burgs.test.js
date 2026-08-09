@@ -32,6 +32,9 @@ describeWithDb('ingestBurgs', () => {
       population: 3, // round of 2.5
     });
     expect(Number(rows[0].base_population)).toBeCloseTo(2.0);
+    // xpixel/ypixel stay raw FMG pixels (the settlemaker/entrance stack reads
+    // them); geom carries the QUESTABLES_PIXEL Y-up flip.
+    expect(rows[0].wkt).toBe('POINT(5 -5)');
 
     const { rows: coa } = await client.query(
       `SELECT t1 FROM public.maps_coats_of_arms

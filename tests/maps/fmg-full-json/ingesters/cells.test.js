@@ -26,6 +26,8 @@ describeWithDb('ingestCells', () => {
       cell_id: 0, state: 1, culture: 1, religion: 1, province: 1, biome: 1,
     });
     expect(Number(rows[0].pop)).toBeCloseTo(1.0);
-    expect(rows[0].wkt).toMatch(/^MULTIPOLYGON\(\(\(0 0,/);
+    // QUESTABLES_PIXEL: geom Y is the FMG pixel Y negated (Y-up), so the
+    // fixture quad (0,0)-(10,10) lands at y ∈ [-10, 0].
+    expect(rows[0].wkt).toBe('MULTIPOLYGON(((0 0,10 0,10 -10,0 -10,0 0)))');
   });
 });

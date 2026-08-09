@@ -1,9 +1,11 @@
+import { negateY } from '../geometry-builder.js';
+
 function lineWktFromCellCentroids(cellIds, cellsById) {
   const pts = [];
   for (const id of cellIds) {
     const c = cellsById.get(id);
     if (!c || !Array.isArray(c.p)) continue;
-    pts.push(`${c.p[0]} ${c.p[1]}`);
+    pts.push(`${c.p[0]} ${negateY(c.p[1])}`);
   }
   if (pts.length < 2) return null;
   return `LINESTRING(${pts.join(',')})`;

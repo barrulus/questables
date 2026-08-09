@@ -15,11 +15,13 @@ describeWithDb('ingestMarkers', () => {
     const { rowCount } = await ingestMarkers(client, worldId, parsed, () => {});
     expect(rowCount).toBe(1);
     const { rows } = await client.query(
-      `SELECT marker_id, icon, type, ST_AsText(geom) AS wkt
+      `SELECT marker_id, icon, type, x_px, y_px, ST_AsText(geom) AS wkt
          FROM public.maps_markers WHERE world_id = $1`,
       [worldId],
     );
     expect(rows[0]).toMatchObject({ marker_id: 0, icon: '🌋', type: 'volcanoes' });
-    expect(rows[0].wkt).toBe('POINT(12 5)');
+    // x_px/y_px stay raw FMG pixels; only geom flips Y.
+    expect(Number(rows[0].y_px)).toBe(5);
+    expect(rows[0].wkt).toBe('POINT(12 -5)');
   });
 });

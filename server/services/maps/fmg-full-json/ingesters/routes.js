@@ -1,3 +1,5 @@
+import { negateY } from '../geometry-builder.js';
+
 export async function ingestRoutes(client, worldId, parsed, log) {
   log(0, 'Routes');
   const routes = (parsed.pack?.routes || []).filter((r) => r && typeof r === 'object');
@@ -5,7 +7,7 @@ export async function ingestRoutes(client, worldId, parsed, log) {
 
   for (const r of routes) {
     if (!Array.isArray(r.points) || r.points.length < 2) continue;
-    const wkt = `LINESTRING(${r.points.map((p) => `${p[0]} ${p[1]}`).join(',')})`;
+    const wkt = `LINESTRING(${r.points.map((p) => `${p[0]} ${negateY(p[1])}`).join(',')})`;
     await client.query(
       `INSERT INTO public.maps_routes
         (world_id, route_id, name, type, feature, group_name, geom)

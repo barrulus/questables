@@ -20,6 +20,7 @@ describeWithDb('ingestRoutes', () => {
       [worldId],
     );
     expect(rows[0]).toMatchObject({ route_id: 0, group_name: 'roads', type: 'trail' });
-    expect(rows[0].wkt).toBe('MULTILINESTRING((5 5,15 5))');
+    // geom Y is negated (QUESTABLES_PIXEL Y-up).
+    expect(rows[0].wkt).toBe('MULTILINESTRING((5 -5,15 -5))');
   });
 });
