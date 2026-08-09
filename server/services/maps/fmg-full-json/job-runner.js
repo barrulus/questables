@@ -1,3 +1,4 @@
+import { promises as fs } from 'fs';
 import { query } from '../../../db/pool.js';
 import { ingestFullJson } from './index.js';
 
@@ -67,6 +68,7 @@ async function runJob(jobId, worldId, filePath, skipValidation, skipSettlemaker)
       [jobId],
       { label: 'fmg.job.complete' },
     );
+    await fs.unlink(filePath).catch(() => {});
   } catch (err) {
     await query(
       `UPDATE public.maps_import_jobs
@@ -75,6 +77,7 @@ async function runJob(jobId, worldId, filePath, skipValidation, skipSettlemaker)
       [jobId, String(err?.stack || err?.message || err)],
       { label: 'fmg.job.fail' },
     );
+    await fs.unlink(filePath).catch(() => {});
   }
 }
 

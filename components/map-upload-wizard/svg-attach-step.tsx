@@ -25,7 +25,7 @@ export function SvgAttachStep({ worldId, onComplete, onSkip }: SvgAttachStepProp
       const res = await apiFetch(`/api/upload/map/${worldId}/svg`, { method: "POST", body: fd });
       if (!res.ok) {
         const body = await res.json().catch(() => ({ error: res.statusText }));
-        throw new Error(body.error || `Upload failed: ${res.status}`);
+        throw new Error(body.message || body.error || `Upload failed: ${res.status}`);
       }
       onComplete();
     } catch (e) {

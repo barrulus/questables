@@ -243,7 +243,10 @@ const uploadFullJson = multer({
     if (FULL_JSON_ALLOWED_MIMETYPES.includes(file.mimetype)) {
       cb(null, true);
     } else {
-      cb(new Error('Invalid file type. Allowed: JSON, GeoJSON only on this endpoint.'));
+      const err = new Error('Invalid file type. Allowed: JSON, GeoJSON only on this endpoint.');
+      err.status = 415;
+      err.code = 'invalid_file_type';
+      cb(err);
     }
   }
 });

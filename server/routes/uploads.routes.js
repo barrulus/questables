@@ -1,6 +1,7 @@
 import { Router } from 'express';
 import multer from 'multer';
 import { promises as fs } from 'fs';
+import { join, resolve } from 'path';
 import {
   requireAuth,
   requireCampaignOwnership,
@@ -215,6 +216,12 @@ export const registerUploadRoutes = (app, { upload, uploadSvg, uploadFullJson })
         message: 'FMG Full JSON export exceeds the maximum upload size (max 500MB).',
       });
     }
+    if (err?.status === 415 || err?.code === 'invalid_file_type') {
+      return res.status(415).json({
+        error: 'invalid_file_type',
+        message: err.message || 'Invalid file type. Allowed: JSON, GeoJSON only on this endpoint.',
+      });
+    }
     return next(err);
   });
 
@@ -222,6 +229,21 @@ export const registerUploadRoutes = (app, { upload, uploadSvg, uploadFullJson })
   router.delete('/upload/map/:worldId', requireAuth, async (req, res) => {
     try {
       const { query } = await import('../db/pool.js');
+      const uploadDir = resolve(join(process.cwd(), 'uploads'));
+      const jobRows = await query(
+        `SELECT file_path FROM public.maps_import_jobs WHERE world_id = $1 AND file_path IS NOT NULL`,
+        [req.params.worldId],
+        { label: 'fmg.world.delete.jobs' },
+      );
+      await Promise.all(
+        jobRows.rows.map(async ({ file_path: filePath }) => {
+          if (!filePath) return;
+          const resolvedPath = resolve(filePath);
+          if (resolvedPath !== uploadDir && !resolvedPath.startsWith(uploadDir + '/')) return;
+          await fs.unlink(resolvedPath).catch(() => {});
+        }),
+      );
+
       const result = await query(
         `DELETE FROM public.maps_world WHERE id = $1`,
         [req.params.worldId],

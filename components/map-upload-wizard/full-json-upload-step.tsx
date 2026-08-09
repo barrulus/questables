@@ -85,7 +85,7 @@ export function FullJsonUploadStep({ onComplete }: FullJsonUploadStepProps) {
       const res = await apiFetch("/api/upload/map/full-json", { method: "POST", body: fd });
       if (!res.ok) {
         const body = await res.json().catch(() => ({ error: res.statusText }));
-        throw new Error(body.error || `Upload failed: ${res.status}`);
+        throw new Error(body.message || body.error || `Upload failed: ${res.status}`);
       }
       const data: { worldId: string; jobId: string } = await res.json();
       setWorldId(data.worldId);
