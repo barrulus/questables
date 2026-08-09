@@ -7,11 +7,16 @@
 //
 // Coord conversions:
 //   maps_cells.geom and maps_burgs.geom both store xpixel/ypixel multiplied
-//   by 10000 with y negated (PostGIS y-up). pixel-space is y-down. Local
-//   space is y-down (SVG convention) per the settlemaker contract, so the
-//   only flip happens when leaving geom-space.
+//   by the world's `meters_per_pixel` with y negated (PostGIS y-up).
+//   pixel-space is y-down. Local space is y-down (SVG convention) per the
+//   settlemaker contract, so the only flip happens when leaving geom-space.
+//
+//   The scale factor is per-world, NOT a constant: legacy imports calibrate
+//   meters_per_pixel (Snoopia = 10000) while FMG full-JSON imports leave it
+//   at 1, so geom units are raw pixels there. This used to be hardcoded to
+//   1/10000, which collapsed every full-JSON world's coastline to a point.
 
-const GEOM_TO_PIXEL = 1 / 10000;
+const DEFAULT_METERS_PER_PIXEL = 1;
 
 // Pixel-space radius around the burg from which we collect water cells.
 //
@@ -60,16 +65,17 @@ function parsePolygonRings(geojsonStr) {
 }
 
 export async function loadCoastlineGeometry(client, burg, opts = {}) {
+  const mpp = await loadMetersPerPixel(client, burg.world_id);
+  const geomToPixel = 1 / (mpp || DEFAULT_METERS_PER_PIXEL);
   let rWorldPx;
   if (Number.isFinite(opts.rWorldPx)) {
     rWorldPx = opts.rWorldPx;
   } else {
-    const mpp = await loadMetersPerPixel(client, burg.world_id);
     const target = mpp ? TARGET_R_WORLD_METERS / mpp : MIN_R_WORLD_PX;
     rWorldPx = Math.min(MAX_R_WORLD_PX, Math.max(MIN_R_WORLD_PX, target));
   }
   const rLocal = Number.isFinite(opts.rLocal) ? opts.rLocal : DEFAULT_R_LOCAL;
-  const rWorldGeom = rWorldPx / GEOM_TO_PIXEL; // pixel → geom units
+  const rWorldGeom = rWorldPx / geomToPixel; // pixel → geom units
 
   // ST_Union merges adjacent water cells into contiguous water bodies before
   // dumping. Without it every FMG Voronoi cell arrives as its own tiny ring
@@ -99,8 +105,8 @@ export async function loadCoastlineGeometry(client, burg, opts = {}) {
     for (const ring of parsePolygonRings(r.poly)) {
       const local = ring.map(([gx, gy]) => {
         // geom → pixel (y un-flip from PostGIS y-up to pixel y-down)
-        const cellPxX = gx * GEOM_TO_PIXEL;
-        const cellPxY = -gy * GEOM_TO_PIXEL;
+        const cellPxX = gx * geomToPixel;
+        const cellPxY = -gy * geomToPixel;
         // burg-local pixel offset (y-down)
         const dxPx = cellPxX - burgPxX;
         const dyPx = cellPxY - burgPxY;

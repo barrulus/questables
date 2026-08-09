@@ -4,13 +4,23 @@ const { loadCoastlineGeometry } = await import(
   '../../server/services/settlemaker/coastline-loader.js'
 );
 
+// geom units are pixel * meters_per_pixel with y negated (PostGIS y-up).
+const METERS_PER_PIXEL = 10000;
+
+// The loader issues two queries: meters_per_pixel first, then the water-cell
+// union. Only the second is driven by the per-test impl.
 function makeClient(queryImpl) {
-  return { query: jest.fn(queryImpl) };
+  const query = jest.fn(async (sql, params) => {
+    if (String(sql).includes('meters_per_pixel')) {
+      return { rows: [{ meters_per_pixel: METERS_PER_PIXEL }] };
+    }
+    return queryImpl(sql, params);
+  });
+  return { query };
 }
 
-// geom units are pixel * 10000 with y negated (PostGIS y-up).
-const gx = (px) => px * 10000;
-const gy = (py) => -py * 10000;
+const gx = (px) => px * METERS_PER_PIXEL;
+const gy = (py) => -py * METERS_PER_PIXEL;
 
 describe('coastline-loader', () => {
   const burg = { id: 'b-1', world_id: 'w-1', x_px: 100, y_px: 200 };
@@ -20,7 +30,7 @@ describe('coastline-loader', () => {
   test('unions water cells in SQL (regression: per-cell rings made water confetti)', async () => {
     const client = makeClient(async () => ({ rows: [] }));
     await loadCoastlineGeometry(client, burg, opts);
-    const sql = client.query.mock.calls[0][0];
+    const sql = client.query.mock.calls[1][0];
     expect(sql).toContain('ST_Union(c.geom)');
   });
 
