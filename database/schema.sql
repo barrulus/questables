@@ -682,6 +682,7 @@ CREATE TABLE IF NOT EXISTS public.tile_sets (
     attribution TEXT,
     is_active BOOLEAN DEFAULT false,
     uploaded_by UUID REFERENCES public.user_profiles(id) ON DELETE SET NULL,
+    world_id UUID REFERENCES public.maps_world(id) ON DELETE CASCADE,
     created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW() NOT NULL,
     updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW() NOT NULL
 );
@@ -689,6 +690,10 @@ DROP TRIGGER IF EXISTS _touch_tile_sets ON public.tile_sets;
 CREATE TRIGGER _touch_tile_sets
 BEFORE UPDATE ON public.tile_sets
 FOR EACH ROW EXECUTE FUNCTION public.tg_touch_updated_at();
+
+CREATE UNIQUE INDEX IF NOT EXISTS tile_sets_world_id_unique_idx
+  ON public.tile_sets (world_id)
+  WHERE world_id IS NOT NULL;
 
 -- =============================================================================
 -- CHARACTERS
