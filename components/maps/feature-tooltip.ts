@@ -85,11 +85,115 @@ export interface HoverTooltipInfo {
   details: string[] | null;
 }
 
+export type PolityFeatureKind =
+  | 'regiment'
+  | 'state'
+  | 'province'
+  | 'culture'
+  | 'religion'
+  | 'zone';
+
+/**
+ * Identify one of the six polity/military feature kinds loaded by
+ * `MapDataLoader.loadPolity` (states, provinces, cultures, religions, zones,
+ * regiments). These features are parsed straight from GeoJSON and never get a
+ * `type`/`featureType` tag (see `featuresFromGeoJson` in map-data-loader.tsx),
+ * so — unlike burgs/markers/routes/players — they can't be classified via
+ * `getFeatureTypeFromProperties`. A GeoJSON `type` property does exist on
+ * zone features (the zone's own kind, e.g. "mystical"), which would collide
+ * with the generic dispatcher if it were consulted, so polity kind is
+ * resolved from distinguishing id properties instead.
+ *
+ * Order matters: a regiment feature also carries `state_id` (the owning
+ * state), so `regiment_id` MUST be checked first.
+ */
+export const getPolityFeatureKind = (feature: FeatureLike | null): PolityFeatureKind | null => {
+  if (!feature) return null;
+  const gf = feature as GeometryFeature;
+  if (gf.get('regiment_id') != null) return 'regiment';
+  if (gf.get('state_id') != null) return 'state';
+  if (gf.get('province_id') != null) return 'province';
+  if (gf.get('culture_id') != null) return 'culture';
+  if (gf.get('religion_id') != null) return 'religion';
+  if (gf.get('zone_id') != null) return 'zone';
+  return null;
+};
+
+/**
+ * Build the hover tooltip info for a polity/military feature (state,
+ * province, culture, religion, zone, or regiment).
+ */
+const buildPolityTooltipInfo = (gf: GeometryFeature, kind: PolityFeatureKind): HoverTooltipInfo => {
+  switch (kind) {
+    case 'state': {
+      const name = gf.get('full_name') ?? gf.get('name') ?? 'Unnamed state';
+      const form = gf.get('form');
+      return { title: String(name), subtitle: form ? String(form) : 'State', details: null };
+    }
+    case 'province': {
+      const name = gf.get('full_name') ?? gf.get('name') ?? 'Unnamed province';
+      const form = gf.get('form_name') ?? gf.get('form');
+      return { title: String(name), subtitle: form ? String(form) : 'Province', details: null };
+    }
+    case 'culture': {
+      const name = gf.get('name') ?? 'Unnamed culture';
+      return { title: String(name), subtitle: 'Culture', details: null };
+    }
+    case 'religion': {
+      const name = gf.get('name') ?? 'Unnamed religion';
+      const deity = gf.get('deity');
+      return {
+        title: String(name),
+        subtitle: 'Religion',
+        details: deity ? [String(deity)] : null,
+      };
+    }
+    case 'zone': {
+      const name = gf.get('name') ?? 'Unnamed zone';
+      const zoneType = gf.get('type');
+      return {
+        title: String(name),
+        subtitle: zoneType ? String(zoneType) : 'Zone',
+        details: null,
+      };
+    }
+    case 'regiment': {
+      const name = gf.get('name') ?? 'Regiment';
+      const unitLabels: Array<[string, string]> = [
+        ['u_infantry', 'Infantry'],
+        ['u_archers', 'Archers'],
+        ['u_cavalry', 'Cavalry'],
+        ['u_artillery', 'Artillery'],
+        ['u_fleet', 'Fleet'],
+      ];
+      const details = unitLabels
+        .map(([key, label]) => [label, gf.get(key)] as const)
+        .filter(([, value]) => typeof value === 'number' && value > 0)
+        .map(([label, value]) => `${label}: ${(value as number).toLocaleString()}`);
+      const totalMen = gf.get('total_men');
+      if (typeof totalMen === 'number' && totalMen > 0) {
+        details.unshift(`Total: ${totalMen.toLocaleString()}`);
+      }
+      return {
+        title: String(name),
+        subtitle: 'Regiment',
+        details: details.length > 0 ? details : null,
+      };
+    }
+  }
+};
+
 /**
  * Build a complete hover tooltip info object for any map feature.
  */
 export const buildHoverTooltipInfo = (feature: FeatureLike): HoverTooltipInfo => {
   const gf = feature as GeometryFeature;
+
+  const polityKind = getPolityFeatureKind(feature);
+  if (polityKind) {
+    return buildPolityTooltipInfo(gf, polityKind);
+  }
+
   const data = gf.get('data') ?? gf.getProperties();
   const layerType = getFeatureTypeFromProperties(feature);
 

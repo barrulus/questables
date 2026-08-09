@@ -1423,9 +1423,18 @@ export function OpenLayersMap() {
     const shouldShowPointer = hasInteractiveFeature || (selectedTool === 'info' && hasAnyFeature);
     targetElement.style.cursor = shouldShowPointer ? 'pointer' : '';
 
-    // Always build hover tooltip for any feature under the cursor
+    // Always build hover tooltip for any feature under the cursor. States
+    // default to visible and blanket the whole world, so `features[0]`
+    // (the topmost hit) is very often a polity polygon even when a burg,
+    // marker, or player token sits at the same pixel. Prefer the most
+    // specific interactive feature when one is present; fall back to the
+    // topmost hit (which may be a polity/regiment feature) otherwise.
     if (hasAnyFeature) {
-      const feature = features[0];
+      const preferredInteractive = features.find((f) => {
+        const featureType = getFeatureTypeFromProperties(f);
+        return featureType !== null && INTERACTIVE_FEATURE_TYPES.has(featureType);
+      });
+      const feature = preferredInteractive ?? features[0];
       const tooltip = buildHoverTooltipInfo(feature);
 
       setHoverInfo({
