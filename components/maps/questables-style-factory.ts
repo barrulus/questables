@@ -176,7 +176,7 @@ const BURG_STYLE_CONFIG: Record<BurgCategory, { radius: number; fill: string; st
   hamlet: { radius: 5, fill: '#7b7f8c', stroke: '#ffffff', font: '12px "Inter", sans-serif' }
 };
 
-const asGeometryFeature = (feature: FeatureLike): Feature<Geometry> => feature as Feature<Geometry>;
+export const asGeometryFeature = (feature: FeatureLike): Feature<Geometry> => feature as Feature<Geometry>;
 
 const getMinPopulationForZoom = (zoom: number): number => {
   const rule = BURG_ZOOM_RULES.find(({ minZoom }) => zoom >= minZoom);
@@ -382,3 +382,32 @@ export const getCellStyle = (featureLike: FeatureLike): Style => {
     })
   });
 };
+
+const DEFAULT_POLITY_COLOR = '#888';
+
+export function createPolityStyle(
+  alpha: number,
+  strokeColor = 'rgba(0,0,0,0.4)',
+  strokeWidth = 0.75,
+) {
+  return (feature: Feature<Geometry>, _resolution?: number): Style => {
+    const raw = feature.get('color');
+    const color = typeof raw === 'string' && raw.trim() ? raw : DEFAULT_POLITY_COLOR;
+    return new Style({
+      fill: new Fill({ color: hexToRgba(color, alpha) }),
+      stroke: new Stroke({ color: strokeColor, width: strokeWidth }),
+    });
+  };
+}
+
+function hexToRgba(hex: string, alpha: number): string {
+  // accepts #RGB, #RRGGBB; falls through unchanged for non-hex (e.g. url(#hatch))
+  if (!/^#[0-9a-f]{3,6}$/i.test(hex)) return hex;
+  const h = hex.length === 4
+    ? hex.slice(1).split('').map((c) => c + c).join('')
+    : hex.slice(1);
+  const r = parseInt(h.slice(0, 2), 16);
+  const g = parseInt(h.slice(2, 4), 16);
+  const b = parseInt(h.slice(4, 6), 16);
+  return `rgba(${r},${g},${b},${alpha})`;
+}
