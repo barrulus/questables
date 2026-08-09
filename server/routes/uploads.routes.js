@@ -14,6 +14,8 @@ import {
   listCampaignAssets,
 } from '../services/uploads/service.js';
 import { createOrUpdateWorld } from '../services/maps/ingestion-service.js';
+import { saveWorldSvg, removeWorldBaseMap, computeMaxZoom } from '../services/maps/world-tile-service.js';
+import { upsertWorldTileset, isUuid } from '../services/maps/service.js';
 
 export const registerUploadRoutes = (app, { upload, uploadSvg, uploadFullJson }) => {
   if (!upload) {
@@ -228,6 +230,9 @@ export const registerUploadRoutes = (app, { upload, uploadSvg, uploadFullJson })
   // --- FMG Full JSON import: delete world (rollback partially-ingested world) ---
   router.delete('/upload/map/:worldId', requireAuth, async (req, res) => {
     try {
+      if (!isUuid(req.params.worldId)) {
+        return res.status(400).json({ error: 'invalid_world_id', message: 'worldId must be a UUID' });
+      }
       const { query } = await import('../db/pool.js');
       const uploadDir = resolve(join(process.cwd(), 'uploads'));
       const jobRows = await query(
@@ -249,6 +254,8 @@ export const registerUploadRoutes = (app, { upload, uploadSvg, uploadFullJson })
         [req.params.worldId],
         { label: 'fmg.world.delete' },
       );
+      // Base-map artifacts on disk (tile_sets row dies via FK cascade).
+      await removeWorldBaseMap(req.params.worldId);
       logInfo('World deleted', {
         telemetryEvent: 'upload.map.delete',
         worldId: req.params.worldId,
@@ -274,31 +281,50 @@ export const registerUploadRoutes = (app, { upload, uploadSvg, uploadFullJson })
     }
   });
 
-  // --- FMG Full JSON import: attach SVG to an existing world (Plan B deletes the old /svg creator) ---
+  // --- FMG Full JSON import: attach the world's base-map SVG ---
+  // Persists the SVG under map_data/world-svg/, purges any cached tiles, and
+  // upserts the world's single "Base map" tile_sets row. Replacement is the
+  // same call. Tiles render lazily via GET /api/maps/:worldId/tiles/....
   router.post('/upload/map/:worldId/svg', requireAuth, uploadSvg.single('svgFile'), async (req, res) => {
     if (!req.file) return res.status(400).json({ error: 'svgFile is required' });
+    const { worldId } = req.params;
     try {
+      // worldId feeds a filesystem path — reject anything that is not a UUID.
+      if (!isUuid(worldId)) {
+        return res.status(400).json({ error: 'invalid_world_id', message: 'worldId must be a UUID' });
+      }
       const { query } = await import('../db/pool.js');
-      // Store the SVG path on the world row. geojson_url is a legacy column name
-      // repurposed here; it will be renamed in a future migration.
-      await query(
-        `UPDATE public.maps_world
-            SET geojson_url = $2, updated_at = now()
-          WHERE id = $1`,
-        [req.params.worldId, req.file.path],
-        { label: 'fmg.svg.attach' },
+      const { rows } = await query(
+        `SELECT id, width_pixels, height_pixels FROM public.maps_world WHERE id = $1`,
+        [worldId],
+        { label: 'fmg.svg.attach.world' },
       );
-      logInfo('SVG attached to world', {
+      if (rows.length === 0) return res.status(404).json({ error: 'world_not_found' });
+
+      const maxZoom = computeMaxZoom(rows[0].width_pixels, rows[0].height_pixels);
+      if (maxZoom == null) {
+        return res.status(422).json({
+          error: 'world_missing_dimensions',
+          message: 'World has no width_pixels/height_pixels; re-import the Full JSON before attaching an SVG.',
+        });
+      }
+
+      await saveWorldSvg(worldId, req.file.path);
+      const tileset = await upsertWorldTileset({ worldId, maxZoom, uploadedBy: req.user?.id ?? null });
+
+      logInfo('World base map SVG attached', {
         telemetryEvent: 'upload.map.svg_attach',
-        worldId: req.params.worldId,
+        worldId,
         userId: req.user?.id,
+        maxZoom,
       });
-      return res.json({ ok: true, worldId: req.params.worldId });
+      return res.json({ tileset });
     } catch (err) {
-      logError('SVG attach failed', err, { worldId: req.params.worldId, filename: req.file?.filename });
+      logError('SVG attach failed', err, { worldId, filename: req.file?.filename });
       return res.status(500).json({ error: err.message });
     } finally {
-      // SVG is only needed for dimension extraction; delete the staged file
+      // saveWorldSvg moves the staged file on success; this only cleans up
+      // the staged copy on the failure paths.
       if (req.file?.path) await fs.unlink(req.file.path).catch(() => {});
     }
   });
