@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { Button } from "../ui/button";
 import { Card, CardContent } from "../ui/card";
 import { Progress } from "../ui/progress";
+import { apiFetch } from "../../utils/api-client";
 
 const STAGES = [
   "world", "biomes", "features", "cultures", "religions", "cells",
@@ -47,7 +48,7 @@ export function FullJsonUploadStep({ onComplete }: FullJsonUploadStepProps) {
     if (!jobId) return;
     const tick = async () => {
       try {
-        const res = await fetch(`/api/upload/map/jobs/${jobId}`);
+        const res = await apiFetch(`/api/upload/map/jobs/${jobId}`);
         if (!res.ok) throw new Error(`poll failed: ${res.status}`);
         const data: JobStatus = await res.json();
         setJob(data);
@@ -81,7 +82,7 @@ export function FullJsonUploadStep({ onComplete }: FullJsonUploadStepProps) {
       const fd = new FormData();
       fd.append("jsonFile", file);
       if (worldName) fd.append("worldName", worldName);
-      const res = await fetch("/api/upload/map/full-json", { method: "POST", body: fd });
+      const res = await apiFetch("/api/upload/map/full-json", { method: "POST", body: fd });
       if (!res.ok) {
         const body = await res.json().catch(() => ({ error: res.statusText }));
         throw new Error(body.error || `Upload failed: ${res.status}`);
@@ -156,7 +157,7 @@ export function FullJsonUploadStep({ onComplete }: FullJsonUploadStepProps) {
                   variant="outline"
                   size="sm"
                   onClick={async () => {
-                    await fetch(`/api/upload/map/${worldId}`, { method: "DELETE" });
+                    await apiFetch(`/api/upload/map/${worldId}`, { method: "DELETE" });
                     window.location.reload();
                   }}
                 >

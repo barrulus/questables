@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { Button } from "../ui/button";
 import { Card, CardContent } from "../ui/card";
+import { apiFetch, buildJsonRequestInit } from "../../utils/api-client";
 
 interface WorldSummary {
   id: string;
@@ -30,11 +31,11 @@ export function ReviewStep({ worldId, onDone }: ReviewStepProps) {
     void (async () => {
       try {
         const [w, c] = await Promise.all([
-          fetch(`/api/maps/world/${worldId}`).then((r) => {
+          apiFetch(`/api/maps/world/${worldId}`).then((r) => {
             if (!r.ok) throw new Error(`world fetch failed: ${r.status}`);
             return r.json();
           }),
-          fetch(`/api/maps/world/${worldId}/status`).then((r) => {
+          apiFetch(`/api/maps/world/${worldId}/status`).then((r) => {
             if (!r.ok) throw new Error(`status fetch failed: ${r.status}`);
             return r.json() as Promise<StatusResponse>;
           }),
@@ -51,15 +52,14 @@ export function ReviewStep({ worldId, onDone }: ReviewStepProps) {
     if (!world) return;
     setActivating(true);
     try {
-      const res = await fetch(`/api/maps/world/${worldId}`, {
-        method: "PATCH",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
+      const res = await apiFetch(
+        `/api/maps/world/${worldId}`,
+        buildJsonRequestInit("PATCH", {
           name: world.name,
           description: world.description,
           is_active: true,
         }),
-      });
+      );
       if (!res.ok) throw new Error(`Activate failed: ${res.status}`);
       onDone();
     } catch (e) {

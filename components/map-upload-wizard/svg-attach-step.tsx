@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { Button } from "../ui/button";
 import { Card, CardContent } from "../ui/card";
+import { apiFetch } from "../../utils/api-client";
 
 interface SvgAttachStepProps {
   worldId: string;
@@ -21,7 +22,7 @@ export function SvgAttachStep({ worldId, onComplete, onSkip }: SvgAttachStepProp
     try {
       const fd = new FormData();
       fd.append("svgFile", file);
-      const res = await fetch(`/api/upload/map/${worldId}/svg`, { method: "POST", body: fd });
+      const res = await apiFetch(`/api/upload/map/${worldId}/svg`, { method: "POST", body: fd });
       if (!res.ok) {
         const body = await res.json().catch(() => ({ error: res.statusText }));
         throw new Error(body.error || `Upload failed: ${res.status}`);
