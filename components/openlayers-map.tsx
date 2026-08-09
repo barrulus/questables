@@ -1490,41 +1490,29 @@ export function OpenLayersMap() {
         promises.push(mapDataLoader.loadMarkers(selectedWorldMap, bounds));
       }
       // Polity / zone / regiment layers are world-wide (not bounds- or
-      // zoom-scoped) and degrade to [] for worlds imported before the full
-      // FMG JSON pipeline existed. They are loaded once per world: a pan or
-      // zoom cannot reveal anything new, so re-fetching (and clearing +
-      // re-adding every polygon, which flickers) is pure waste.
+      // zoom-scoped) and are empty for worlds imported before the full FMG
+      // JSON pipeline existed. They are loaded once per world: a pan or zoom
+      // cannot reveal anything new, so re-fetching (and clearing + re-adding
+      // every polygon, which flickers) is pure waste. They are kept out of
+      // `promises` because `loadPolity` resolves `Feature[] | null`, where
+      // `null` means "the request failed" as opposed to "this world has none".
       const polityLoaded = polityLoadedWorldRef.current;
-      const needsPolity = (key: PolityLayerKey) =>
-        vis[key] && polityLoaded[key] !== selectedWorldMap;
+      const polityLayerRefs: Record<PolityLayerKey, { current: GeometryLayer | null }> = {
+        states: statesLayerRef,
+        provinces: provincesLayerRef,
+        cultures: culturesLayerRef,
+        religions: religionsLayerRef,
+        zones: zonesLayerRef,
+        regiments: regimentsLayerRef,
+      };
+      const polityRequests = POLITY_LAYER_KEYS
+        .filter((key) => vis[key] && polityLoaded[key] !== selectedWorldMap)
+        .map((key) => ({ key, request: mapDataLoader.loadPolity(selectedWorldMap, key) }));
 
-      const loadStates = needsPolity('states');
-      const loadProvinces = needsPolity('provinces');
-      const loadCultures = needsPolity('cultures');
-      const loadReligions = needsPolity('religions');
-      const loadZones = needsPolity('zones');
-      const loadRegiments = needsPolity('regiments');
-
-      if (loadStates) {
-        promises.push(mapDataLoader.loadStates(selectedWorldMap));
-      }
-      if (loadProvinces) {
-        promises.push(mapDataLoader.loadProvinces(selectedWorldMap));
-      }
-      if (loadCultures) {
-        promises.push(mapDataLoader.loadCultures(selectedWorldMap));
-      }
-      if (loadReligions) {
-        promises.push(mapDataLoader.loadReligions(selectedWorldMap));
-      }
-      if (loadZones) {
-        promises.push(mapDataLoader.loadZones(selectedWorldMap));
-      }
-      if (loadRegiments) {
-        promises.push(mapDataLoader.loadRegiments(selectedWorldMap));
-      }
-
-      const results = await Promise.all(promises);
+      const [results, polityResults] = await Promise.all([
+        Promise.all(promises),
+        Promise.all(polityRequests.map((entry) => entry.request)),
+      ]);
 
       // Update layers with real data
       let index = 0;
@@ -1552,36 +1540,17 @@ export function OpenLayersMap() {
         markersLayerRef.current?.getSource()?.clear();
         markersLayerRef.current?.getSource()?.addFeatures(results[index++] || []);
       }
-      const applyPolity = (
-        key: PolityLayerKey,
-        layerRef: { current: GeometryLayer | null },
-        features: Feature[],
-      ) => {
-        const source = layerRef.current?.getSource();
+      polityRequests.forEach(({ key }, polityIndex) => {
+        const features = polityResults[polityIndex];
+        // null => the request failed. Leave whatever the layer already shows
+        // alone and do NOT stamp it as loaded, so the next map move retries.
+        if (features === null) return;
+        const source = polityLayerRefs[key].current?.getSource();
         if (!source) return;
         source.clear();
         source.addFeatures(features);
         polityLoadedWorldRef.current[key] = selectedWorldMap;
-      };
-
-      if (loadStates) {
-        applyPolity('states', statesLayerRef, results[index++] || []);
-      }
-      if (loadProvinces) {
-        applyPolity('provinces', provincesLayerRef, results[index++] || []);
-      }
-      if (loadCultures) {
-        applyPolity('cultures', culturesLayerRef, results[index++] || []);
-      }
-      if (loadReligions) {
-        applyPolity('religions', religionsLayerRef, results[index++] || []);
-      }
-      if (loadZones) {
-        applyPolity('zones', zonesLayerRef, results[index++] || []);
-      }
-      if (loadRegiments) {
-        applyPolity('regiments', regimentsLayerRef, results[index++] || []);
-      }
+      });
 
     } catch (error) {
       console.error('Error loading world map data:', error);

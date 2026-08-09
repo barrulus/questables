@@ -184,8 +184,14 @@ export class MapDataLoader {
    * Cached fetch for the world-wide polity/military endpoints. Returns freshly
    * parsed features on every call; only the raw payload is memoised, and only
    * when the request actually succeeded.
+   *
+   * Returns `null` when the request failed (non-`ok` or thrown) so callers can
+   * tell a failure apart from a genuinely empty world — an empty
+   * FeatureCollection resolves to `[]`. Callers that cache or otherwise mark a
+   * layer "done" must only do so for a non-`null` result, or a transient error
+   * would be latched in permanently.
    */
-  private async fetchPolityGeojson(worldMapId: string, entity: PolityEntity): Promise<Feature[]> {
+  async loadPolity(worldMapId: string, entity: PolityEntity): Promise<Feature[] | null> {
     const key = `${worldMapId}:${entity}`;
     const cached = this.polityGeoJsonCache.get(key);
     if (cached !== undefined) {
@@ -196,13 +202,13 @@ export class MapDataLoader {
     try {
       const res = await fetch(url);
       // Not cached: a 4xx/5xx is a failure, not a known-empty world.
-      if (!res.ok) return [];
+      if (!res.ok) return null;
       const data = await res.json();
       this.polityGeoJsonCache.set(key, data);
       return this.featuresFromGeoJson(data);
     } catch (error) {
       console.error(`Failed to load GeoJSON from ${url}`, error);
-      return [];
+      return null;
     }
   }
 
@@ -223,28 +229,31 @@ export class MapDataLoader {
     }
   }
 
+  // Convenience wrappers keeping the plain `Promise<Feature[]>` contract for
+  // callers that don't care why a layer is empty. Anything that caches the
+  // result should call `loadPolity` directly and honour its `null`.
   async loadStates(worldMapId: string): Promise<Feature[]> {
-    return this.fetchPolityGeojson(worldMapId, 'states');
+    return (await this.loadPolity(worldMapId, 'states')) ?? [];
   }
 
   async loadProvinces(worldMapId: string): Promise<Feature[]> {
-    return this.fetchPolityGeojson(worldMapId, 'provinces');
+    return (await this.loadPolity(worldMapId, 'provinces')) ?? [];
   }
 
   async loadCultures(worldMapId: string): Promise<Feature[]> {
-    return this.fetchPolityGeojson(worldMapId, 'cultures');
+    return (await this.loadPolity(worldMapId, 'cultures')) ?? [];
   }
 
   async loadReligions(worldMapId: string): Promise<Feature[]> {
-    return this.fetchPolityGeojson(worldMapId, 'religions');
+    return (await this.loadPolity(worldMapId, 'religions')) ?? [];
   }
 
   async loadZones(worldMapId: string): Promise<Feature[]> {
-    return this.fetchPolityGeojson(worldMapId, 'zones');
+    return (await this.loadPolity(worldMapId, 'zones')) ?? [];
   }
 
   async loadRegiments(worldMapId: string): Promise<Feature[]> {
-    return this.fetchPolityGeojson(worldMapId, 'regiments');
+    return (await this.loadPolity(worldMapId, 'regiments')) ?? [];
   }
 
   async loadBurgEntrances(worldMapId: string): Promise<Feature[]> {
