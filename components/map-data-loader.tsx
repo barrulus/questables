@@ -134,6 +134,54 @@ export class MapDataLoader {
       .filter(MapDataLoader.notNull);
   }
 
+  private async fetchGeojson(url: string): Promise<Feature[]> {
+    try {
+      const res = await fetch(url);
+      if (!res.ok) return [];
+      const data = await res.json();
+      return (data?.features ?? [])
+        .map((f: Record<string, unknown>) => {
+          const geometry = this.readGeometry(f.geometry);
+          if (!geometry) return null;
+          const feat = new Feature({ geometry });
+          for (const [k, v] of Object.entries((f.properties as Record<string, unknown>) ?? {})) {
+            feat.set(k, v);
+          }
+          const id = (f as { id?: unknown }).id ?? (f.properties as Record<string, unknown> | undefined)?.id;
+          if (typeof id === 'string' || typeof id === 'number') feat.setId(id);
+          return feat;
+        })
+        .filter(MapDataLoader.notNull);
+    } catch (error) {
+      console.error(`Failed to load GeoJSON from ${url}`, error);
+      return [];
+    }
+  }
+
+  async loadStates(worldMapId: string): Promise<Feature[]> {
+    return this.fetchGeojson(`/api/maps/${worldMapId}/states`);
+  }
+
+  async loadProvinces(worldMapId: string): Promise<Feature[]> {
+    return this.fetchGeojson(`/api/maps/${worldMapId}/provinces`);
+  }
+
+  async loadCultures(worldMapId: string): Promise<Feature[]> {
+    return this.fetchGeojson(`/api/maps/${worldMapId}/cultures`);
+  }
+
+  async loadReligions(worldMapId: string): Promise<Feature[]> {
+    return this.fetchGeojson(`/api/maps/${worldMapId}/religions`);
+  }
+
+  async loadZones(worldMapId: string): Promise<Feature[]> {
+    return this.fetchGeojson(`/api/maps/${worldMapId}/zones`);
+  }
+
+  async loadRegiments(worldMapId: string): Promise<Feature[]> {
+    return this.fetchGeojson(`/api/maps/${worldMapId}/regiments`);
+  }
+
   async loadBurgEntrances(worldMapId: string): Promise<Feature[]> {
     const fc = await listWorldBurgEntrances(worldMapId);
     return (fc.features ?? [])
