@@ -115,14 +115,14 @@ NOTE: in `schema.sql` the `tile_sets` table currently appears BEFORE `maps_world
 
 - [ ] **Step 4: Apply the migration**
 
-Postgres must be running (peer auth). If `psql -U barrulus -d questables -c 'SELECT 1'` fails with "socket … failed", start Postgres first (`sudo systemctl start postgresql` or the user's usual mechanism — ask if unclear).
+Postgres must be running (peer auth). If `psql -h 127.0.0.1 -U barrulus -d questables -c 'SELECT 1'` fails with "socket … failed", start Postgres first (`sudo systemctl start postgresql` or the user's usual mechanism — ask if unclear).
 
-Run: `psql -U barrulus -d questables -f database/migrations/019_tile_sets_world_id.sql`
+Run: `psql -h 127.0.0.1 -U barrulus -d questables -f database/migrations/019_tile_sets_world_id.sql`
 Expected: `BEGIN` / `ALTER TABLE` / `CREATE INDEX` / `COMMIT` with no errors.
 
 - [ ] **Step 5: Verify**
 
-Run: `psql -U barrulus -d questables -c '\d tile_sets'`
+Run: `psql -h 127.0.0.1 -U barrulus -d questables -c '\d tile_sets'`
 Expected: `world_id | uuid` column present; `tile_sets_world_id_unique_idx` listed under indexes with `WHERE (world_id IS NOT NULL)`; FK `tile_sets_world_id_fkey … ON DELETE CASCADE`.
 
 - [ ] **Step 6: Commit**
@@ -1140,7 +1140,7 @@ Run: `npm test -- tests/maps/` (full maps suite — catches import errors in rou
 
 Run: `node --input-type=module -e "await import('./server/routes/uploads.routes.js'); console.log('uploads.routes ok'); await import('./server/routes/maps.routes.js'); console.log('maps.routes ok');"` from the `server/` directory... — if bare `node -e` import fails on missing env/config, instead just restart the dev server (`npm run db:dev`) and confirm it boots without import errors.
 
-Live smoke (dev server running, replace `<worldId>` with a real world id from `psql -U barrulus -d questables -c "SELECT id, name, width_pixels FROM maps_world"` and use a real session/token the way the wizard does — or simply defer the authed-POST check to the Task 10 browser pass):
+Live smoke (dev server running, replace `<worldId>` with a real world id from `psql -h 127.0.0.1 -U barrulus -d questables -c "SELECT id, name, width_pixels FROM maps_world"` and use a real session/token the way the wizard does — or simply defer the authed-POST check to the Task 10 browser pass):
 
 ```bash
 curl -s -o /dev/null -w '%{http_code}\n' -X POST http://localhost:3001/api/upload/map/not-a-uuid/svg   # expect 401 (no auth) — auth runs first; the 400 path is exercised in the browser pass
@@ -1509,12 +1509,12 @@ Expected: all green (DB-gated suites RUNNING, not skipped — Postgres up).
 With the dev stack running (`npm run dev:local`) and a world that has a base map (upload one via the wizard step or the Maps tab button if none exists yet):
 
 ```bash
-WORLD=$(psql -U barrulus -d questables -tAc "SELECT world_id FROM tile_sets WHERE world_id IS NOT NULL LIMIT 1")
+WORLD=$(psql -h 127.0.0.1 -U barrulus -d questables -tAc "SELECT world_id FROM tile_sets WHERE world_id IS NOT NULL LIMIT 1")
 curl -s -o /tmp/t0.png -w '%{http_code} %{content_type}\n' "http://localhost:3001/api/maps/$WORLD/tiles/0/0/0.png"   # expect 200 image/png
 curl -s -o /dev/null -w '%{http_code}\n' "http://localhost:3001/api/maps/$WORLD/tiles/0/5/0.png"                    # expect 204 (outside grid)
 curl -s -o /dev/null -w '%{http_code}\n' "http://localhost:3001/api/maps/$WORLD/tiles/99/0/0.png"                   # expect 204 (beyond max zoom)
 ls server/map_data/world-tiles/$WORLD/0/0/   # expect 0.png (disk cache)
-psql -U barrulus -d questables -c "SELECT name, base_url, max_zoom, world_id FROM tile_sets WHERE world_id = '$WORLD'"
+psql -h 127.0.0.1 -U barrulus -d questables -c "SELECT name, base_url, max_zoom, world_id FROM tile_sets WHERE world_id = '$WORLD'"
 ```
 
 - [ ] **Step 3: Manual browser checklist (from the spec — requires the Campaign Director in the loop; report results, don't skip)**
