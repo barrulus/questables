@@ -16,7 +16,8 @@ const STEP_LABELS = ["Full JSON", "SVG canvas", "Review"];
 
 interface MapUploadWizardProps {
   // userId retained in signature for API parity with the previous wizard, even
-  // though step components no longer need it (auth comes from cookies).
+  // though step components no longer need it (auth comes from the Bearer
+  // token attached by api-client, not this prop).
   userId: string;
   onClose: () => void;
 }

@@ -168,8 +168,14 @@ export async function ingestBurgEntrancesForWorldIfReady(worldId) {
 // --- Status ---
 
 export const getWorldIngestionStatus = async (worldId) => {
-  const tables = ['maps_cells', 'maps_burgs', 'maps_routes', 'maps_rivers', 'maps_markers'];
-  const keys = ['cells', 'burgs', 'routes', 'rivers', 'markers'];
+  const tables = [
+    'maps_cells', 'maps_burgs', 'maps_routes', 'maps_rivers', 'maps_markers',
+    'maps_states', 'maps_provinces', 'maps_cultures', 'maps_religions', 'maps_zones', 'maps_regiments',
+  ];
+  const keys = [
+    'cells', 'burgs', 'routes', 'rivers', 'markers',
+    'states', 'provinces', 'cultures', 'religions', 'zones', 'regiments',
+  ];
 
   const counts = await Promise.all(
     tables.map((table) =>

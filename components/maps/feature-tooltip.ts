@@ -105,14 +105,16 @@ export type PolityFeatureKind =
  * resolved from distinguishing id properties instead.
  *
  * Order matters: a regiment feature also carries `state_id` (the owning
- * state), so `regiment_id` MUST be checked first.
+ * state), so `regiment_id` MUST be checked first. Likewise, every province
+ * feature from `GET /:worldId/provinces` also carries a non-null `state_id`
+ * (the owning state), so `province_id` MUST be checked before `state_id`.
  */
 export const getPolityFeatureKind = (feature: FeatureLike | null): PolityFeatureKind | null => {
   if (!feature) return null;
   const gf = feature as GeometryFeature;
   if (gf.get('regiment_id') != null) return 'regiment';
-  if (gf.get('state_id') != null) return 'state';
   if (gf.get('province_id') != null) return 'province';
+  if (gf.get('state_id') != null) return 'state';
   if (gf.get('culture_id') != null) return 'culture';
   if (gf.get('religion_id') != null) return 'religion';
   if (gf.get('zone_id') != null) return 'zone';
