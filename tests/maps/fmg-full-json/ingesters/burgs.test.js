@@ -16,7 +16,8 @@ describeWithDb('ingestBurgs', () => {
     expect(rowCount).toBe(1);
     const { rows } = await client.query(
       `SELECT burg_id, name, xpixel, ypixel, type, settlement_type, "group",
-              base_population, feature, state, culture, religion, province,
+              base_population, feature, state, statefull, culture, religion,
+              province, provincefull,
               capital, port, citadel, walls, plaza, temple, shanty,
               population, ST_AsText(geom) AS wkt
          FROM public.maps_burgs WHERE world_id = $1`,
@@ -26,7 +27,9 @@ describeWithDb('ingestBurgs', () => {
       burg_id: 1, name: 'Tinytown', xpixel: 5, ypixel: 5,
       type: 'Generic', settlement_type: 'capital',
       group: 'capital', feature: 1,
-      state: 'Tinystate', culture: 'Tinyfolk', religion: 'Tinyfaith',
+      state: 'Tinystate', statefull: 'Republic of Tinystate',
+      culture: 'Tinyfolk', religion: 'Tinyfaith',
+      province: 'Tinyprov', provincefull: 'Tinyprov Province',
       capital: true, port: false, citadel: true, walls: true,
       plaza: true, temple: false, shanty: false,
       population: 3, // round of 2.5

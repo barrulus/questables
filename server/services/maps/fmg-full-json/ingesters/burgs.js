@@ -3,11 +3,24 @@ import { negateY } from '../geometry-builder.js';
 
 const PORT_THRESHOLD = 0.4;
 
-function nameById(arr, id) {
+function entityById(arr, id) {
   if (id == null) return null;
   const entity = Array.isArray(arr) ? arr[id] : null;
   if (!entity || typeof entity !== 'object') return null;
-  return entity.name ?? null;
+  return entity;
+}
+
+function nameById(arr, id) {
+  return entityById(arr, id)?.name ?? null;
+}
+
+// fullName falls back to name when the export omits it (e.g. unnamed/neutral
+// entries), matching the fallback the legacy GeoJSON pipeline baked into its
+// stateFull/provinceFull properties.
+function fullNameById(arr, id) {
+  const entity = entityById(arr, id);
+  if (!entity) return null;
+  return entity.fullName ?? entity.name ?? null;
 }
 
 function intOrNull(v) {
@@ -24,19 +37,29 @@ export async function ingestBurgs(client, worldId, parsed, log) {
   const provinces = parsed.pack?.provinces || [];
   const cultures = parsed.pack?.cultures || [];
   const religions = parsed.pack?.religions || [];
+  const cells = parsed.pack?.cells || [];
 
   for (let idx = 0; idx < burgs.length; idx++) {
     const b = burgs[idx];
+    // Real FMG full-JSON exports don't always carry province/religion
+    // directly on the burg — they're per-cell attributes. Prefer the burg's
+    // own field when present (e.g. test fixtures), otherwise fall back to
+    // the owning cell's province/religion id.
+    const cell = b.cell != null ? cells[b.cell] : null;
+    const provinceId = b.province ?? cell?.province ?? null;
+    const religionId = b.religion ?? cell?.religion ?? null;
+
     await client.query(
       `INSERT INTO public.maps_burgs
-        (world_id, burg_id, name, state, province, culture, religion,
+        (world_id, burg_id, name, state, statefull, province, provincefull, culture, religion,
          population, elevation, capital, port, citadel, walls, plaza,
          temple, shanty, xpixel, ypixel, cell, type, is_large_port,
          is_regional_center, settlement_type, base_population, "group", feature, geom)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26,
-               ST_SetSRID(ST_MakePoint($17, $27), 0))
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26,$27,$28,
+               ST_SetSRID(ST_MakePoint($19, $29), 0))
        ON CONFLICT (world_id, burg_id) DO UPDATE SET
-         name=EXCLUDED.name, state=EXCLUDED.state, province=EXCLUDED.province,
+         name=EXCLUDED.name, state=EXCLUDED.state, statefull=EXCLUDED.statefull,
+         province=EXCLUDED.province, provincefull=EXCLUDED.provincefull,
          culture=EXCLUDED.culture, religion=EXCLUDED.religion,
          population=EXCLUDED.population, elevation=EXCLUDED.elevation,
          capital=EXCLUDED.capital, port=EXCLUDED.port, citadel=EXCLUDED.citadel,
@@ -50,9 +73,11 @@ export async function ingestBurgs(client, worldId, parsed, log) {
       [
         worldId, b.i, b.name ?? null,
         nameById(states, b.state),
-        nameById(provinces, b.province),
+        fullNameById(states, b.state),
+        nameById(provinces, provinceId),
+        fullNameById(provinces, provinceId),
         nameById(cultures, b.culture),
-        nameById(religions, b.religion),
+        nameById(religions, religionId),
         intOrNull(b.population),
         intOrNull(b.elevation),
         Boolean(b.capital),
@@ -68,7 +93,7 @@ export async function ingestBurgs(client, worldId, parsed, log) {
         Boolean(b.capital),
         b.settlementType ?? null, b.basePopulation ?? null,
         b.group ?? null, b.feature ?? null,
-        // $27: geom Y only. xpixel/ypixel ($17/$18) stay raw FMG pixels — the
+        // $29: geom Y only. xpixel/ypixel ($19/$20) stay raw FMG pixels — the
         // settlemaker/entrance stack reads those; geom is Y-up per
         // QUESTABLES_PIXEL.
         negateY(b.y ?? null),
