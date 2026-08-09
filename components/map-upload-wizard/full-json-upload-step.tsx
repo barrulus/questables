@@ -32,10 +32,16 @@ export function FullJsonUploadStep({ onComplete }: FullJsonUploadStepProps) {
   const [job, setJob] = useState<JobStatus | null>(null);
   const [error, setError] = useState<string | null>(null);
   const pollingRef = useRef<number | null>(null);
+  const onCompleteRef = useRef(onComplete);
+  const worldNameRef = useRef(worldName);
 
-  useEffect(() => () => {
-    if (pollingRef.current) window.clearInterval(pollingRef.current);
-  }, []);
+  useEffect(() => {
+    onCompleteRef.current = onComplete;
+  }, [onComplete]);
+
+  useEffect(() => {
+    worldNameRef.current = worldName;
+  }, [worldName]);
 
   useEffect(() => {
     if (!jobId) return;
@@ -47,7 +53,12 @@ export function FullJsonUploadStep({ onComplete }: FullJsonUploadStepProps) {
         setJob(data);
         if (data.status === "completed") {
           if (pollingRef.current) window.clearInterval(pollingRef.current);
-          onComplete({ worldId: data.world_id!, worldName });
+          const finalWorldId = data.world_id ?? worldId;
+          if (!finalWorldId) {
+            setError("Import completed but no world ID returned");
+          } else {
+            onCompleteRef.current({ worldId: finalWorldId, worldName: worldNameRef.current });
+          }
         } else if (data.status === "failed") {
           if (pollingRef.current) window.clearInterval(pollingRef.current);
           setError(data.error || "Import failed");
@@ -59,9 +70,9 @@ export function FullJsonUploadStep({ onComplete }: FullJsonUploadStepProps) {
     void tick();
     pollingRef.current = window.setInterval(tick, 1000);
     return () => { if (pollingRef.current) window.clearInterval(pollingRef.current); };
-  }, [jobId, onComplete, worldName]);
+  }, [jobId, worldId]);
 
-  const handleSubmit = async (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent<HTMLFormElement>) => {
     e.preventDefault();
     if (!file) return;
     setError(null);
