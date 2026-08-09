@@ -1,4 +1,5 @@
 import { Router } from 'express';
+import multer from 'multer';
 import { promises as fs } from 'fs';
 import {
   requireAuth,
@@ -13,12 +14,15 @@ import {
 } from '../services/uploads/service.js';
 import { createOrUpdateWorld } from '../services/maps/ingestion-service.js';
 
-export const registerUploadRoutes = (app, { upload, uploadSvg }) => {
+export const registerUploadRoutes = (app, { upload, uploadSvg, uploadFullJson }) => {
   if (!upload) {
     throw new Error('registerUploadRoutes requires an upload middleware instance');
   }
   if (!uploadSvg) {
     throw new Error('registerUploadRoutes requires an uploadSvg middleware instance');
+  }
+  if (!uploadFullJson) {
+    throw new Error('registerUploadRoutes requires an uploadFullJson middleware instance');
   }
 
   const router = Router();
@@ -166,7 +170,7 @@ export const registerUploadRoutes = (app, { upload, uploadSvg }) => {
   );
 
   // --- FMG Full JSON import: accept whole FMG export, start async ingest ---
-  router.post('/upload/map/full-json', requireAuth, upload.single('jsonFile'), async (req, res) => {
+  router.post('/upload/map/full-json', requireAuth, uploadFullJson.single('jsonFile'), async (req, res) => {
     if (!req.file) return res.status(400).json({ error: 'jsonFile is required' });
     try {
       const { peekFmgHeader } = await import('../services/maps/fmg-full-json/peek-header.js');
@@ -198,6 +202,20 @@ export const registerUploadRoutes = (app, { upload, uploadSvg }) => {
       logError('FMG full JSON upload failed', err, { filename: req.file?.filename });
       return res.status(500).json({ error: err.message });
     }
+  },
+  // Route-scoped error handler: catches errors thrown by uploadFullJson
+  // (the middleware above) before the handler ever runs — e.g. the file
+  // exceeding the 500MB limit. Without this, a MulterError would fall
+  // through to the app-wide error handler and surface as an opaque 500.
+  // eslint-disable-next-line no-unused-vars -- Express recognises 4-arg sig
+  (err, req, res, next) => {
+    if (err instanceof multer.MulterError && err.code === 'LIMIT_FILE_SIZE') {
+      return res.status(413).json({
+        error: 'file_too_large',
+        message: 'FMG Full JSON export exceeds the maximum upload size (max 500MB).',
+      });
+    }
+    return next(err);
   });
 
   // --- FMG Full JSON import: delete world (rollback partially-ingested world) ---

@@ -216,6 +216,38 @@ const uploadSvg = multer({
   }
 });
 
+// Scoped multer for the FMG Full JSON import path only. FMG "Full" exports
+// scale with map size and routinely run well past the 50MB image/asset
+// limit above, so this path gets its own, much larger ceiling. Only JSON
+// mimetypes are accepted here — never images — since this is a data import,
+// not an asset upload.
+const fullJsonStorage = multer.diskStorage({
+  destination: async (_req, _file, cb) => {
+    const uploadDir = join(process.cwd(), 'uploads');
+    await fs.mkdir(uploadDir, { recursive: true });
+    cb(null, uploadDir);
+  },
+  filename: (_req, file, cb) => {
+    const uniqueSuffix = Date.now() + '-' + Math.round(Math.random() * 1E9);
+    const ext = MIME_EXT_MAP[file.mimetype] || 'json';
+    cb(null, `${file.fieldname}-${uniqueSuffix}.${ext}`);
+  }
+});
+
+const FULL_JSON_ALLOWED_MIMETYPES = ['application/json', 'application/geo+json'];
+
+const uploadFullJson = multer({
+  storage: fullJsonStorage,
+  limits: { fileSize: 500 * 1024 * 1024 }, // 500MB limit
+  fileFilter: (_req, file, cb) => {
+    if (FULL_JSON_ALLOWED_MIMETYPES.includes(file.mimetype)) {
+      cb(null, true);
+    } else {
+      cb(new Error('Invalid file type. Allowed: JSON, GeoJSON only on this endpoint.'));
+    }
+  }
+});
+
 // Serve uploaded files. CSP + nosniff are defence-in-depth: even if a
 // malicious file made it past the upload filter, the browser will refuse to
 // execute scripts on this origin and will not MIME-sniff its way around the
@@ -498,7 +530,7 @@ registerMapRoutes(app);
 registerSessionRoutes(app);
 registerEncounterRoutes(app);
 registerNpcRoutes(app);
-registerUploadRoutes(app, { upload, uploadSvg });
+registerUploadRoutes(app, { upload, uploadSvg, uploadFullJson });
 registerSrdRoutes(app);
 registerGameStateRoutes(app);
 registerActionRoutes(app);
