@@ -19,7 +19,7 @@ const ensureBounds = (bounds) => {
   return normalized;
 };
 
-const isUuid = (value) => typeof value === 'string' && UUID_REGEX.test(value);
+export const isUuid = (value) => typeof value === 'string' && UUID_REGEX.test(value);
 
 const createValidationError = (code, message) => {
   const error = new Error(message);
@@ -544,9 +544,8 @@ export const listCampaignLocations = async (campaignId) => {
   return rows;
 };
 
-export const listTileSets = async () => {
-  const { rows } = await query(
-    `SELECT id,
+const TILE_SET_COLUMNS = `
+            id,
             name,
             description,
             base_url,
@@ -556,16 +555,62 @@ export const listTileSets = async () => {
             tile_size,
             attribution,
             uploaded_by,
+            world_id,
+            is_active,
             created_at,
-            updated_at
+            updated_at`;
+
+export const listTileSets = async (worldId = null, q = query) => {
+  if (worldId) {
+    // The world's scoped tileset(s); legacy global rows (world_id IS NULL)
+    // only when the world has no active scoped tileset — backward compat
+    // for pre-019 worlds like snoopia.
+    const { rows } = await q(
+      `SELECT ${TILE_SET_COLUMNS}
+         FROM tile_sets
+        WHERE is_active = true
+          AND (world_id = $1
+               OR (world_id IS NULL
+                   AND NOT EXISTS (
+                     SELECT 1 FROM tile_sets s
+                      WHERE s.world_id = $1 AND s.is_active = true)))
+        ORDER BY name ASC`,
+      [worldId],
+      { label: 'maps.tilesets.list_world' },
+    );
+    return rows;
+  }
+
+  const { rows } = await q(
+    `SELECT ${TILE_SET_COLUMNS}
        FROM tile_sets
       WHERE is_active = true
       ORDER BY name ASC`,
     [],
     { label: 'maps.tilesets.list' },
   );
-
   return rows;
+};
+
+/**
+ * Upsert the single world-scoped "Base map" tileset row. Conflict target is
+ * the partial unique index from migration 019.
+ */
+export const upsertWorldTileset = async ({ worldId, maxZoom, uploadedBy = null }, q = query) => {
+  const { rows } = await q(
+    `INSERT INTO tile_sets (name, base_url, format, min_zoom, max_zoom, tile_size, is_active, world_id, uploaded_by)
+     VALUES ('Base map', $2, 'png', 0, $3, 256, true, $1, $4)
+     ON CONFLICT (world_id) WHERE world_id IS NOT NULL
+     DO UPDATE SET base_url = EXCLUDED.base_url,
+                   max_zoom = EXCLUDED.max_zoom,
+                   is_active = true,
+                   name = EXCLUDED.name,
+                   uploaded_by = COALESCE(EXCLUDED.uploaded_by, tile_sets.uploaded_by)
+     RETURNING *`,
+    [worldId, `/api/maps/${worldId}/tiles/{z}/{x}/{y}.png`, maxZoom, uploadedBy],
+    { label: 'maps.tilesets.upsert_world' },
+  );
+  return rows[0];
 };
 
 export const listCampaignRegions = async (campaignId) => {
