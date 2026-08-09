@@ -24,6 +24,12 @@ import {
   Search,
   Building2,
   ArrowLeft,
+  Landmark,
+  Map as MapIcon,
+  Palette,
+  Church,
+  TriangleAlert,
+  Swords,
 } from "lucide-react";
 
 // OpenLayers imports
@@ -55,6 +61,14 @@ import {
   getRiverStyle,
   getCellStyle,
 } from './maps/questables-style-factory';
+import {
+  createStatesLayer,
+  createProvincesLayer,
+  createCulturesLayer,
+  createReligionsLayer,
+  createZonesLayer,
+  createRegimentsLayer,
+} from './layers';
 import { createQuestablesTileSource, type TileSetConfig } from './maps/questables-tile-source';
 import { createSettlementTileSource } from './maps/settlement-tile-source';
 import { buildHoverTooltipInfo, getFeatureTypeFromProperties } from './maps/feature-tooltip';
@@ -132,6 +146,12 @@ interface LayerVisibility {
   campaignLocations: boolean;
   playerTokens: boolean;
   playerTrails: boolean;
+  states: boolean;
+  provinces: boolean;
+  cultures: boolean;
+  religions: boolean;
+  zones: boolean;
+  regiments: boolean;
 }
 
 const INTERACTIVE_FEATURE_TYPES = new Set(['burg', 'marker', 'player']);
@@ -240,6 +260,12 @@ const TOGGLEABLE_LAYER_OPTIONS: Array<{
   { key: 'markers', label: 'Markers', icon: <MapPin className="w-3 h-3" /> },
   { key: 'playerTokens', label: 'Players', icon: <Users className="w-3 h-3" /> },
   { key: 'playerTrails', label: 'Trails', icon: <Flag className="w-3 h-3" /> },
+  { key: 'states', label: 'States', icon: <Landmark className="w-3 h-3" /> },
+  { key: 'provinces', label: 'Provinces', icon: <MapIcon className="w-3 h-3" /> },
+  { key: 'cultures', label: 'Cultures', icon: <Palette className="w-3 h-3" /> },
+  { key: 'religions', label: 'Religions', icon: <Church className="w-3 h-3" /> },
+  { key: 'zones', label: 'Zones', icon: <TriangleAlert className="w-3 h-3" /> },
+  { key: 'regiments', label: 'Regiments', icon: <Swords className="w-3 h-3" /> },
 ];
 
 export function OpenLayersMap() {
@@ -293,7 +319,13 @@ export function OpenLayersMap() {
     markers: false,
     campaignLocations: true,
     playerTokens: true,
-    playerTrails: false
+    playerTrails: false,
+    states: true,
+    provinces: false,
+    cultures: false,
+    religions: false,
+    zones: false,
+    regiments: false
   });
   const [popupContent, setPopupContent] = useState<PopupDetails | null>(null);
   const [hoverInfo, setHoverInfo] = useState<{
@@ -606,6 +638,12 @@ export function OpenLayersMap() {
   const campaignLayerRef = useRef<GeometryLayer | null>(null);
   const playerLayerRef = useRef<GeometryLayer | null>(null);
   const playerTrailLayerRef = useRef<TrailLayer | null>(null);
+  const statesLayerRef = useRef<GeometryLayer | null>(null);
+  const provincesLayerRef = useRef<GeometryLayer | null>(null);
+  const culturesLayerRef = useRef<GeometryLayer | null>(null);
+  const religionsLayerRef = useRef<GeometryLayer | null>(null);
+  const zonesLayerRef = useRef<GeometryLayer | null>(null);
+  const regimentsLayerRef = useRef<GeometryLayer | null>(null);
   const settlementLayerRef = useRef<TileLayer | null>(null);
   const settlementEntrancesLayerRef = useRef<VectorLayer<VectorSource> | null>(null);
   const savedWorldViewRef = useRef<View | null>(null);
@@ -826,6 +864,12 @@ export function OpenLayersMap() {
     campaignLocations: campaignLayerRef,
     playerTokens: playerLayerRef,
     playerTrails: playerTrailLayerRef,
+    states: statesLayerRef,
+    provinces: provincesLayerRef,
+    cultures: culturesLayerRef,
+    religions: religionsLayerRef,
+    zones: zonesLayerRef,
+    regiments: regimentsLayerRef,
   }), []);
 
   const toggleLayer = useCallback((layerName: keyof LayerVisibility, value?: boolean) => {
@@ -1419,6 +1463,27 @@ export function OpenLayersMap() {
       if (dataTypes.includes('markers') && vis.markers) {
         promises.push(mapDataLoader.loadMarkers(selectedWorldMap, bounds));
       }
+      // Polity / zone / regiment layers are world-wide (not bounds- or
+      // zoom-scoped) and degrade to [] for worlds imported before the full
+      // FMG JSON pipeline existed.
+      if (vis.states) {
+        promises.push(mapDataLoader.loadStates(selectedWorldMap));
+      }
+      if (vis.provinces) {
+        promises.push(mapDataLoader.loadProvinces(selectedWorldMap));
+      }
+      if (vis.cultures) {
+        promises.push(mapDataLoader.loadCultures(selectedWorldMap));
+      }
+      if (vis.religions) {
+        promises.push(mapDataLoader.loadReligions(selectedWorldMap));
+      }
+      if (vis.zones) {
+        promises.push(mapDataLoader.loadZones(selectedWorldMap));
+      }
+      if (vis.regiments) {
+        promises.push(mapDataLoader.loadRegiments(selectedWorldMap));
+      }
 
       const results = await Promise.all(promises);
 
@@ -1447,6 +1512,30 @@ export function OpenLayersMap() {
       if (dataTypes.includes('markers') && vis.markers) {
         markersLayerRef.current?.getSource()?.clear();
         markersLayerRef.current?.getSource()?.addFeatures(results[index++] || []);
+      }
+      if (vis.states) {
+        statesLayerRef.current?.getSource()?.clear();
+        statesLayerRef.current?.getSource()?.addFeatures(results[index++] || []);
+      }
+      if (vis.provinces) {
+        provincesLayerRef.current?.getSource()?.clear();
+        provincesLayerRef.current?.getSource()?.addFeatures(results[index++] || []);
+      }
+      if (vis.cultures) {
+        culturesLayerRef.current?.getSource()?.clear();
+        culturesLayerRef.current?.getSource()?.addFeatures(results[index++] || []);
+      }
+      if (vis.religions) {
+        religionsLayerRef.current?.getSource()?.clear();
+        religionsLayerRef.current?.getSource()?.addFeatures(results[index++] || []);
+      }
+      if (vis.zones) {
+        zonesLayerRef.current?.getSource()?.clear();
+        zonesLayerRef.current?.getSource()?.addFeatures(results[index++] || []);
+      }
+      if (vis.regiments) {
+        regimentsLayerRef.current?.getSource()?.clear();
+        regimentsLayerRef.current?.getSource()?.addFeatures(results[index++] || []);
       }
 
     } catch (error) {
@@ -1527,6 +1616,25 @@ export function OpenLayersMap() {
     });
     markersLayerRef.current = markersLayer;
 
+    // Polity / zone polygons + regiment markers (FMG full-JSON import).
+    const statesLayer = createStatesLayer({ visible: initialVisibility.states });
+    statesLayerRef.current = statesLayer;
+
+    const provincesLayer = createProvincesLayer({ visible: initialVisibility.provinces });
+    provincesLayerRef.current = provincesLayer;
+
+    const culturesLayer = createCulturesLayer({ visible: initialVisibility.cultures });
+    culturesLayerRef.current = culturesLayer;
+
+    const religionsLayer = createReligionsLayer({ visible: initialVisibility.religions });
+    religionsLayerRef.current = religionsLayer;
+
+    const zonesLayer = createZonesLayer({ visible: initialVisibility.zones });
+    zonesLayerRef.current = zonesLayer;
+
+    const regimentsLayer = createRegimentsLayer({ visible: initialVisibility.regiments });
+    regimentsLayerRef.current = regimentsLayer;
+
     const campaignLayer = new VectorLayer<GeometrySource>({
       source: new VectorSource<GeometryFeature>({ wrapX: false }),
       style: (feature, resolution) => getCampaignLocationStyleRef.current(feature, resolution),
@@ -1565,11 +1673,19 @@ export function OpenLayersMap() {
       layers: [
         baseLayer,
         cellsLayer,      // Bottom layer
+        // Polity polygons sit above the terrain/base tiles but below every
+        // line + label layer, so state/culture fills never occlude burg icons.
+        statesLayer,
+        provincesLayer,
+        culturesLayer,
+        religionsLayer,
+        zonesLayer,
         riversLayer,
         routesLayer,
         burgsLayer,
         burgEntrancesLayer,
         markersLayer,
+        regimentsLayer,  // text labels — must render above the polygon fills
         campaignLayer,
         playerTrailLayer,
         playerLayer,
@@ -1693,7 +1809,13 @@ export function OpenLayersMap() {
       riversLayerRef.current,
       cellsLayerRef.current,
       markersLayerRef.current,
-      campaignLayerRef.current
+      campaignLayerRef.current,
+      statesLayerRef.current,
+      provincesLayerRef.current,
+      culturesLayerRef.current,
+      religionsLayerRef.current,
+      zonesLayerRef.current,
+      regimentsLayerRef.current
     ];
 
     const baseLayer = baseLayerRef.current;
@@ -1854,6 +1976,12 @@ export function OpenLayersMap() {
       campaignLayerRef.current?.setVisible(vis.campaignLocations);
       playerTrailLayerRef.current?.setVisible(vis.playerTrails);
       playerLayerRef.current?.setVisible(vis.playerTokens);
+      statesLayerRef.current?.setVisible(vis.states);
+      provincesLayerRef.current?.setVisible(vis.provinces);
+      culturesLayerRef.current?.setVisible(vis.cultures);
+      religionsLayerRef.current?.setVisible(vis.religions);
+      zonesLayerRef.current?.setVisible(vis.zones);
+      regimentsLayerRef.current?.setVisible(vis.regiments);
 
       loadWorldMapDataRef.current();
       if (activeCampaignId) {
@@ -1885,6 +2013,12 @@ export function OpenLayersMap() {
     campaignLayerRef.current?.setVisible(layerVisibility.campaignLocations && mapMode === 'world');
     playerTrailLayerRef.current?.setVisible(layerVisibility.playerTrails && mapMode === 'world');
     playerLayerRef.current?.setVisible(layerVisibility.playerTokens && mapMode === 'world');
+    statesLayerRef.current?.setVisible(layerVisibility.states && mapMode === 'world');
+    provincesLayerRef.current?.setVisible(layerVisibility.provinces && mapMode === 'world');
+    culturesLayerRef.current?.setVisible(layerVisibility.cultures && mapMode === 'world');
+    religionsLayerRef.current?.setVisible(layerVisibility.religions && mapMode === 'world');
+    zonesLayerRef.current?.setVisible(layerVisibility.zones && mapMode === 'world');
+    regimentsLayerRef.current?.setVisible(layerVisibility.regiments && mapMode === 'world');
   }, [layerVisibility, mapMode]);
 
 
