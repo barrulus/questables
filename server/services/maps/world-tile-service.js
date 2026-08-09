@@ -89,3 +89,162 @@ export function buildTileSvg(svgText, vb, tileSize = TILE_SIZE) {
   // Function replacement so `$` sequences in attribute values stay literal.
   return svgText.replace(tag, () => newTag);
 }
+
+/**
+ * In-memory LRU of parsed world SVGs: worldId → { svg, dims, maxZoom }.
+ * Capacity 2 — a world SVG can be tens of MB; two covers the active world
+ * plus one being compared/replaced.
+ */
+const svgCache = new Map();
+
+function getCachedSvg(worldId) {
+  const entry = svgCache.get(worldId);
+  if (entry) {
+    // Refresh recency (Map preserves insertion order).
+    svgCache.delete(worldId);
+    svgCache.set(worldId, entry);
+  }
+  return entry;
+}
+
+function putCachedSvg(worldId, entry) {
+  svgCache.delete(worldId);
+  svgCache.set(worldId, entry);
+  while (svgCache.size > SVG_CACHE_CAPACITY) {
+    svgCache.delete(svgCache.keys().next().value);
+  }
+}
+
+export function evictWorldSvg(worldId) {
+  svgCache.delete(worldId);
+}
+
+async function ensureWorldSvg(worldId) {
+  const cached = getCachedSvg(worldId);
+  if (cached) return cached;
+
+  let svg;
+  try {
+    svg = await fs.promises.readFile(worldSvgPath(worldId), 'utf8');
+  } catch {
+    const err = new Error('World has no base map SVG');
+    err.status = 404;
+    err.code = 'no_base_map';
+    throw err;
+  }
+
+  const dims = parseSvgDimensions(svg);
+  if (!dims) {
+    const err = new Error('Stored base map SVG has no readable dimensions');
+    err.status = 500;
+    err.code = 'invalid_base_map_svg';
+    throw err;
+  }
+
+  const entry = { svg, dims, maxZoom: computeMaxZoom(dims.width, dims.height) };
+  putCachedSvg(worldId, entry);
+  logInfo('World base map SVG loaded', {
+    telemetryEvent: 'world_tiles.svg_loaded',
+    worldId,
+    maxZoom: entry.maxZoom,
+  });
+  return entry;
+}
+
+/** In-flight dedupe: tileKey → Promise<Buffer|null>. */
+const inflight = new Map();
+
+export function _inflightCount() {
+  return inflight.size;
+}
+
+async function renderWorldTile(worldId, z, x, y, tilePath) {
+  const entry = await ensureWorldSvg(worldId);
+  if (z > entry.maxZoom) return null;
+
+  const vb = tileViewBox(entry.dims, z, x, y);
+  if (!vb) return null;
+
+  const tileSvg = buildTileSvg(entry.svg, vb);
+  let pngBuffer;
+  try {
+    pngBuffer = await sharp(Buffer.from(tileSvg))
+      .resize(TILE_SIZE, TILE_SIZE, { fit: 'fill' })
+      .png({ compressionLevel: 9 })
+      .toBuffer();
+  } catch (err) {
+    logError('World tile rasterization failed', err, { worldId, z, x, y });
+    pngBuffer = await sharp({
+      create: { width: TILE_SIZE, height: TILE_SIZE, channels: 4, background: { r: 0, g: 0, b: 0, alpha: 0 } },
+    }).png().toBuffer();
+  }
+
+  try {
+    fs.mkdirSync(path.dirname(tilePath), { recursive: true });
+    fs.writeFileSync(tilePath, pngBuffer);
+  } catch (err) {
+    logError('World tile disk cache write failed', err, { tilePath });
+  }
+
+  return pngBuffer;
+}
+
+/**
+ * Get one base-map tile as a PNG buffer. Resolves null for tiles outside the
+ * grid or beyond max zoom (→ 204). Throws { status: 404, code: 'no_base_map' }
+ * when the world has no stored SVG.
+ *
+ * Deliberately NOT an async function: the disk-cache check and in-flight
+ * registration run synchronously, so two concurrent calls for the same
+ * uncached tile share one render.
+ */
+export function getWorldTile(worldId, z, x, y) {
+  if (!Number.isInteger(z) || !Number.isInteger(x) || !Number.isInteger(y) || z < 0 || x < 0 || y < 0) {
+    return Promise.resolve(null);
+  }
+
+  const tilePath = path.join(worldTilesDir(worldId), String(z), String(x), `${y}.png`);
+  try {
+    const cached = fs.readFileSync(tilePath);
+    if (cached.length > 0) return Promise.resolve(cached);
+  } catch {
+    // Not cached — render.
+  }
+
+  const key = `${worldId}/${z}/${x}/${y}`;
+  const existing = inflight.get(key);
+  if (existing) return existing;
+
+  const promise = renderWorldTile(worldId, z, x, y, tilePath).finally(() => {
+    inflight.delete(key);
+  });
+  inflight.set(key, promise);
+  return promise;
+}
+
+/**
+ * Persist an uploaded SVG as the world's base map: move the staged multer
+ * file into place (overwrite), evict the memory cache, purge the tile cache.
+ */
+export async function saveWorldSvg(worldId, stagedPath) {
+  const dest = worldSvgPath(worldId);
+  await fs.promises.mkdir(path.dirname(dest), { recursive: true });
+  try {
+    await fs.promises.rename(stagedPath, dest);
+  } catch {
+    // Cross-device fallback.
+    await fs.promises.copyFile(stagedPath, dest);
+    await fs.promises.unlink(stagedPath).catch(() => {});
+  }
+  evictWorldSvg(worldId);
+  await fs.promises.rm(worldTilesDir(worldId), { recursive: true, force: true }).catch((err) => {
+    logError('World tile cache purge failed', err, { worldId });
+  });
+}
+
+/** Best-effort cleanup on world delete / base-map removal. Idempotent. */
+export async function removeWorldBaseMap(worldId) {
+  evictWorldSvg(worldId);
+  await fs.promises.unlink(worldSvgPath(worldId)).catch(() => {});
+  await fs.promises.rm(worldTilesDir(worldId), { recursive: true, force: true }).catch(() => {});
+}
