@@ -154,6 +154,21 @@ interface LayerVisibility {
   regiments: boolean;
 }
 
+/** Layers backed by the world-wide (non bounds-scoped) FMG full-JSON endpoints. */
+type PolityLayerKey = 'states' | 'provinces' | 'cultures' | 'religions' | 'zones' | 'regiments';
+
+const POLITY_LAYER_KEYS: PolityLayerKey[] = [
+  'states',
+  'provinces',
+  'cultures',
+  'religions',
+  'zones',
+  'regiments',
+];
+
+const isPolityLayerKey = (key: keyof LayerVisibility): key is PolityLayerKey =>
+  (POLITY_LAYER_KEYS as string[]).includes(key);
+
 const INTERACTIVE_FEATURE_TYPES = new Set(['burg', 'marker', 'player']);
 const MOVE_PROMPT_TOAST_ID = 'player-move-selection';
 const MOVE_MODES = ['walk', 'ride', 'boat', 'fly', 'teleport', 'gm'] as const;
@@ -644,6 +659,12 @@ export function OpenLayersMap() {
   const religionsLayerRef = useRef<GeometryLayer | null>(null);
   const zonesLayerRef = useRef<GeometryLayer | null>(null);
   const regimentsLayerRef = useRef<GeometryLayer | null>(null);
+  // Which world map each polity/military layer currently holds features for.
+  // These endpoints are world-wide (no bounds), so once a layer is populated
+  // for a world there is nothing to re-fetch on pan/zoom — this keeps
+  // `loadWorldMapData` from re-downloading and re-rendering the largest
+  // payloads in the app on every `moveend`.
+  const polityLoadedWorldRef = useRef<Partial<Record<PolityLayerKey, string>>>({});
   const settlementLayerRef = useRef<TileLayer | null>(null);
   const settlementEntrancesLayerRef = useRef<VectorLayer<VectorSource> | null>(null);
   const savedWorldViewRef = useRef<View | null>(null);
@@ -879,6 +900,11 @@ export function OpenLayersMap() {
       if (!nextValue) {
         const layer = layerRefMap[layerName].current;
         layer?.getSource()?.clear();
+        // The source was just emptied, so forget that it held this world's
+        // data — toggling the layer back on must repopulate it.
+        if (isPolityLayerKey(layerName)) {
+          delete polityLoadedWorldRef.current[layerName];
+        }
       }
 
       return {
@@ -1465,23 +1491,36 @@ export function OpenLayersMap() {
       }
       // Polity / zone / regiment layers are world-wide (not bounds- or
       // zoom-scoped) and degrade to [] for worlds imported before the full
-      // FMG JSON pipeline existed.
-      if (vis.states) {
+      // FMG JSON pipeline existed. They are loaded once per world: a pan or
+      // zoom cannot reveal anything new, so re-fetching (and clearing +
+      // re-adding every polygon, which flickers) is pure waste.
+      const polityLoaded = polityLoadedWorldRef.current;
+      const needsPolity = (key: PolityLayerKey) =>
+        vis[key] && polityLoaded[key] !== selectedWorldMap;
+
+      const loadStates = needsPolity('states');
+      const loadProvinces = needsPolity('provinces');
+      const loadCultures = needsPolity('cultures');
+      const loadReligions = needsPolity('religions');
+      const loadZones = needsPolity('zones');
+      const loadRegiments = needsPolity('regiments');
+
+      if (loadStates) {
         promises.push(mapDataLoader.loadStates(selectedWorldMap));
       }
-      if (vis.provinces) {
+      if (loadProvinces) {
         promises.push(mapDataLoader.loadProvinces(selectedWorldMap));
       }
-      if (vis.cultures) {
+      if (loadCultures) {
         promises.push(mapDataLoader.loadCultures(selectedWorldMap));
       }
-      if (vis.religions) {
+      if (loadReligions) {
         promises.push(mapDataLoader.loadReligions(selectedWorldMap));
       }
-      if (vis.zones) {
+      if (loadZones) {
         promises.push(mapDataLoader.loadZones(selectedWorldMap));
       }
-      if (vis.regiments) {
+      if (loadRegiments) {
         promises.push(mapDataLoader.loadRegiments(selectedWorldMap));
       }
 
@@ -1513,29 +1552,35 @@ export function OpenLayersMap() {
         markersLayerRef.current?.getSource()?.clear();
         markersLayerRef.current?.getSource()?.addFeatures(results[index++] || []);
       }
-      if (vis.states) {
-        statesLayerRef.current?.getSource()?.clear();
-        statesLayerRef.current?.getSource()?.addFeatures(results[index++] || []);
+      const applyPolity = (
+        key: PolityLayerKey,
+        layerRef: { current: GeometryLayer | null },
+        features: Feature[],
+      ) => {
+        const source = layerRef.current?.getSource();
+        if (!source) return;
+        source.clear();
+        source.addFeatures(features);
+        polityLoadedWorldRef.current[key] = selectedWorldMap;
+      };
+
+      if (loadStates) {
+        applyPolity('states', statesLayerRef, results[index++] || []);
       }
-      if (vis.provinces) {
-        provincesLayerRef.current?.getSource()?.clear();
-        provincesLayerRef.current?.getSource()?.addFeatures(results[index++] || []);
+      if (loadProvinces) {
+        applyPolity('provinces', provincesLayerRef, results[index++] || []);
       }
-      if (vis.cultures) {
-        culturesLayerRef.current?.getSource()?.clear();
-        culturesLayerRef.current?.getSource()?.addFeatures(results[index++] || []);
+      if (loadCultures) {
+        applyPolity('cultures', culturesLayerRef, results[index++] || []);
       }
-      if (vis.religions) {
-        religionsLayerRef.current?.getSource()?.clear();
-        religionsLayerRef.current?.getSource()?.addFeatures(results[index++] || []);
+      if (loadReligions) {
+        applyPolity('religions', religionsLayerRef, results[index++] || []);
       }
-      if (vis.zones) {
-        zonesLayerRef.current?.getSource()?.clear();
-        zonesLayerRef.current?.getSource()?.addFeatures(results[index++] || []);
+      if (loadZones) {
+        applyPolity('zones', zonesLayerRef, results[index++] || []);
       }
-      if (vis.regiments) {
-        regimentsLayerRef.current?.getSource()?.clear();
-        regimentsLayerRef.current?.getSource()?.addFeatures(results[index++] || []);
+      if (loadRegiments) {
+        applyPolity('regiments', regimentsLayerRef, results[index++] || []);
       }
 
     } catch (error) {

@@ -19,8 +19,35 @@ import Feature from 'ol/Feature';
 
 export type WorldMapBounds = MapBounds;
 
+/** World-wide (non bounds-scoped) GeoJSON entities served by the FMG full-JSON import. */
+export type PolityEntity =
+  | 'states'
+  | 'provinces'
+  | 'cultures'
+  | 'religions'
+  | 'zones'
+  | 'regiments';
+
 export class MapDataLoader {
   private tileSetCache: Record<string, unknown>[] | null = null;
+
+  /**
+   * Raw GeoJSON payloads for the world-wide polity/military entities, keyed
+   * `${worldMapId}:${entity}` so nothing leaks across worlds. These endpoints
+   * take no bounds and return the largest payloads in the app, while
+   * `loadWorldMapData` re-runs on every map move — without this cache a pan
+   * would re-download every state polygon.
+   *
+   * The *raw* payload is cached rather than the parsed `Feature[]`: each call
+   * re-parses into fresh `Feature` instances, so an OpenLayers source never
+   * receives feature objects that another source already owns, and callers
+   * can safely mutate what they get back. Re-parsing is local CPU only.
+   *
+   * A fetch error is never cached (so a transient failure doesn't stick); a
+   * genuinely empty FeatureCollection — a world imported before the full-JSON
+   * pipeline existed — is a valid result and IS cached.
+   */
+  private polityGeoJsonCache = new Map<string, unknown>();
 
   private geoJsonFormat = new GeoJSON({
     dataProjection: PIXEL_PROJECTION_CODE,
@@ -134,52 +161,90 @@ export class MapDataLoader {
       .filter(MapDataLoader.notNull);
   }
 
-  private async fetchGeojson(url: string): Promise<Feature[]> {
+  /** Parse a GeoJSON FeatureCollection payload into fresh OL features. */
+  private featuresFromGeoJson(data: unknown): Feature[] {
+    const features = MapDataLoader.isRecord(data) ? data.features : null;
+    if (!Array.isArray(features)) return [];
+    return features
+      .map((f: Record<string, unknown>) => {
+        const geometry = this.readGeometry(f.geometry);
+        if (!geometry) return null;
+        const feat = new Feature({ geometry });
+        for (const [k, v] of Object.entries((f.properties as Record<string, unknown>) ?? {})) {
+          feat.set(k, v);
+        }
+        const id = (f as { id?: unknown }).id ?? (f.properties as Record<string, unknown> | undefined)?.id;
+        if (typeof id === 'string' || typeof id === 'number') feat.setId(id);
+        return feat;
+      })
+      .filter(MapDataLoader.notNull);
+  }
+
+  /**
+   * Cached fetch for the world-wide polity/military endpoints. Returns freshly
+   * parsed features on every call; only the raw payload is memoised, and only
+   * when the request actually succeeded.
+   */
+  private async fetchPolityGeojson(worldMapId: string, entity: PolityEntity): Promise<Feature[]> {
+    const key = `${worldMapId}:${entity}`;
+    const cached = this.polityGeoJsonCache.get(key);
+    if (cached !== undefined) {
+      return this.featuresFromGeoJson(cached);
+    }
+
+    const url = `/api/maps/${worldMapId}/${entity}`;
     try {
       const res = await fetch(url);
+      // Not cached: a 4xx/5xx is a failure, not a known-empty world.
       if (!res.ok) return [];
       const data = await res.json();
-      return (data?.features ?? [])
-        .map((f: Record<string, unknown>) => {
-          const geometry = this.readGeometry(f.geometry);
-          if (!geometry) return null;
-          const feat = new Feature({ geometry });
-          for (const [k, v] of Object.entries((f.properties as Record<string, unknown>) ?? {})) {
-            feat.set(k, v);
-          }
-          const id = (f as { id?: unknown }).id ?? (f.properties as Record<string, unknown> | undefined)?.id;
-          if (typeof id === 'string' || typeof id === 'number') feat.setId(id);
-          return feat;
-        })
-        .filter(MapDataLoader.notNull);
+      this.polityGeoJsonCache.set(key, data);
+      return this.featuresFromGeoJson(data);
     } catch (error) {
       console.error(`Failed to load GeoJSON from ${url}`, error);
       return [];
     }
   }
 
+  /**
+   * Drop cached polity payloads — for one world when `worldMapId` is given,
+   * otherwise for every world. Call after re-importing/regenerating a world.
+   */
+  clearPolityCache(worldMapId?: string): void {
+    if (!worldMapId) {
+      this.polityGeoJsonCache.clear();
+      return;
+    }
+    const prefix = `${worldMapId}:`;
+    for (const key of Array.from(this.polityGeoJsonCache.keys())) {
+      if (key.startsWith(prefix)) {
+        this.polityGeoJsonCache.delete(key);
+      }
+    }
+  }
+
   async loadStates(worldMapId: string): Promise<Feature[]> {
-    return this.fetchGeojson(`/api/maps/${worldMapId}/states`);
+    return this.fetchPolityGeojson(worldMapId, 'states');
   }
 
   async loadProvinces(worldMapId: string): Promise<Feature[]> {
-    return this.fetchGeojson(`/api/maps/${worldMapId}/provinces`);
+    return this.fetchPolityGeojson(worldMapId, 'provinces');
   }
 
   async loadCultures(worldMapId: string): Promise<Feature[]> {
-    return this.fetchGeojson(`/api/maps/${worldMapId}/cultures`);
+    return this.fetchPolityGeojson(worldMapId, 'cultures');
   }
 
   async loadReligions(worldMapId: string): Promise<Feature[]> {
-    return this.fetchGeojson(`/api/maps/${worldMapId}/religions`);
+    return this.fetchPolityGeojson(worldMapId, 'religions');
   }
 
   async loadZones(worldMapId: string): Promise<Feature[]> {
-    return this.fetchGeojson(`/api/maps/${worldMapId}/zones`);
+    return this.fetchPolityGeojson(worldMapId, 'zones');
   }
 
   async loadRegiments(worldMapId: string): Promise<Feature[]> {
-    return this.fetchGeojson(`/api/maps/${worldMapId}/regiments`);
+    return this.fetchPolityGeojson(worldMapId, 'regiments');
   }
 
   async loadBurgEntrances(worldMapId: string): Promise<Feature[]> {
