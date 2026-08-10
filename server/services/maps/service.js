@@ -597,6 +597,16 @@ export const listTileSets = async (worldId = null, q = query) => {
  * the partial unique index from migration 019.
  */
 export const upsertWorldTileset = async ({ worldId, maxZoom, uploadedBy = null }, q = query) => {
+  // Tiles are served with an immutable, one-year Cache-Control header (see
+  // GET /:worldId/tiles/:z/:x/:y.png). Browsers will never revalidate that
+  // response, so replacing the underlying SVG with the SAME base_url leaves
+  // clients stuck showing year-old tiles forever. Minting a fresh ?v=
+  // query string on every upsert gives replaced base maps a new URL, which
+  // is the only way to invalidate an immutable cache. OpenLayers' XYZ
+  // source substitutes {z}/{x}/{y} in place and passes the rest of the
+  // template through untouched, so the query string survives to the
+  // request; the Express route below only reads req.params, never
+  // req.query, so the extra param is safely ignored server-side.
   const { rows } = await q(
     `INSERT INTO tile_sets (name, base_url, format, min_zoom, max_zoom, tile_size, is_active, world_id, uploaded_by)
      VALUES ('Base map', $2, 'png', 0, $3, 256, true, $1, $4)
@@ -607,7 +617,7 @@ export const upsertWorldTileset = async ({ worldId, maxZoom, uploadedBy = null }
                    name = EXCLUDED.name,
                    uploaded_by = COALESCE(EXCLUDED.uploaded_by, tile_sets.uploaded_by)
      RETURNING *`,
-    [worldId, `/api/maps/${worldId}/tiles/{z}/{x}/{y}.png`, maxZoom, uploadedBy],
+    [worldId, `/api/maps/${worldId}/tiles/{z}/{x}/{y}.png?v=${Date.now()}`, maxZoom, uploadedBy],
     { label: 'maps.tilesets.upsert_world' },
   );
   return rows[0];

@@ -30,7 +30,6 @@ describeWithDb('world-scoped tile_sets', () => {
     const row = await upsertWorldTileset({ worldId: worldA, maxZoom: 6, uploadedBy: null }, q);
     expect(row).toMatchObject({
       name: 'Base map',
-      base_url: `/api/maps/${worldA}/tiles/{z}/{x}/{y}.png`,
       format: 'png',
       tile_size: 256,
       min_zoom: 0,
@@ -38,13 +37,24 @@ describeWithDb('world-scoped tile_sets', () => {
       is_active: true,
       world_id: worldA,
     });
+    // base_url carries a cache-busting ?v= query param minted at upsert
+    // time (immutable Cache-Control means the URL itself must change to
+    // invalidate stale browser-cached tiles after a base-map replace).
+    expect(row.base_url).toMatch(new RegExp(`^/api/maps/${worldA}/tiles/\\{z\\}/\\{x\\}/\\{y\\}\\.png\\?v=\\d+$`));
   });
 
   test('re-upsert keeps exactly one row per world and updates max_zoom', async () => {
     const first = await upsertWorldTileset({ worldId: worldA, maxZoom: 5, uploadedBy: null }, q);
+    // Guard against both upserts landing in the same millisecond, which
+    // would make the ?v= timestamps collide and the "differs" assertion
+    // below flaky.
+    await new Promise((resolve) => setTimeout(resolve, 2));
     const second = await upsertWorldTileset({ worldId: worldA, maxZoom: 7, uploadedBy: null }, q);
     expect(second.id).toBe(first.id);
     expect(second.max_zoom).toBe(7);
+    // The whole point of versioning the URL: a replace must mint a new
+    // base_url so immutable browser caches from the old URL are bypassed.
+    expect(second.base_url).not.toBe(first.base_url);
     const { rows } = await client.query(
       `SELECT count(*)::int AS n FROM tile_sets WHERE world_id = $1`,
       [worldA],
