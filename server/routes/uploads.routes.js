@@ -14,7 +14,12 @@ import {
   listCampaignAssets,
 } from '../services/uploads/service.js';
 import { createOrUpdateWorld } from '../services/maps/ingestion-service.js';
-import { saveWorldSvg, removeWorldBaseMap, computeMaxZoom } from '../services/maps/world-tile-service.js';
+import {
+  saveWorldSvg,
+  removeWorldBaseMap,
+  computeMaxZoom,
+  parseSvgDimensions,
+} from '../services/maps/world-tile-service.js';
 import { upsertWorldTileset, isUuid } from '../services/maps/service.js';
 
 export const registerUploadRoutes = (app, { upload, uploadSvg, uploadFullJson }) => {
@@ -306,6 +311,29 @@ export const registerUploadRoutes = (app, { upload, uploadSvg, uploadFullJson })
         return res.status(422).json({
           error: 'world_missing_dimensions',
           message: 'World has no width_pixels/height_pixels; re-import the Full JSON before attaching an SVG.',
+        });
+      }
+
+      // Tile geometry is derived from the SVG's own viewBox, but max_zoom
+      // (above) comes from maps_world.width_pixels/height_pixels. If the
+      // uploaded SVG is not the same canvas size as the world, deep zoom
+      // breaks or tiles come out vertically misaligned — and it fails
+      // silently unless we check here. Mirrors the Math.round equality
+      // guard the legacy utils/tile-svg.mjs used before this feature.
+      const svgText = await fs.readFile(req.file.path, 'utf8');
+      const svgDims = parseSvgDimensions(svgText);
+      if (!svgDims) {
+        return res.status(422).json({
+          error: 'invalid_svg',
+          message: 'Could not read the SVG canvas size (no viewBox or width/height on the root <svg>).',
+        });
+      }
+      const worldWidth = rows[0].width_pixels;
+      const worldHeight = rows[0].height_pixels;
+      if (Math.round(svgDims.width) !== worldWidth || Math.round(svgDims.height) !== worldHeight) {
+        return res.status(422).json({
+          error: 'svg_dimension_mismatch',
+          message: `SVG canvas is ${Math.round(svgDims.width)}x${Math.round(svgDims.height)} px but the world is ${worldWidth}x${worldHeight} px - export the SVG from the same FMG map at the same size.`,
         });
       }
 
