@@ -81,6 +81,10 @@ import { toast } from "sonner";
 import { TokenAnimator, type Waypoint } from './player-token-animator';
 
 const ANIMATION_DURATION_MS = 2500;
+// View zoom headroom past a tileset's max_zoom — tiles 204/upscale beyond the
+// pyramid while vector layers keep gaining detail (mirrors the settlement
+// viewer's EXTRA_ZOOM).
+const WORLD_TILE_EXTRA_ZOOM = 4;
 
 // PlayerToken type imported from map-visible-players-panel
 
@@ -591,7 +595,13 @@ export function OpenLayersMap() {
     if (!view) return;
 
     const minZoom = typeof tileSet?.min_zoom === 'number' ? tileSet.min_zoom : 0;
-    const maxZoom = typeof tileSet?.max_zoom === 'number' ? tileSet.max_zoom : 20;
+    // The view may zoom past the tile pyramid: the source stops requesting
+    // tiles at tile max_zoom and OL upscales the deepest level — same UX as
+    // the settlement viewer's EXTRA_ZOOM ceiling. Without the headroom,
+    // world-scoped base maps (max_zoom 5-6) would cap the view below the
+    // zooms where burg/detail layers become visible.
+    const maxZoom =
+      typeof tileSet?.max_zoom === 'number' ? tileSet.max_zoom + WORLD_TILE_EXTRA_ZOOM : 20;
 
     tileSetMinZoomRef.current = minZoom;
     view.setMinZoom(minZoom);
