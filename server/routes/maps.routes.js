@@ -23,8 +23,10 @@ import {
   createCampaignRegion,
   updateCampaignRegion,
   deleteCampaignRegion,
+  isUuid,
 } from '../services/maps/service.js';
 import { getSettlementInfo, getSettlementTile } from '../services/maps/settlement-service.js';
+import { getWorldTile } from '../services/maps/world-tile-service.js';
 import { listByWorld as listBurgEntrancesByWorld } from '../services/maps/burg-entrances-service.js';
 import { getWorldIngestionStatus } from '../services/maps/ingestion-service.js';
 import { getViewerContextOrThrow, ensureDmControl } from '../services/campaigns/service.js';
@@ -123,12 +125,16 @@ router.get('/world/:worldId/status', async (req, res) => {
   }
 });
 
-router.get('/tilesets', async (_req, res) => {
+router.get('/tilesets', async (req, res) => {
+  const worldId = typeof req.query.worldId === 'string' && req.query.worldId ? req.query.worldId : null;
+  if (worldId && !isUuid(worldId)) {
+    return res.status(400).json({ error: 'invalid_world_id', message: 'worldId must be a UUID' });
+  }
   try {
-    const tileSets = await listTileSets();
+    const tileSets = await listTileSets(worldId);
     return res.json(tileSets);
   } catch (error) {
-    logError('Tile set listing failed', error);
+    logError('Tile set listing failed', error, { worldId });
     return res.status(500).json({ error: error.message });
   }
 });
@@ -417,6 +423,38 @@ router.get('/settlements/:burgId/tiles/:z/:x/:y.png', async (req, res) => {
     logError('Settlement tile fetch failed', error, { burgId, z, x, y });
     const status = error.status || 500;
     return res.status(status).json({ error: error.code || 'settlement_tile_failed', message: error.message });
+  }
+});
+
+// World base-map tiles — public like settlement tiles; rendered lazily from
+// the stored world SVG and disk-cached (see world-tile-service.js).
+router.get('/:worldId/tiles/:z/:x/:y.png', async (req, res) => {
+  const { worldId } = req.params;
+  // worldId feeds a filesystem path — reject anything that is not a UUID.
+  if (!isUuid(worldId)) {
+    return res.status(400).json({ error: 'invalid_world_id', message: 'worldId must be a UUID' });
+  }
+  const z = parseInt(req.params.z, 10);
+  const x = parseInt(req.params.x, 10);
+  const y = parseInt(req.params.y, 10);
+  if (!Number.isInteger(z) || !Number.isInteger(x) || !Number.isInteger(y) || z < 0 || x < 0 || y < 0) {
+    return res.status(400).json({ error: 'invalid_tile_coords', message: 'z, x, y must be non-negative integers' });
+  }
+
+  try {
+    const png = await getWorldTile(worldId, z, x, y);
+    if (!png) {
+      return res.status(204).send();
+    }
+    res.set('Content-Type', 'image/png');
+    res.set('Cache-Control', 'public, max-age=31536000, immutable');
+    return res.send(png);
+  } catch (error) {
+    if (error.code !== 'no_base_map') {
+      logError('World tile fetch failed', error, { worldId, z, x, y });
+    }
+    const status = error.status || 500;
+    return res.status(status).json({ error: error.code || 'world_tile_failed', message: error.message });
   }
 });
 

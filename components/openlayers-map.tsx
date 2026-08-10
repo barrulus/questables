@@ -81,6 +81,10 @@ import { toast } from "sonner";
 import { TokenAnimator, type Waypoint } from './player-token-animator';
 
 const ANIMATION_DURATION_MS = 2500;
+// View zoom headroom past a tileset's max_zoom — tiles 204/upscale beyond the
+// pyramid while vector layers keep gaining detail (mirrors the settlement
+// viewer's EXTRA_ZOOM).
+const WORLD_TILE_EXTRA_ZOOM = 4;
 
 // PlayerToken type imported from map-visible-players-panel
 
@@ -282,6 +286,20 @@ const TOGGLEABLE_LAYER_OPTIONS: Array<{
   { key: 'zones', label: 'Zones', icon: <TriangleAlert className="w-3 h-3" /> },
   { key: 'regiments', label: 'Regiments', icon: <Swords className="w-3 h-3" /> },
 ];
+
+const normalizeTileSetRows = (rows: Record<string, unknown>[]): TileSetConfig[] =>
+  (rows || [])
+    .filter((ts) => ts && ts.id && typeof ts.base_url === 'string')
+    .map((ts) => ({
+      id: String(ts.id),
+      name: typeof ts.name === 'string' && ts.name.trim() ? ts.name : String(ts.id),
+      base_url: String(ts.base_url),
+      attribution: typeof ts.attribution === 'string' ? ts.attribution : undefined,
+      min_zoom: typeof ts.min_zoom === 'number' && Number.isFinite(ts.min_zoom) ? ts.min_zoom : undefined,
+      max_zoom: typeof ts.max_zoom === 'number' && Number.isFinite(ts.max_zoom) ? ts.max_zoom : undefined,
+      tile_size: typeof ts.tile_size === 'number' && Number.isFinite(ts.tile_size) ? ts.tile_size : undefined,
+      wrapX: Boolean(ts.wrapX),
+    }));
 
 export function OpenLayersMap() {
   const mapRef = useRef<HTMLDivElement>(null);
@@ -577,7 +595,13 @@ export function OpenLayersMap() {
     if (!view) return;
 
     const minZoom = typeof tileSet?.min_zoom === 'number' ? tileSet.min_zoom : 0;
-    const maxZoom = typeof tileSet?.max_zoom === 'number' ? tileSet.max_zoom : 20;
+    // The view may zoom past the tile pyramid: the source stops requesting
+    // tiles at tile max_zoom and OL upscales the deepest level — same UX as
+    // the settlement viewer's EXTRA_ZOOM ceiling. Without the headroom,
+    // world-scoped base maps (max_zoom 5-6) would cap the view below the
+    // zooms where burg/detail layers become visible.
+    const maxZoom =
+      typeof tileSet?.max_zoom === 'number' ? tileSet.max_zoom + WORLD_TILE_EXTRA_ZOOM : 20;
 
     tileSetMinZoomRef.current = minZoom;
     view.setMinZoom(minZoom);
@@ -915,10 +939,7 @@ export function OpenLayersMap() {
   }, [layerRefMap]);
 
   const loadInitialData = useCallback(async () => {
-    const [worldMapsData, tileSetsData] = await Promise.all([
-      mapDataLoader.loadWorldMaps(),
-      mapDataLoader.loadTileSets()
-    ]);
+    const worldMapsData = await mapDataLoader.loadWorldMaps();
 
     const normalizedWorldMaps: WorldMapSummary[] = (worldMapsData || [])
       .map((map: Record<string, unknown>) => {
@@ -941,21 +962,6 @@ export function OpenLayersMap() {
 
     setWorldMaps(normalizedWorldMaps);
 
-    const dbTileSets: TileSetConfig[] = (tileSetsData || [])
-      .filter((ts: Record<string, unknown>) => ts && ts.id && typeof ts.base_url === 'string')
-      .map((ts: Record<string, unknown>) => ({
-        id: String(ts.id),
-        name: typeof ts.name === 'string' && ts.name.trim() ? ts.name : String(ts.id),
-        base_url: String(ts.base_url),
-        attribution: typeof ts.attribution === 'string' ? ts.attribution : undefined,
-        min_zoom: typeof ts.min_zoom === 'number' && Number.isFinite(ts.min_zoom) ? ts.min_zoom : undefined,
-        max_zoom: typeof ts.max_zoom === 'number' && Number.isFinite(ts.max_zoom) ? ts.max_zoom : undefined,
-        tile_size: typeof ts.tile_size === 'number' && Number.isFinite(ts.tile_size) ? ts.tile_size : undefined,
-        wrapX: Boolean(ts.wrapX),
-      }));
-
-    setTileSets(dbTileSets);
-
     const initialWorldMap = normalizedWorldMaps[0] ?? null;
     if (initialWorldMap) {
       setSelectedWorldMap((prev) => (prev ? prev : initialWorldMap.id));
@@ -964,16 +970,7 @@ export function OpenLayersMap() {
       setSelectedWorldMap('');
       updateViewExtent(null);
     }
-
-    if (dbTileSets.length === 0) {
-      setSelectedTileSetId('');
-      if (baseLayerRef.current) {
-        baseLayerRef.current.setSource(null);
-      }
-      applyTileSetConstraints(null);
-      toast.error('No active tile sets are configured in the database.');
-    }
-  }, [applyTileSetConstraints, updateViewExtent]);
+  }, [updateViewExtent]);
 
   const applyTileSetConstraintsRef = useRef(applyTileSetConstraints);
   useEffect(() => {
@@ -1793,6 +1790,28 @@ export function OpenLayersMap() {
       mapInstanceRef.current = null;
     };
   }, []);
+
+  // Fetch the tileset list for the selected world. The server returns the
+  // world's scoped "Base map" row, or legacy global rows for pre-scoped
+  // worlds; an empty list = no base map (vector layers over blank bg).
+  useEffect(() => {
+    if (!selectedWorldMap) {
+      setTileSets([]);
+      return;
+    }
+    let cancelled = false;
+    void (async () => {
+      try {
+        const rows = await mapDataLoader.loadTileSets(selectedWorldMap);
+        if (!cancelled) setTileSets(normalizeTileSetRows(rows));
+      } catch {
+        if (!cancelled) setTileSets([]);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [selectedWorldMap]);
 
   useEffect(() => {
     if (tileSets.length === 0) {

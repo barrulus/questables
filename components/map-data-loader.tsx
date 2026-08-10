@@ -29,7 +29,7 @@ export type PolityEntity =
   | 'regiments';
 
 export class MapDataLoader {
-  private tileSetCache: Record<string, unknown>[] | null = null;
+  private tileSetCache = new Map<string, Record<string, unknown>[]>();
 
   /**
    * Raw GeoJSON payloads for the world-wide polity/military entities, keyed
@@ -402,14 +402,22 @@ export class MapDataLoader {
       .filter((feature): feature is Feature => !!feature);
   }
 
-  async loadTileSets(): Promise<Record<string, unknown>[]> {
-    if (this.tileSetCache) {
-      return this.tileSetCache;
+  async loadTileSets(worldId?: string): Promise<Record<string, unknown>[]> {
+    const key = worldId ?? '';
+    const cached = this.tileSetCache.get(key);
+    if (cached) {
+      return cached;
     }
 
-    const tileSets = await listTileSets();
-    this.tileSetCache = tileSets || [];
-    return this.tileSetCache;
+    const tileSets = await listTileSets(worldId);
+    this.tileSetCache.set(key, tileSets || []);
+    return this.tileSetCache.get(key)!;
+  }
+
+  /** Drop cached tileset lists — call after a base-map upload so the next
+   *  fetch sees the new/updated world-scoped row. */
+  clearTileSetCache(): void {
+    this.tileSetCache.clear();
   }
 
   // Utility function to convert OpenLayers bounds to our bounds format

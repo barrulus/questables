@@ -133,9 +133,13 @@ export async function listWorldCells(
   return data ?? [];
 }
 
-export async function listTileSets(options: ApiRequestOptions = {}): Promise<Record<string, unknown>[]> {
+export async function listTileSets(
+  worldId?: string,
+  options: ApiRequestOptions = {},
+): Promise<Record<string, unknown>[]> {
+  const suffix = worldId ? `?worldId=${encodeURIComponent(worldId)}` : '';
   const data = await fetchJson<Record<string, unknown>[]>(
-    '/api/maps/tilesets',
+    `/api/maps/tilesets${suffix}`,
     { method: 'GET', signal: options.signal },
     'Failed to load tile sets',
   );
