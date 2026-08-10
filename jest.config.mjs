@@ -39,6 +39,10 @@ export default {
     testPathIgnorePatterns: [
     '<rootDir>/node_modules/',
     '<rootDir>/dist/',
+    // Git worktrees under .claude/ carry a full copy of the test tree —
+    // without this, `npm test` runs every suite twice and the copies race
+    // each other on the shared dev database.
+    '<rootDir>/.claude/',
   ],
   moduleDirectories: ['node_modules', '<rootDir>'],
   modulePaths: ['<rootDir>/server/node_modules'],
