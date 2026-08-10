@@ -1,7 +1,22 @@
 /** @jest-environment node */
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
 import { describeWithDb, openTxClient, FIXTURE_PATH } from './db-harness.js';
 import { query } from '../../../server/db/pool.js';
 import { startImportJob, waitForJob } from '../../../server/services/maps/fmg-full-json/job-runner.js';
+
+// job-runner unlinks `filePath` once a job reaches a terminal state (this is
+// correct production behavior for staged uploads). Tests must never pass the
+// tracked fixture directly, or it gets deleted; stage a disposable copy instead.
+const stagedDirs = [];
+function stageFixtureCopy() {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'fmg-job-'));
+  stagedDirs.push(dir);
+  const staged = path.join(dir, 'staged.json');
+  fs.copyFileSync(FIXTURE_PATH, staged);
+  return staged;
+}
 
 describeWithDb('job-runner', () => {
   let client, worldId;
@@ -27,12 +42,16 @@ describeWithDb('job-runner', () => {
     try { await client.query('ROLLBACK'); } catch {}
     await query(`DELETE FROM public.maps_world WHERE id = $1`, [worldId]);
     await client.end();
+    // Best-effort cleanup of any staged temp dirs left behind.
+    for (const dir of stagedDirs) {
+      try { fs.rmSync(dir, { recursive: true, force: true }); } catch {}
+    }
   });
 
   test('startImportJob returns a UUID job id immediately', async () => {
     const { jobId } = await startImportJob({
       worldId,
-      filePath: FIXTURE_PATH,
+      filePath: stageFixtureCopy(),
       uploadedBy: null,
       skipValidation: true,
       skipSettlemaker: true,
@@ -43,7 +62,7 @@ describeWithDb('job-runner', () => {
   test('job completes successfully and sets percent = 100', async () => {
     const { jobId } = await startImportJob({
       worldId,
-      filePath: FIXTURE_PATH,
+      filePath: stageFixtureCopy(),
       uploadedBy: null,
       skipValidation: true,
       skipSettlemaker: true,
@@ -63,7 +82,7 @@ describeWithDb('job-runner', () => {
     // completed_at is set (only the completed UPDATE sets it).
     const { jobId } = await startImportJob({
       worldId,
-      filePath: FIXTURE_PATH,
+      filePath: stageFixtureCopy(),
       uploadedBy: null,
       skipValidation: true,
       skipSettlemaker: true,
