@@ -3,6 +3,7 @@ import { Button } from "../ui/button";
 import { Loader2, MapIcon, Plus } from "lucide-react";
 import { apiFetch, readJsonBody } from "../../utils/api-client";
 import { useAsync } from "../../hooks/useAsync";
+import { BaseMapButton } from "./base-map-button";
 
 interface WorldMap {
   id: string;
@@ -20,12 +21,29 @@ interface MapListProps {
 }
 
 export function MapList({ onUploadNew }: MapListProps) {
-  const { data, loading, error } = useAsync<WorldMap[]>(async () => {
-    const response = await apiFetch("/api/maps/world");
-    if (!response.ok) throw new Error("Failed to load maps");
-    return readJsonBody<WorldMap[]>(response);
-  }, []);
-  const maps = data ?? [];
+  const { data, loading, error, retry } = useAsync<{ maps: WorldMap[]; baseMapWorldIds: Set<string> }>(
+    async () => {
+      const [mapsRes, tileSetsRes] = await Promise.all([
+        apiFetch("/api/maps/world"),
+        apiFetch("/api/maps/tilesets"),
+      ]);
+      if (!mapsRes.ok) throw new Error("Failed to load maps");
+      const maps = await readJsonBody<WorldMap[]>(mapsRes);
+      let baseMapWorldIds = new Set<string>();
+      if (tileSetsRes.ok) {
+        const tileSets = await readJsonBody<Array<{ world_id?: string | null }>>(tileSetsRes);
+        baseMapWorldIds = new Set(
+          (tileSets ?? [])
+            .map((ts) => ts.world_id)
+            .filter((id): id is string => typeof id === "string" && id.length > 0),
+        );
+      }
+      return { maps, baseMapWorldIds };
+    },
+    [],
+  );
+  const maps = data?.maps ?? [];
+  const baseMapWorldIds = data?.baseMapWorldIds ?? new Set<string>();
 
   return (
     <div className="space-y-4">
@@ -88,6 +106,13 @@ export function MapList({ onUploadNew }: MapListProps) {
                 {map.uploaded_by_username && (
                   <div>By {map.uploaded_by_username}</div>
                 )}
+                <div className="pt-2">
+                  <BaseMapButton
+                    worldId={map.id}
+                    hasBaseMap={baseMapWorldIds.has(map.id)}
+                    onUploaded={retry}
+                  />
+                </div>
               </CardContent>
             </Card>
           ))}

@@ -2,6 +2,7 @@ import { useState } from "react";
 import { Button } from "../ui/button";
 import { Card, CardContent } from "../ui/card";
 import { apiFetch } from "../../utils/api-client";
+import { mapDataLoader } from "../map-data-loader";
 
 interface SvgAttachStepProps {
   worldId: string;
@@ -27,6 +28,7 @@ export function SvgAttachStep({ worldId, onComplete, onSkip }: SvgAttachStepProp
         const body = await res.json().catch(() => ({ error: res.statusText }));
         throw new Error(body.message || body.error || `Upload failed: ${res.status}`);
       }
+      mapDataLoader.clearTileSetCache();
       onComplete();
     } catch (e) {
       setError((e as Error).message);
@@ -41,8 +43,9 @@ export function SvgAttachStep({ worldId, onComplete, onSkip }: SvgAttachStepProp
         <div>
           <h4 className="font-semibold">Step 2 of 3 — Upload rendered SVG (optional)</h4>
           <p className="text-sm text-muted-foreground">
-            Export the SVG canvas from FMG to use as the rendered base map image.
-            You can skip this and add it later.
+            Export the SVG canvas from FMG. Used as the rendered base map —
+            tiles are generated on demand as you view the map.
+            You can skip this and add it later from the Maps tab.
           </p>
         </div>
         <form onSubmit={handleSubmit} className="space-y-3">
