@@ -4,6 +4,7 @@ import {
   parseSvgDimensions,
   tileViewBox,
   buildTileSvg,
+  stripSvgGroup,
 } from '../../../server/services/maps/world-tile-service.js';
 
 describe('computeMaxZoom', () => {
@@ -112,5 +113,37 @@ describe('buildTileSvg', () => {
     const svg = '<svg viewBox="0 0 512 256"><symbol viewBox="0 0 10 10"/></svg>';
     const out = buildTileSvg(svg, { x: 0, y: 0, size: 512 });
     expect(out).toContain('<symbol viewBox="0 0 10 10"/>');
+  });
+});
+
+describe('stripSvgGroup', () => {
+  const SVG =
+    '<svg viewBox="0 0 100 100"><g id="ocean"><rect/></g>' +
+    '<g id="icons" style="x"><g id="burgIcons"><use href="#icon-circle"/></g>' +
+    '<g id="anchors"><use href="#icon-anchor"/></g></g>' +
+    '<g id="labels"><text>Digia</text></g></svg>';
+
+  test('removes the whole nested subtree, neighbours intact', () => {
+    const out = stripSvgGroup(SVG, 'icons');
+    expect(out).not.toContain('burgIcons');
+    expect(out).not.toContain('icon-anchor');
+    expect(out).toContain('<g id="ocean"><rect/></g>');
+    expect(out).toContain('<g id="labels"><text>Digia</text></g>');
+    // Only ocean's and labels' close tags survive.
+    expect(out.match(/<\/g>/g)).toHaveLength(2);
+  });
+
+  test('missing group id returns input unchanged', () => {
+    expect(stripSvgGroup(SVG, 'nope')).toBe(SVG);
+  });
+
+  test('unbalanced markup is left untouched rather than corrupted', () => {
+    const broken = '<svg><g id="icons"><g id="inner"></svg>';
+    expect(stripSvgGroup(broken, 'icons')).toBe(broken);
+  });
+
+  test('does not match ids that merely contain the target as a prefix', () => {
+    const svg = '<svg><g id="iconsExtra"><rect/></g></svg>';
+    expect(stripSvgGroup(svg, 'icons')).toBe(svg);
   });
 });

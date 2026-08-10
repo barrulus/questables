@@ -119,6 +119,38 @@ export function evictWorldSvg(worldId) {
   svgCache.delete(worldId);
 }
 
+/**
+ * FMG groups whose subtrees are removed before rasterization. Burg icons and
+ * anchors (#icons) are drawn as <symbol width="1em"> sized by the group's
+ * font-size — librsvg resolves that em against the default font size instead
+ * of the 0.5px the browser uses, rendering every icon ~30-90x too large. The
+ * app draws its own interactive burg layer, so the base map drops FMG's.
+ */
+const STRIPPED_GROUP_IDS = ['icons'];
+
+/**
+ * Remove a <g id="..."> subtree from the SVG, matching nested <g> tags so the
+ * close tag is balanced. Returns the input unchanged when the group is absent
+ * or the markup is unbalanced (never corrupt the document).
+ */
+export function stripSvgGroup(svgText, groupId) {
+  const open = new RegExp(`<g\\b[^>]*\\bid="${groupId}"[^>]*>`, 'i').exec(svgText);
+  if (!open) return svgText;
+  if (open[0].endsWith('/>')) {
+    return svgText.slice(0, open.index) + svgText.slice(open.index + open[0].length);
+  }
+  const tagRe = /<\/?g\b[^>]*>/gi;
+  tagRe.lastIndex = open.index + open[0].length;
+  let depth = 1;
+  let tag;
+  while (depth > 0 && (tag = tagRe.exec(svgText))) {
+    if (tag[0][1] === '/') depth -= 1;
+    else if (!tag[0].endsWith('/>')) depth += 1;
+  }
+  if (depth !== 0) return svgText;
+  return svgText.slice(0, open.index) + svgText.slice(tagRe.lastIndex);
+}
+
 async function ensureWorldSvg(worldId) {
   const cached = getCachedSvg(worldId);
   if (cached) return cached;
@@ -139,6 +171,10 @@ async function ensureWorldSvg(worldId) {
     err.status = 500;
     err.code = 'invalid_base_map_svg';
     throw err;
+  }
+
+  for (const groupId of STRIPPED_GROUP_IDS) {
+    svg = stripSvgGroup(svg, groupId);
   }
 
   const entry = { svg, dims, maxZoom: computeMaxZoom(dims.width, dims.height) };
